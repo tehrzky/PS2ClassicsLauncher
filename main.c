@@ -421,7 +421,3 @@ int main(void) {
     return 0;
 }
 
-void _start(void) {
-    main();
-    while (1) {}
-}
