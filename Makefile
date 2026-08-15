@@ -24,9 +24,7 @@ $(INTDIR)/%.o: %.c | $(INTDIR)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(OUTDIR)/$(TARGET).elf: $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $<
-	$(OBJCOPY) --only-keep-debug $@ $(OUTDIR)/$(TARGET).elf.debug
-	$(OBJCOPY) --strip-debug $@
+	$(LD) $(LDFLAGS) -o $@ $
 
 $(PKGDIR)/eboot.bin: $(OUTDIR)/$(TARGET).elf
 		python3 $(OO_PS4_TOOLCHAIN)/scripts/make_fself.py $< $@
