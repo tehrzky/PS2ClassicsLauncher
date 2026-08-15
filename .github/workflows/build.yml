@@ -12,11 +12,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build PKG in OpenOrbis toolchain container
+      - name: Install dependencies
         run: |
-          docker run --rm -w /workspace -v "${{ github.workspace }}":/workspace \
-            openorbis/toolchain:latest \
-            bash -c "make pkg"
+          sudo apt-get update
+          sudo apt-get install -y clang lld python3 python3-pip curl
+
+      - name: Download OpenOrbis Toolchain
+        run: |
+          curl -L -o oo-toolchain.tar.gz \
+            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.2/v0.5.2.tar.gz"
+          mkdir -p $HOME/oo-toolchain
+          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain
+
+      - name: Set environment
+        run: |
+          echo "OO_PS4_TOOLCHAIN=$HOME/oo-toolchain" >> $GITHUB_ENV
+          echo "$HOME/oo-toolchain/bin/linux" >> $GITHUB_PATH
+
+      - name: Build PKG
+        run: make pkg
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
