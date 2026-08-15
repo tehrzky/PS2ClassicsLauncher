@@ -17,13 +17,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld python3 python3-pip curl
 
-      - name: Download OpenOrbis Toolchain
+      - name: Download OpenOrbis Toolchain (pre-built)
         run: |
-          # Use GitHub's auto-generated source archive (always has top-level folder)
           curl -L -o oo-toolchain.tar.gz \
-            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/archive/refs/tags/v0.5.2.tar.gz"
+            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz"
           mkdir -p $HOME/oo-toolchain
-          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain --strip-components=1
+          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain
 
       - name: Set environment
         run: |
