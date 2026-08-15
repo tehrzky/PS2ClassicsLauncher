@@ -110,7 +110,14 @@ static int current_buf = 0;
 
 // ============ DEBUG LOG ============
 static void log_debug(const char *fmt, ...) {
-    int fd = open("/data/PS4ROMS/PS2ISO/launcher_log.txt", O_WRONLY | O_CREAT | O_APPEND, 0777);
+    static int first = 1;
+    int fd;
+    if (first) {
+        fd = open("/data/PS4ROMS/PS2ISO/launcher_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        first = 0;
+    } else {
+        fd = open("/data/PS4ROMS/PS2ISO/launcher_log.txt", O_WRONLY | O_CREAT | O_APPEND, 0777);
+    }
     if (fd < 0) return;
     char buf[1024];
     va_list args;
@@ -476,7 +483,7 @@ int main(void) {
 
     scePadInit();
     log_debug("PAD INIT DONE");
-    int pad = scePadOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+    int pad = scePadOpen(1, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
     log_debug("PAD OPEN: %d", pad);
 
     scan_games();
@@ -512,7 +519,7 @@ int main(void) {
         }
 
         memset(framebuffer[current_buf], 0, FB_SIZE);
-        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFF1A1A2E);
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFF224466);
 
         draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
         draw_text(80, 90, "==================", 0xFFFFFFFF);
