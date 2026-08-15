@@ -7,89 +7,31 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Set env vars
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld llvm python3 python3-pip curl
+          echo "OO_PS4_TOOLCHAIN=${GITHUB_WORKSPACE}/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
+
+      - name: Cache OpenOrbis Toolchain
+        id: cache-oosdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OO_PS4_TOOLCHAIN }}
+          key: ${{ runner.os }}-oosdk-illusion
 
       - name: Download OpenOrbis Toolchain
+        if: steps.cache-oosdk.outputs.cache-hit != 'true'
         run: |
-          curl -L -o oo-toolchain.tar.gz \
-            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz"
-          mkdir -p $HOME/oo-toolchain
-          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain
+          curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/download/0.0.1.416/toolchain.tar.gz | tar xz -C ./
 
-      - name: Find toolchain root
-        run: |
-          TOOLCHAIN_ROOT=$(find $HOME/oo-toolchain -path "*/include/orbis/libkernel.h" -print -quit | sed 's|/include/orbis/libkernel.h||')
-          if [ -z "$TOOLCHAIN_ROOT" ]; then
-            echo "ERROR: Could not find orbis/libkernel.h in extracted toolchain!"
-            find $HOME/oo-toolchain -type d | head -30
-            exit 1
-          fi
-          echo "Found toolchain root: $TOOLCHAIN_ROOT"
-          echo "OO_PS4_TOOLCHAIN=$TOOLCHAIN_ROOT" >> $GITHUB_ENV
-          echo "$TOOLCHAIN_ROOT/bin/linux" >> $GITHUB_PATH
-
-      - name: Download packaging tools
-        run: |
-          curl -L -o oo-source.tar.gz \
-            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/archive/refs/tags/v0.5.4.tar.gz"
-          mkdir -p $HOME/oo-source
-          tar -xzf oo-source.tar.gz -C $HOME/oo-source --strip-components=1
-          cp -r $HOME/oo-source/scripts $OO_PS4_TOOLCHAIN/
-          curl -L -o $HOME/PkgTool.Core \
-            "https://github.com/maxton/LibOrbisPkg/releases/download/v0.2.0/PkgTool.Core" 2>/dev/null || true
-          if [ -f "$HOME/PkgTool.Core" ]; then
-            chmod +x $HOME/PkgTool.Core
-            cp $HOME/PkgTool.Core $OO_PS4_TOOLCHAIN/bin/linux/
-          fi
-
-            - name: Patch make_fself.py for Python 3
-        run: |
-          SCRIPT="$OO_PS4_TOOLCHAIN/scripts/make_fself.py"
-          
-          # 1. Basic fixes
-          sed -i "s/MAGIC = '\\\\x7FELF'/MAGIC = b'\\\\x7fELF'/g" "$SCRIPT"
-          sed -i "s/EMPTY_DIGEST = '\\\\0' \\* DIGEST_SIZE/EMPTY_DIGEST = b'\\\\0' * DIGEST_SIZE/g" "$SCRIPT"
-          sed -i "s/EMPTY_SIGNATURE = '\\\\0' \\* SIGNATURE_SIZE/EMPTY_SIGNATURE = b'\\\\0' * SIGNATURE_SIZE/g" "$SCRIPT"
-          sed -i "s/val.decode('hex')/bytes.fromhex(val)/g" "$SCRIPT"
-          sed -i 's/xrange/range/g' "$SCRIPT"
-          sed -i "s/re.sub('\\\\s+', '', val)/re.sub(r'\\\\s+', '', val)/g" "$SCRIPT"
-          
-          # 2. Monkey-patch struct.pack to auto-convert strings to bytes
-          python3 << 'PYEOF'
-          import sys
-          path = sys.argv[1]
-          with open(path, 'r') as f:
-              content = f.read()
-          
-          monkey = '''
-import struct as _struct_module
-_original_struct_pack = _struct_module.pack
-def _struct_pack(fmt, *args):
-    new_args = []
-    for a in args:
-        if isinstance(a, str):
-            new_args.append(a.encode('latin-1'))
-        else:
-            new_args.append(a)
-    return _original_struct_pack(fmt, *new_args)
-_struct_module.pack = _struct_pack
-'''
-          # Insert right after "import struct"
-          content = content.replace('import struct', 'import struct\\n' + monkey)
-          
-          with open(path, 'w') as f:
-              f.write(content)
-          PYEOF "$SCRIPT"
-          
-          echo "Patched make_fself.py"
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "12.0"
 
       - name: Build PKG
         run: make pkg
