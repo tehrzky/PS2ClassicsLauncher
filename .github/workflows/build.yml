@@ -12,13 +12,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup OpenOrbis Toolchain
-        uses: OpenOrbis/toolchain-action@main
-        with:
-          version: latest
-
-      - name: Build PKG
-        run: make pkg
+      - name: Build PKG in OpenOrbis toolchain container
+        run: |
+          docker run --rm -w /workspace -v "${{ github.workspace }}":/workspace \
+            openorbis/toolchain:latest \
+            bash -c "make pkg"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
