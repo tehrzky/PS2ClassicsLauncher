@@ -586,30 +586,7 @@ int main(void) {
         draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFF224466);
 
         draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
-        draw_text(80, 90, "==================", 0xFFFFFFFF);
-
-        int start_y = 140;
-        int visible = 28;
-        int scroll = 0;
-        if (selected >= visible) scroll = selected - visible + 1;
-
-        for (int i = scroll; i < game_count && i < scroll + visible; i++) {
-            int y = start_y + (i - scroll) * 28;
-            uint32_t color = (i == selected) ? 0xFFFFFF00 : 0xFFCCCCCC;
-            if (i == selected) {
-                draw_rect(70, y - 4, 800, 24, 0xFF333355);
-            }
-            draw_text(80, y, games[i].name, color);
-            draw_text(500, y, games[i].id, (i == selected) ? 0xFFFFFF00 : 0xFF888888);
-        }
-
-        draw_text(80, SCREEN_HEIGHT - 80, games[selected].path, 0xFF666666);
-        draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
-
-        flip();
-        sceKernelUsleep(16666);
-    }
-
+       
     while (1) {
         sceKernelUsleep(1000000);
     }
