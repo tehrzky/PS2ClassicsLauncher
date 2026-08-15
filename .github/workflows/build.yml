@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-       - name: Install dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld llvm python3 python3-pip curl
@@ -26,7 +26,6 @@ jobs:
 
       - name: Find toolchain root
         run: |
-          # The tarball might extract to a subfolder. Find where include/orbis/ actually is.
           TOOLCHAIN_ROOT=$(find $HOME/oo-toolchain -path "*/include/orbis/libkernel.h" -print -quit | sed 's|/include/orbis/libkernel.h||')
           if [ -z "$TOOLCHAIN_ROOT" ]; then
             echo "ERROR: Could not find orbis/libkernel.h in extracted toolchain!"
