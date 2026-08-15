@@ -3,7 +3,7 @@
 #include <orbis/Pad.h>
 #include <orbis/VideoOut.h>
 #include <dirent.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <string.h>
@@ -16,15 +16,13 @@
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/.launcher_temp.txt"
-#define EMULATOR_TID    "PCSX20042"   // <-- CHANGE TO YOUR EMULATOR PKG TITLE ID
+#define EMULATOR_TID    "PCSX20042"
 
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
 // ============ EMBEDDED DEFAULT CONFIG ============
-// Used if /data/PS4ROMS/PS2ISO/default.txt does not exist.
-// User can place their own default.txt to override this.
 static const char *embedded_default =
 "--max-disc-num=1\n"
 "--ps2-lang=system\n"
@@ -140,33 +138,29 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
 
-    char buf[131072]; // 128KB
+    char buf[131072];
     int n = read(fd, buf, sizeof(buf));
     close(fd);
     if (n <= 0) return 0;
 
-    // Strategy 1: Find "BOOT2" or "BOOT" then look for "cdrom0:\" pattern
     for (int i = 0; i < n - 30; i++) {
         if (strncmp(buf + i, "BOOT2", 5) == 0 || strncmp(buf + i, "BOOT", 4) == 0) {
-            // Search forward for cdrom0: within next 256 bytes
             int limit = i + 256;
             if (limit > n) limit = n;
             for (int j = i; j < limit - 8; j++) {
                 if (strncmp(buf + j, "cdrom0:", 7) == 0) {
                     char *p = buf + j + 7;
                     if (*p == '\\' || *p == '/') p++;
-                    // p now points to "SCUS_971.01;1" or similar
                     char raw[32] = {0};
                     int k = 0;
                     while (k < 31 && p[k] && p[k] != ';' && p[k] != '\n' && p[k] != '\r' && p[k] != ' ') {
                         raw[k] = p[k];
                         k++;
                     }
-                    // Convert SCUS_971.01 -> SCUS-97101
                     int fi = 0;
                     for (int r = 0; raw[r] && fi < (int)out_len - 1; r++) {
                         if (raw[r] == '_') out_id[fi++] = '-';
-                        else if (raw[r] == '.') { /* skip dot */ }
+                        else if (raw[r] == '.') { }
                         else out_id[fi++] = raw[r];
                     }
                     out_id[fi] = '\0';
@@ -176,7 +170,6 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
         }
     }
 
-    // Strategy 2: Direct pattern search for S???_###.## in first 128KB
     for (int i = 0; i < n - 15; i++) {
         char c0 = buf[i];
         char c1 = buf[i+1];
@@ -223,15 +216,12 @@ static void scan_games(void) {
         char *ext = entry->d_name + len - 4;
         if (strcasecmp(ext, ".iso") != 0 && strcasecmp(ext, ".bin") != 0) continue;
 
-        // Name = filename without extension
         strncpy(games[game_count].name, entry->d_name, 255);
         games[game_count].name[len - 4] = '\0';
 
-        // Full path
         snprintf(games[game_count].path, sizeof(games[game_count].path),
                  "%s%s", ISO_DIR, entry->d_name);
 
-        // Extract disc ID
         if (!extract_disc_id(games[game_count].path, games[game_count].id, sizeof(games[game_count].id))) {
             strncpy(games[game_count].id, "UNKNOWN", sizeof(games[game_count].id) - 1);
         }
@@ -242,23 +232,57 @@ static void scan_games(void) {
     qsort(games, game_count, sizeof(Game), name_compare);
 }
 
+// ============ FUZZY NAME MATCHING ============
+static void normalize_name(char *dst, const char *src, size_t dst_len) {
+    const char *skip_tags[] = {"(usa)", "(eur)", "(jpn)", "(asia)", "(korea)",
+                               "[v", "[!]", "[a]", "[b]", "[c]", "[f]", "[h]",
+                               "[o]", "[p]", "[t]", "[crack]", "[demo]", "[beta]", NULL};
+    size_t j = 0;
+    int in_brackets = 0;
+
+    for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
+        char c = src[i];
+        if (c == '(' || c == '[') in_brackets++;
+        if (c == ')' || c == ']') { in_brackets--; continue; }
+        if (in_brackets > 0) continue;
+        if (isalnum((unsigned char)c) || c == ' ') {
+            if (c == ' ') {
+                if (j > 0 && dst[j-1] != ' ') dst[j++] = ' ';
+            } else {
+                dst[j++] = tolower((unsigned char)c);
+            }
+        }
+    }
+    if (j > 0 && dst[j-1] == ' ') j--;
+    dst[j] = '\0';
+}
+
+static int fuzzy_match(const char *iso_name, const char *config_name) {
+    char norm_iso[256], norm_cfg[256];
+    normalize_name(norm_iso, iso_name, sizeof(norm_iso));
+    normalize_name(norm_cfg, config_name, sizeof(norm_cfg));
+    if (strstr(norm_iso, norm_cfg) != NULL) return 1;
+    if (strstr(norm_cfg, norm_iso) != NULL) return 1;
+    return 0;
+}
+
 // ============ EXISTING CONFIG LOOKUP ============
 static int find_game_config(const char *disc_id, const char *game_name, char *out_path, size_t out_len) {
     DIR *dir = opendir(ISO_DIR "gameconfig/");
     if (!dir) return 0;
-    
+
     struct dirent *entry;
     char best_match[256] = {0};
-    
+
     while ((entry = readdir(dir)) != NULL) {
         int len = strlen(entry->d_name);
         if (len < 5) continue;
         if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
-        
+
         char cfg_name[256];
         strncpy(cfg_name, entry->d_name, len - 4);
         cfg_name[len - 4] = '\0';
-        
+
         if (fuzzy_match(game_name, cfg_name)) {
             if (strcasecmp(game_name, cfg_name) == 0) {
                 snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, entry->d_name);
@@ -271,15 +295,15 @@ static int find_game_config(const char *disc_id, const char *game_name, char *ou
         }
     }
     closedir(dir);
-    
+
     if (best_match[0] != '\0') {
         snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, best_match);
         return 1;
     }
-    
+
     snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, disc_id);
     if (access(out_path, F_OK) == 0) return 1;
-    
+
     return 0;
 }
 
@@ -377,181 +401,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     return 1;
 }
 
-// ============ CONFIG GENERATION ============
-static int set_active_game(const char *iso_path, const char *disc_id, const char *game_name) {
-    char line_buf[2048];
-    int n;
-
-    // 1. Check for existing per-game config
-    char existing_config[512];
-    int has_existing = find_game_config(disc_id, game_name, existing_config, sizeof(existing_config));
-
-    // 2. Open temp config for writing
-    int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
-
-    if (has_existing) {
-        // Use existing config as base, but force-correct --image and --ps2-title-id
-        int src = open(existing_config, O_RDONLY);
-        if (src >= 0) {
-            char buf[65536];
-            int m = read(src, buf, sizeof(buf) - 1);
-            close(src);
-            if (m > 0) {
-                buf[m] = '\0';
-                char *p = buf;
-                while (*p) {
-                    char *line_end = p;
-                    while (*line_end && *line_end != '\n') line_end++;
-                    int line_len = line_end - p;
-
-                    // Skip old --image= and --ps2-title-id= lines; we inject fresh ones
-                    if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { /* skip */ }
-                    else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { /* skip */ }
-                    else {
-                        write(fd, p, line_len);
-                        write(fd, "\n", 1);
-                    }
-                    p = line_end;
-                    if (*p == '\n') p++;
-                }
-            }
-        }
-    } else {
-        // No existing config: use default template
-        char template_buf[65536];
-        int template_len = 0;
-
-        int src = open(DEFAULT_CONFIG, O_RDONLY);
-        if (src >= 0) {
-            template_len = read(src, template_buf, sizeof(template_buf) - 1);
-            close(src);
-            if (template_len > 0) template_buf[template_len] = '\0';
-        }
-        if (template_len <= 0) {
-            template_len = strlen(embedded_default);
-            memcpy(template_buf, embedded_default, template_len);
-            template_buf[template_len] = '\0';
-        }
-        write(fd, template_buf, template_len);
-        if (template_len > 0 && template_buf[template_len - 1] != '\n')
-            write(fd, "\n", 1);
-    }
-
-    // 3. Append guaranteed-correct image path and disc ID
-    n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
-    write(fd, line_buf, n);
-    n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
-    write(fd, line_buf, n);
-    close(fd);
-
-    // 4. Update master config
-    fd = open(MASTER_CONFIG, O_RDONLY);
-    if (fd < 0) return 0;
-    char buf[32768];
-    int m = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (m <= 0) return 0;
-    buf[m] = '\0';
-
-    fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
-
-    char *p = buf;
-    while (*p) {
-        char *line_end = p;
-        while (*line_end && *line_end != '\n') line_end++;
-        int line_len = line_end - p;
-
-        if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
-            // skip active config line
-        } else {
-            write(fd, p, line_len);
-            write(fd, "\n", 1);
-        }
-        p = line_end;
-        if (*p == '\n') p++;
-    }
-
-    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
-    write(fd, line_buf, n);
-    close(fd);
-    return 1;
-}
-    // 1. Read default template (file or embedded)
-    char template_buf[65536];
-    int template_len = 0;
-
-    int fd = open(DEFAULT_CONFIG, O_RDONLY);
-    if (fd >= 0) {
-        template_len = read(fd, template_buf, sizeof(template_buf) - 1);
-        close(fd);
-        if (template_len > 0) template_buf[template_len] = '\0';
-    }
-    if (template_len <= 0) {
-        template_len = strlen(embedded_default);
-        memcpy(template_buf, embedded_default, template_len);
-        template_buf[template_len] = '\0';
-    }
-
-    // 2. Write temp config
-    fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
-
-    char line_buf[2048];
-    int n;
-
-    n = snprintf(line_buf, sizeof(line_buf), "# Auto-generated by PS2 Launcher\n");
-    write(fd, line_buf, n);
-    n = snprintf(line_buf, sizeof(line_buf), "# Game: %s\n", disc_id);
-    write(fd, line_buf, n);
-    write(fd, template_buf, template_len);
-    if (template_len > 0 && template_buf[template_len - 1] != '\n')
-        write(fd, "\n", 1);
-    n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
-    write(fd, line_buf, n);
-    n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
-    write(fd, line_buf, n);
-    close(fd);
-
-    // 3. Update master config
-    fd = open(MASTER_CONFIG, O_RDONLY);
-    if (fd < 0) return 0;
-    char buf[32768];
-    int m = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (m <= 0) return 0;
-    buf[m] = '\0';
-
-    fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
-
-    char *p = buf;
-    while (*p) {
-        char *line_end = p;
-        while (*line_end && *line_end != '\n') line_end++;
-        int line_len = line_end - p;
-
-        if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
-            // skip active config line
-        } else {
-            write(fd, p, line_len);
-            write(fd, "\n", 1);
-        }
-
-        p = line_end;
-        if (*p == '\n') p++;
-    }
-
-    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
-    write(fd, line_buf, n);
-    close(fd);
-    return 1;
-}
-
 // ============ LAUNCH ============
-
-
 static void launch_emulator(void) {
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
 }
@@ -595,7 +445,7 @@ int main(void) {
 
     scan_games();
     if (game_count == 0) {
-        draw_text(100, 100, "NO ISO FILES FOUND IN /data/PS4ROMS/PS2ISO/", 0xFFFFFFFF);
+        draw_text(100, 100, "NO ISO FILES FOUND", 0xFFFFFFFF);
         flip();
         sceKernelSleep(3);
         return 0;
@@ -622,7 +472,6 @@ int main(void) {
             }
         }
 
-        // Render
         memset(framebuffer[current_buf], 0, FB_SIZE);
         draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFF1A1A2E);
 
@@ -644,7 +493,6 @@ int main(void) {
             draw_text(500, y, games[i].id, (i == selected) ? 0xFFFFFF00 : 0xFF888888);
         }
 
-        // Footer info
         draw_text(80, SCREEN_HEIGHT - 80, games[selected].path, 0xFF666666);
         draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
 
@@ -654,4 +502,3 @@ int main(void) {
 
     return 0;
 }
-
