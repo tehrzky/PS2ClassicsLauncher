@@ -1,0 +1,27 @@
+name: Build PS2 Launcher PKG
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OpenOrbis Toolchain
+        uses: OpenOrbis/toolchain-action@main
+        with:
+          version: latest
+
+      - name: Build PKG
+        run: make pkg
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps2-launcher
+          path: "*.pkg"
