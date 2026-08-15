@@ -5,7 +5,7 @@ TITLE_ID    := ITEM00001
 CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER00000
 
 # Libraries
-LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal
+LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule
 
 # Toolchain
 TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
