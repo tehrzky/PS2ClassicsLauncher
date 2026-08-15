@@ -22,7 +22,7 @@ jobs:
           curl -L -o oo-toolchain.tar.gz \
             "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.2/v0.5.2.tar.gz"
           mkdir -p $HOME/oo-toolchain
-          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain
+          tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain --strip-components=1
 
       - name: Set environment
         run: |
