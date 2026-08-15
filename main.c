@@ -1,8 +1,12 @@
+void _init(void) {}
+void _fini(void) {}
+
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 #include <orbis/Pad.h>
 #include <orbis/VideoOut.h>
+#include <orbis/Sysmodule.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -11,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config-emu-ps4.txt"
@@ -102,6 +107,22 @@ static int selected = 0;
 static uint32_t *framebuffer[2];
 static int video;
 static int current_buf = 0;
+
+// ============ DEBUG LOG ============
+static void log_debug(const char *fmt, ...) {
+    int fd = open("/data/PS4ROMS/PS2ISO/launcher_log.txt", O_WRONLY | O_CREAT | O_APPEND, 0777);
+    if (fd < 0) return;
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (n > 0) {
+        write(fd, buf, n);
+        write(fd, "\n", 1);
+    }
+    close(fd);
+}
 
 // ============ DRAWING ============
 static void draw_pixel(int x, int y, uint32_t color) {
@@ -235,9 +256,6 @@ static void scan_games(void) {
 
 // ============ FUZZY NAME MATCHING ============
 static void normalize_name(char *dst, const char *src, size_t dst_len) {
-    const char *skip_tags[] = {"(usa)", "(eur)", "(jpn)", "(asia)", "(korea)",
-                               "[v", "[!]", "[a]", "[b]", "[c]", "[f]", "[h]",
-                               "[o]", "[p]", "[t]", "[crack]", "[demo]", "[beta]", NULL};
     size_t j = 0;
     int in_brackets = 0;
 
@@ -439,15 +457,30 @@ static void flip(void) {
 
 // ============ MAIN ============
 int main(void) {
-    if (init_video() < 0) return -1;
+    log_debug("=== START ===");
+
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_VIDEO_OUT);
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_PAD);
+    log_debug("MODULES LOADED");
+
+    if (init_video() < 0) {
+        log_debug("VIDEO FAIL");
+        return -1;
+    }
+    log_debug("VIDEO OK");
 
     sceUserServiceInitialize(NULL);
     sceSystemServiceHideSplashScreen();
+    log_debug("SYSTEM INIT OK");
 
     scePadInit();
     int pad = scePadOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+    log_debug("PAD OK");
 
     scan_games();
+    log_debug("GAMES: %d", game_count);
+
     if (game_count == 0) {
         draw_text(100, 100, "NO ISO FILES FOUND", 0xFFFFFFFF);
         flip();
@@ -471,6 +504,7 @@ int main(void) {
             selected = (selected + 1) % game_count;
         }
         if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+            log_debug("LAUNCH: %s", games[selected].name);
             if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
                 launch_emulator();
             }
@@ -504,15 +538,6 @@ int main(void) {
         sceKernelUsleep(16666);
     }
 
-    // Never return
-    while (1) {
-        sceKernelUsleep(1000000);
-    }
-}
-
-// PS4 loader entry point
-void _start(void) {
-    main();
     while (1) {
         sceKernelUsleep(1000000);
     }
