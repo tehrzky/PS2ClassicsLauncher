@@ -16,7 +16,7 @@
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/.launcher_temp.txt"
-#define EMULATOR_TID    "CUSA03500"   // <-- CHANGE TO YOUR EMULATOR PKG TITLE ID
+#define EMULATOR_TID    "PCSX20042"   // <-- CHANGE TO YOUR EMULATOR PKG TITLE ID
 
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
