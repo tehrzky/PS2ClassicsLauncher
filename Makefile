@@ -1,45 +1,58 @@
-TARGET      := ps2launcher
-OUTDIR      := .
-INTDIR      := build
-PKGDIR      := pkg
+# Package metadata
+TITLE       := PS2 ISO Launcher
+VERSION     := 01.00
+TITLE_ID    := ITEM00001
+CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER0000
 
-CC          := clang
-LD          := ld.lld
-OBJCOPY     := objcopy
-
-INCLUDES    := -I$(OO_PS4_TOOLCHAIN)/include -I$(OO_PS4_TOOLCHAIN)/include/c++/v1
-LIBDIRS     := -L$(OO_PS4_TOOLCHAIN)/lib
-
+# Libraries
 LIBS        := -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lkernel
 
-CFLAGS      := -cc1 -triple x86_64-scei-ps4-elf $(INCLUDES) -DORBIS -emit-obj
-LDFLAGS     := -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr $(LIBDIRS) $(LIBS)
+# Toolchain
+TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
+INTDIR      := build
+CDIR        := linux
 
+# Compiler flags (matching Apollo exactly)
+CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
+
+# Linker flags (matching Apollo exactly, including crt1.o)
+LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
+
+# Source
 CFILES      := main.c
 OBJS        := $(patsubst %.c,$(INTDIR)/%.o,$(notdir $(CFILES)))
 
-all: pkg
+all: $(CONTENT_ID).pkg
+
+$(CONTENT_ID).pkg: pkg.gp4
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core pkg_build $< .
+
+pkg.gp4: eboot.bin sce_sys/param.sfo sce_sys/icon0.png
+	$(TOOLCHAIN)/bin/$(CDIR)/create-gp4 -out $@ --content-id=$(CONTENT_ID) --files "$^"
+
+sce_sys/param.sfo: Makefile
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_new $@
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ APP_TYPE --type Integer --maxsize 4 --value 0
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ APP_VER --type Utf8 --maxsize 8 --value '$(VERSION)'
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ ATTRIBUTE --type Integer --maxsize 4 --value 0
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ CATEGORY --type Utf8 --maxsize 4 --value 'gd'
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ CONTENT_ID --type Utf8 --maxsize 48 --value '$(CONTENT_ID)'
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ DOWNLOAD_DATA_SIZE --type Integer --maxsize 4 --value 0
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ SYSTEM_VER --type Integer --maxsize 4 --value 0
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ TITLE --type Utf8 --maxsize 128 --value '$(TITLE)'
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value '$(TITLE_ID)'
+	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
+
+eboot.bin: $(INTDIR) $(OBJS)
+	$(TOOLCHAIN)/bin/$(CDIR)/ld.lld $(INTDIR)/*.o -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
+	$(TOOLCHAIN)/bin/$(CDIR)/create-fself -in=$(INTDIR)/ps2launcher.elf -out=$(INTDIR)/ps2launcher.oelf --eboot "eboot.bin" --paid 0x3800000000000011
 
 $(INTDIR)/%.o: %.c | $(INTDIR)
-	$(CC) $(CFLAGS) -o $@ $<
-
-$(OUTDIR)/$(TARGET).elf: $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $<
-	$(OBJCOPY) --only-keep-debug $@ $(OUTDIR)/$(TARGET).elf.debug
-	$(OBJCOPY) --strip-debug $@
-
-$(PKGDIR)/eboot.bin: $(OUTDIR)/$(TARGET).elf
-		$(OO_PS4_TOOLCHAIN)/bin/linux/create-fself -in $< -out $@
-
-$(OUTDIR)/$(TARGET).pkg: $(PKGDIR)/eboot.bin $(PKGDIR)/pkg.gp4 sce_sys/param.sfo sce_sys/icon0.png
-	$(OO_PS4_TOOLCHAIN)/bin/linux/PkgTool.Core pkg_build $(PKGDIR)/pkg.gp4 $(OUTDIR)
-
-pkg: $(OUTDIR)/$(TARGET).pkg
+	$(TOOLCHAIN)/bin/$(CDIR)/clang $(CFLAGS) -o $@ $<
 
 $(INTDIR):
 	mkdir -p $(INTDIR)
 
 clean:
-	rm -rf $(INTDIR) $(OUTDIR)/$(TARGET).elf $(OUTDIR)/$(TARGET).pkg $(OUTDIR)/$(TARGET).elf.debug $(PKGDIR)/eboot.bin
-
-.PHONY: all clean pkg
+	rm -f $(CONTENT_ID).pkg pkg.gp4 sce_sys/param.sfo eboot.bin \
+	      $(INTDIR)/ps2launcher.
