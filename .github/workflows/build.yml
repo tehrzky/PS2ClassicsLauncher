@@ -38,30 +38,18 @@ jobs:
 
       - name: Patch make_fself.py for Python 3
         run: |
-          python3 << 'PYEOF'
-          import os
-          path = os.path.join(os.environ['OO_PS4_TOOLCHAIN'], 'scripts', 'make_fself.py')
-          with open(path, 'r') as f:
-              content = f.read()
-          
-          # Fix bytes literals
-          content = content.replace("MAGIC = '\\\\x7FELF'", "MAGIC = b'\\\\x7fELF'")
-          content = content.replace("EMPTY_DIGEST = '\\\\0' * DIGEST_SIZE", "EMPTY_DIGEST = b'\\\\0' * DIGEST_SIZE")
-          content = content.replace("EMPTY_SIGNATURE = '\\\\0' * SIGNATURE_SIZE", "EMPTY_SIGNATURE = b'\\\\0' * SIGNATURE_SIZE")
-          
-          # Fix hex decode (Python 2 -> 3)
-          content = content.replace("val.decode('hex')", "bytes.fromhex(val)")
-          
-          # Fix xrange (Python 2 -> 3)
-          content = content.replace("xrange", "range")
-          
-          # Fix invalid escape in regex
-          content = content.replace("re.sub('\\s+', '', val)", "re.sub(r'\\s+', '', val)")
-          
-          with open(path, 'w') as f:
-              f.write(content)
-          print("Patched make_fself.py for Python 3")
-          PYEOF
+          SCRIPT="$OO_PS4_TOOLCHAIN/scripts/make_fself.py"
+          # Fix 1: bytes literals for magic and empty buffers
+          sed -i "s/MAGIC = '\\\\x7FELF'/MAGIC = b'\\\\x7fELF'/g" "$SCRIPT"
+          sed -i "s/EMPTY_DIGEST = '\\\\0' \\* DIGEST_SIZE/EMPTY_DIGEST = b'\\\\0' * DIGEST_SIZE/g" "$SCRIPT"
+          sed -i "s/EMPTY_SIGNATURE = '\\\\0' \\* SIGNATURE_SIZE/EMPTY_SIGNATURE = b'\\\\0' * SIGNATURE_SIZE/g" "$SCRIPT"
+          # Fix 2: hex decode (Python 2 -> 3)
+          sed -i "s/val.decode('hex')/bytes.fromhex(val)/g" "$SCRIPT"
+          # Fix 3: xrange -> range
+          sed -i 's/xrange/range/g' "$SCRIPT"
+          # Fix 4: invalid escape in regex
+          sed -i "s/re.sub('\\\\s+', '', val)/re.sub(r'\\\\s+', '', val)/g" "$SCRIPT"
+          echo "Patched make_fself.py"
 
       - name: Build PKG
         run: make pkg
