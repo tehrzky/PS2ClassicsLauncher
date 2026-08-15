@@ -439,38 +439,44 @@ static int init_video(void) {
         log_debug("VIDEO OPEN FAIL: %d", video);
         return -1;
     }
+    log_debug("VIDEO HANDLE: %d", video);
 
     size_t size = (FB_SIZE + 0x1FFFFF) & ~0x1FFFFF;
+    log_debug("FB SIZE: %zu", size);
+
     for (int i = 0; i < 2; i++) {
         off_t directMem = 0;
         int r = sceKernelAllocateDirectMemory(0, 0x180000000, size, 0x200000, 3, &directMem);
         if (r < 0) {
-            log_debug("ALLOC FAIL: %d", r);
+            log_debug("ALLOC FAIL[%d]: %d", i, r);
             return -1;
         }
         void *addr = NULL;
         r = sceKernelMapDirectMemory(&addr, size, 3, 0, directMem, 0x200000);
         if (r < 0) {
-            log_debug("MAP FAIL: %d", r);
+            log_debug("MAP FAIL[%d]: %d", i, r);
             return -1;
         }
         memset(addr, 0, size);
         framebuffer[i] = (uint32_t*)addr;
+        log_debug("BUFFER[%d]: %p", i, addr);
     }
 
     OrbisVideoOutBufferAttribute attr;
+    memset(&attr, 0, sizeof(attr));  // ZERO the whole struct first
     sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
-        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
+        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0);
 
-    void *bufs[2] = { (void*)framebuffer[0], (void*)framebuffer[1] };
-    int r = sceVideoOutRegisterBuffers(video, 0, bufs, 2, &attr);
+    int r = sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
     if (r < 0) {
         log_debug("REGISTER BUFFERS FAIL: %d", r);
         return -1;
     }
+    log_debug("REGISTER BUFFERS OK");
 
     r = sceVideoOutSetFlipRate(video, 0);
-    log_debug("VIDEO INIT COMPLETE, FLIPRATE: %d", r);
+    log_debug("SET FLIP RATE: %d", r);
+
     return 0;
 }
 
