@@ -2,7 +2,7 @@
 #include <orbis/SystemService.h>
 #include <orbis/Pad.h>
 #include <orbis/VideoOut.h>
-#include <sys/dirent.h>
+#include <dirent.h>
 #include <sys/fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
