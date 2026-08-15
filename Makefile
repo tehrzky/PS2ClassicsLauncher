@@ -12,7 +12,7 @@ LIBDIRS     := -L$(OO_PS4_TOOLCHAIN)/lib
 
 LIBS        := -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lkernel
 
-CFLAGS      := -cc1 -triple x86_64-scei-ps4-elf -munwind-tables $(INCLUDES) -DORBIS -emit-obj
+CFLAGS      := -cc1 -triple x86_64-scei-ps4-elf $(INCLUDES) -DORBIS -emit-obj
 LDFLAGS     := -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr $(LIBDIRS) $(LIBS)
 
 CFILES      := main.c
