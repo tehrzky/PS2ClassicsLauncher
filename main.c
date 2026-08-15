@@ -513,6 +513,7 @@ log_debug("PAD OPEN: %d", pad);
     int start_y = 140;
     int visible = 28;
     for (int i = 0; i < game_count && i < visible; i++) {
+        draw_rect(70, 130, 700, 790, 0xFF00FF00); // bright green list background
         int y = start_y + i * 28;
         draw_text(80, y, games[i].name, 0xFFFFFFFF);
         draw_text(500, y, games[i].id, 0xFF888888);
@@ -521,6 +522,7 @@ log_debug("PAD OPEN: %d", pad);
     draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
     flip();
     log_debug("FIRST FRAME OK");
+    sceKernelSleep(3);
     log_debug("GAME[0]: name='%s' id='%s' path='%s'", games[0].name, games[0].id, games[0].path);
     log_debug("GAME[1]: name='%s' id='%s'", games[1].name, games[1].id);
 
