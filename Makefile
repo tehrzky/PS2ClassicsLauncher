@@ -12,10 +12,14 @@ TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
 INTDIR      := build
 CDIR        := linux
 
-# Compiler flags (matching Apollo exactly)
+# Compiler: use system clang (from install-llvm-action)
+CC          := clang
+LD          := ld.lld
+
+# Compiler flags
 CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
 
-# Linker flags (matching Apollo exactly, including crt1.o)
+# Linker flags
 LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
 
 # Source
@@ -44,15 +48,17 @@ sce_sys/param.sfo: Makefile
 	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
 
 eboot.bin: $(INTDIR) $(OBJS)
-	$(TOOLCHAIN)/bin/$(CDIR)/ld.lld $(INTDIR)/*.o -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
+	$(LD) $(INTDIR)/*.o -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
 	$(TOOLCHAIN)/bin/$(CDIR)/create-fself -in=$(INTDIR)/ps2launcher.elf -out=$(INTDIR)/ps2launcher.oelf --eboot "eboot.bin" --paid 0x3800000000000011
 
 $(INTDIR)/%.o: %.c | $(INTDIR)
-	$(TOOLCHAIN)/bin/$(CDIR)/clang $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $<
 
 $(INTDIR):
 	mkdir -p $(INTDIR)
 
 clean:
 	rm -f $(CONTENT_ID).pkg pkg.gp4 sce_sys/param.sfo eboot.bin \
-	      $(INTDIR)/ps2launcher.
+	      $(INTDIR)/ps2launcher.elf $(INTDIR)/ps2launcher.oelf $(OBJS)
+
+.PHONY: all clean
