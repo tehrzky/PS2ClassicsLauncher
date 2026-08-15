@@ -29,11 +29,7 @@ $(OUTDIR)/$(TARGET).elf: $(OBJS)
 	$(OBJCOPY) --strip-debug $@
 
 $(PKGDIR)/eboot.bin: $(OUTDIR)/$(TARGET).elf
-	@# Patch ELF type: ET_DYN (0x3) -> ET_SCE_EXEC_ASLR (0xFE10) for PIE binaries
-	python3 -c "import struct; f=open('$<','r+b'); f.seek(16); t=struct.unpack('<H',f.read(2))[0]; f.seek(16); f.write(struct.pack('<H',0xFE10 if t==3 else t)); f.close()"
-	python3 $(OO_PS4_TOOLCHAIN)/scripts/make_fself.py $< $@
-
-
+	$(OO_PS4_TOOLCHAIN)/bin/linux/create-fself -in $< -out $@ --eboot
 
 $(OUTDIR)/$(TARGET).pkg: $(PKGDIR)/eboot.bin $(PKGDIR)/pkg.gp4 sce_sys/param.sfo sce_sys/icon0.png
 	$(OO_PS4_TOOLCHAIN)/bin/linux/PkgTool.Core pkg_build $(PKGDIR)/pkg.gp4 $(OUTDIR)
