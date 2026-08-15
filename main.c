@@ -509,15 +509,14 @@ int main(void) {
 
     scePadInit();
     log_debug("PAD INIT DONE");
-    int userId = 0;
-int ret = sceUserServiceInitialize(NULL);
-if (ret < 0) log_debug("UserServiceInit error: %d", ret);
-ret = sceUserServiceGetInitialUser(&userId);
-if (ret < 0) log_debug("GetInitialUser error: %d", ret);
-log_debug("USER ID: %d", userId);
 
-int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
-log_debug("PAD OPEN: %d", pad);
+    int userId = 1; // common fallback for first user
+    int ret = sceUserServiceGetInitialUser(&userId);
+    log_debug("GetInitialUser: %d (uid=%d)", ret, userId);
+    if (ret < 0) userId = 1;
+
+    int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+    log_debug("PAD OPEN: %d (uid=%d)", pad, userId);
 
     scan_games();
     log_debug("GAMES: %d", game_count);
