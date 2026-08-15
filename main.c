@@ -3,6 +3,9 @@ int __libc_start_main(void *main_fn, int argc, char **argv, ...) {
     return ((int (*)(void))main_fn)();
 }
 
+void _init(void) {}
+void _fini(void) {}
+
 #include <orbis/libkernel.h>
 #include <orbis/VideoOut.h>
 #include <string.h>
