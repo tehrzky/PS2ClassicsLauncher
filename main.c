@@ -452,7 +452,8 @@ static int init_video(void) {
     OrbisVideoOutBufferAttribute attr;
     sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
                                   1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0);
-    sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
+    void *video_bufs[2] = { (void*)framebuffer[0], (void*)framebuffer[1] };
+sceVideoOutRegisterBuffers(video, 0, video_bufs, 2, &attr);
     sceVideoOutSetFlipRate(video, 0);
     return 0;
 }
@@ -483,8 +484,15 @@ int main(void) {
 
     scePadInit();
     log_debug("PAD INIT DONE");
-    int pad = scePadOpen(1, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
-    log_debug("PAD OPEN: %d", pad);
+    int userId = 0;
+int ret = sceUserServiceInitialize(NULL);
+if (ret < 0) log_debug("UserServiceInit error: %d", ret);
+ret = sceUserServiceGetInitialUser(&userId);
+if (ret < 0) log_debug("GetInitialUser error: %d", ret);
+log_debug("USER ID: %d", userId);
+
+int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+log_debug("PAD OPEN: %d", pad);
 
     scan_games();
     log_debug("GAMES: %d", game_count);
@@ -513,6 +521,8 @@ int main(void) {
     draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
     flip();
     log_debug("FIRST FRAME OK");
+    log_debug("GAME[0]: name='%s' id='%s' path='%s'", games[0].name, games[0].id, games[0].path);
+    log_debug("GAME[1]: name='%s' id='%s'", games[1].name, games[1].id);
 
     OrbisPadData pad_data;
     unsigned int old_buttons = 0;
