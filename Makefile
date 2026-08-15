@@ -29,7 +29,7 @@ $(OUTDIR)/$(TARGET).elf: $(OBJS)
 	$(OBJCOPY) --strip-debug $@
 
 $(PKGDIR)/eboot.bin: $(OUTDIR)/$(TARGET).elf
-	python3 $(OO_PS4_TOOLCHAIN)/bin/linux/create-fself.py -in $< -out $@ --eboot
+		python3 $(OO_PS4_TOOLCHAIN)/scripts/make_fself.py -in $< -out $@ --eboot
 
 $(OUTDIR)/$(TARGET).pkg: $(PKGDIR)/eboot.bin $(PKGDIR)/pkg.gp4 sce_sys/param.sfo sce_sys/icon0.png
 	$(OO_PS4_TOOLCHAIN)/bin/linux/PkgTool.Core pkg_build $(PKGDIR)/pkg.gp4 $(OUTDIR)
