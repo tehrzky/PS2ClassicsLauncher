@@ -449,7 +449,7 @@ static int init_video(void) {
             return -1;
         }
         void *addr = NULL;
-        r = sceKernelMapDirectMemory(&addr, size, 0x33, 0, directMem, 0x200000);
+        r = sceKernelMapDirectMemory(&addr, size, 3, 0, directMem, 0x200000);
         if (r < 0) {
             log_debug("MAP FAIL: %d", r);
             return -1;
@@ -460,7 +460,7 @@ static int init_video(void) {
 
     OrbisVideoOutBufferAttribute attr;
     sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
-        ORBIS_VIDEO_OUT_TILING_MODE_LINEAR, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
+        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
 
     void *bufs[2] = { (void*)framebuffer[0], (void*)framebuffer[1] };
     int r = sceVideoOutRegisterBuffers(video, 0, bufs, 2, &attr);
@@ -470,7 +470,7 @@ static int init_video(void) {
     }
 
     r = sceVideoOutSetFlipRate(video, 0);
-    log_debug("VIDEO INIT COMPLETE");
+    log_debug("VIDEO INIT COMPLETE, FLIPRATE: %d", r);
     return 0;
 }
 
