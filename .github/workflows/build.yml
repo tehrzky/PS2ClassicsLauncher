@@ -36,6 +36,33 @@ jobs:
           echo "OO_PS4_TOOLCHAIN=$TOOLCHAIN_ROOT" >> $GITHUB_ENV
           echo "$TOOLCHAIN_ROOT/bin/linux" >> $GITHUB_PATH
 
+      - name: Patch make_fself.py for Python 3
+        run: |
+          python3 << 'PYEOF'
+          import os
+          path = os.path.join(os.environ['OO_PS4_TOOLCHAIN'], 'scripts', 'make_fself.py')
+          with open(path, 'r') as f:
+              content = f.read()
+          
+          # Fix bytes literals
+          content = content.replace("MAGIC = '\\\\x7FELF'", "MAGIC = b'\\\\x7fELF'")
+          content = content.replace("EMPTY_DIGEST = '\\\\0' * DIGEST_SIZE", "EMPTY_DIGEST = b'\\\\0' * DIGEST_SIZE")
+          content = content.replace("EMPTY_SIGNATURE = '\\\\0' * SIGNATURE_SIZE", "EMPTY_SIGNATURE = b'\\\\0' * SIGNATURE_SIZE")
+          
+          # Fix hex decode (Python 2 -> 3)
+          content = content.replace("val.decode('hex')", "bytes.fromhex(val)")
+          
+          # Fix xrange (Python 2 -> 3)
+          content = content.replace("xrange", "range")
+          
+          # Fix invalid escape in regex
+          content = content.replace("re.sub('\\s+', '', val)", "re.sub(r'\\s+', '', val)")
+          
+          with open(path, 'w') as f:
+              f.write(content)
+          print("Patched make_fself.py for Python 3")
+          PYEOF
+
       - name: Build PKG
         run: make pkg
 
