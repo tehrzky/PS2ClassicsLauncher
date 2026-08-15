@@ -5,7 +5,7 @@ PKGDIR      := pkg
 
 CC          := clang
 LD          := ld.lld
-OBJCOPY     := llvm-objcopy
+OBJCOPY     := objcopy
 
 INCLUDES    := -I$(OO_PS4_TOOLCHAIN)/include -I$(OO_PS4_TOOLCHAIN)/include/c++/v1
 LIBDIRS     := -L$(OO_PS4_TOOLCHAIN)/lib
