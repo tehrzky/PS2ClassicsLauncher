@@ -438,6 +438,27 @@ static void flip(void) {
 }
 
 // ============ MAIN ============
+// TEMP DIAGNOSTIC MAIN — isolates the video pipeline only.
+// Skips sceUserServiceInitialize, scePadInit, and scan_games() on purpose,
+// so we can confirm double-buffered flip works before touching anything else.
+// If you see solid red for ~5 seconds on the PS4, video is confirmed working
+// and the black screen was coming from something below this function.
+// Once confirmed, swap this back to the full version (see notes at bottom).
+int main(void) {
+    if (init_video() < 0) return -1;
+
+    for (int i = 0; i < 300; i++) {
+        memset(framebuffer[current_buf], 0, FB_SIZE);
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFFFF0000); // solid red
+        flip();
+        sceKernelUsleep(16666);
+    }
+    return 0;
+}
+
+/*
+============ FULL LAUNCHER MAIN (restore this once red screen confirms video works) ============
+
 int main(void) {
     if (init_video() < 0) return -1;
 
@@ -504,16 +525,6 @@ int main(void) {
         sceKernelUsleep(16666);
     }
 
-    // Never return
-    while (1) {
-        sceKernelUsleep(1000000);
-    }
+    return 0;
 }
-
-// PS4 loader entry point
-void _start(void) {
-    main();
-    while (1) {
-        sceKernelUsleep(1000000);
-    }
-}
+*/
