@@ -23,7 +23,7 @@ Scans your PS2 ISO collection, reads each disc ID (e.g. `SCUS-97101`), and gener
 │   └── pkg.gp4
 ├── sce_sys/
 │   ├── param.sfo
-│   └── icon0.png      <-- Add your own 512x512 PNG icon
+│   └── icon0.png
 └── .github/
     └── workflows/
         └── build.yml
