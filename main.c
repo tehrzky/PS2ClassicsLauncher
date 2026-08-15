@@ -242,8 +242,120 @@ static void scan_games(void) {
     qsort(games, game_count, sizeof(Game), name_compare);
 }
 
+// ============ EXISTING CONFIG LOOKUP ============
+static int find_game_config(const char *disc_id, const char *game_name, char *out_path, size_t out_len) {
+    // Priority 1: match by disc ID  (e.g. gameconfig/SCUS-97101.txt)
+    snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, disc_id);
+    if (access(out_path, F_OK) == 0) return 1;
+
+    // Priority 2: match by game name (e.g. gameconfig/Valkyrie Profile 2.txt)
+    snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, game_name);
+    if (access(out_path, F_OK) == 0) return 1;
+
+    return 0;
+}
+
 // ============ CONFIG GENERATION ============
-static int set_active_game(const char *iso_path, const char *disc_id) {
+static int set_active_game(const char *iso_path, const char *disc_id, const char *game_name) {
+    char line_buf[2048];
+    int n;
+
+    // 1. Check for existing per-game config
+    char existing_config[512];
+    int has_existing = find_game_config(disc_id, game_name, existing_config, sizeof(existing_config));
+
+    // 2. Open temp config for writing
+    int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (fd < 0) return 0;
+
+    if (has_existing) {
+        // Use existing config as base, but force-correct --image and --ps2-title-id
+        int src = open(existing_config, O_RDONLY);
+        if (src >= 0) {
+            char buf[65536];
+            int m = read(src, buf, sizeof(buf) - 1);
+            close(src);
+            if (m > 0) {
+                buf[m] = '\0';
+                char *p = buf;
+                while (*p) {
+                    char *line_end = p;
+                    while (*line_end && *line_end != '\n') line_end++;
+                    int line_len = line_end - p;
+
+                    // Skip old --image= and --ps2-title-id= lines; we inject fresh ones
+                    if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { /* skip */ }
+                    else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { /* skip */ }
+                    else {
+                        write(fd, p, line_len);
+                        write(fd, "\n", 1);
+                    }
+                    p = line_end;
+                    if (*p == '\n') p++;
+                }
+            }
+        }
+    } else {
+        // No existing config: use default template
+        char template_buf[65536];
+        int template_len = 0;
+
+        int src = open(DEFAULT_CONFIG, O_RDONLY);
+        if (src >= 0) {
+            template_len = read(src, template_buf, sizeof(template_buf) - 1);
+            close(src);
+            if (template_len > 0) template_buf[template_len] = '\0';
+        }
+        if (template_len <= 0) {
+            template_len = strlen(embedded_default);
+            memcpy(template_buf, embedded_default, template_len);
+            template_buf[template_len] = '\0';
+        }
+        write(fd, template_buf, template_len);
+        if (template_len > 0 && template_buf[template_len - 1] != '\n')
+            write(fd, "\n", 1);
+    }
+
+    // 3. Append guaranteed-correct image path and disc ID
+    n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
+    write(fd, line_buf, n);
+    n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
+    write(fd, line_buf, n);
+    close(fd);
+
+    // 4. Update master config
+    fd = open(MASTER_CONFIG, O_RDONLY);
+    if (fd < 0) return 0;
+    char buf[32768];
+    int m = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (m <= 0) return 0;
+    buf[m] = '\0';
+
+    fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (fd < 0) return 0;
+
+    char *p = buf;
+    while (*p) {
+        char *line_end = p;
+        while (*line_end && *line_end != '\n') line_end++;
+        int line_len = line_end - p;
+
+        if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
+            // skip active config line
+        } else {
+            write(fd, p, line_len);
+            write(fd, "\n", 1);
+        }
+        p = line_end;
+        if (*p == '\n') p++;
+    }
+
+    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
+    write(fd, line_buf, n);
+    close(fd);
+    return 1;
+}
     // 1. Read default template (file or embedded)
     char template_buf[65536];
     int template_len = 0;
@@ -383,7 +495,7 @@ int main(void) {
             selected = (selected + 1) % game_count;
         }
         if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-            if (set_active_game(games[selected].path, games[selected].id)) {
+            if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
                 launch_emulator();
             }
         }
