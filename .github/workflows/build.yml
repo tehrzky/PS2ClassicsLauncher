@@ -17,17 +17,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld python3 python3-pip curl
 
-      - name: Download OpenOrbis Toolchain (pre-built)
+      - name: Download OpenOrbis Toolchain
         run: |
           curl -L -o oo-toolchain.tar.gz \
             "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz"
           mkdir -p $HOME/oo-toolchain
           tar -xzf oo-toolchain.tar.gz -C $HOME/oo-toolchain
 
-      - name: Set environment
+      - name: Find toolchain root
         run: |
-          echo "OO_PS4_TOOLCHAIN=$HOME/oo-toolchain" >> $GITHUB_ENV
-          echo "$HOME/oo-toolchain/bin/linux" >> $GITHUB_PATH
+          # The tarball might extract to a subfolder. Find where include/orbis/ actually is.
+          TOOLCHAIN_ROOT=$(find $HOME/oo-toolchain -path "*/include/orbis/libkernel.h" -print -quit | sed 's|/include/orbis/libkernel.h||')
+          if [ -z "$TOOLCHAIN_ROOT" ]; then
+            echo "ERROR: Could not find orbis/libkernel.h in extracted toolchain!"
+            find $HOME/oo-toolchain -type d | head -30
+            exit 1
+          fi
+          echo "Found toolchain root: $TOOLCHAIN_ROOT"
+          echo "OO_PS4_TOOLCHAIN=$TOOLCHAIN_ROOT" >> $GITHUB_ENV
+          echo "$TOOLCHAIN_ROOT/bin/linux" >> $GITHUB_PATH
 
       - name: Build PKG
         run: make pkg
