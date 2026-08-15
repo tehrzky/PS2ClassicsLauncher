@@ -1,3 +1,4 @@
+// Stub for musl libc startup - called by crt1.o
 int __libc_start_main(void *main_fn, int argc, char **argv, ...) {
     return ((int (*)(void))main_fn)();
 }
