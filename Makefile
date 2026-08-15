@@ -5,7 +5,7 @@ TITLE_ID    := ITEM00001
 CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER0000
 
 # Libraries
-LIBS        := -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lkernel
+LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal
 
 # Toolchain
 TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
@@ -20,7 +20,7 @@ LD          := ld.lld
 CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
 
 # Linker flags
-LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS)
+LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
 
 # Source
 CFILES      := main.c
