@@ -244,15 +244,137 @@ static void scan_games(void) {
 
 // ============ EXISTING CONFIG LOOKUP ============
 static int find_game_config(const char *disc_id, const char *game_name, char *out_path, size_t out_len) {
-    // Priority 1: match by disc ID  (e.g. gameconfig/SCUS-97101.txt)
+    DIR *dir = opendir(ISO_DIR "gameconfig/");
+    if (!dir) return 0;
+    
+    struct dirent *entry;
+    char best_match[256] = {0};
+    
+    while ((entry = readdir(dir)) != NULL) {
+        int len = strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
+        
+        char cfg_name[256];
+        strncpy(cfg_name, entry->d_name, len - 4);
+        cfg_name[len - 4] = '\0';
+        
+        if (fuzzy_match(game_name, cfg_name)) {
+            if (strcasecmp(game_name, cfg_name) == 0) {
+                snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, entry->d_name);
+                closedir(dir);
+                return 1;
+            }
+            if (best_match[0] == '\0') {
+                strncpy(best_match, entry->d_name, sizeof(best_match) - 1);
+            }
+        }
+    }
+    closedir(dir);
+    
+    if (best_match[0] != '\0') {
+        snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, best_match);
+        return 1;
+    }
+    
     snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, disc_id);
     if (access(out_path, F_OK) == 0) return 1;
-
-    // Priority 2: match by game name (e.g. gameconfig/Valkyrie Profile 2.txt)
-    snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, game_name);
-    if (access(out_path, F_OK) == 0) return 1;
-
+    
     return 0;
+}
+
+// ============ CONFIG GENERATION ============
+static int set_active_game(const char *iso_path, const char *disc_id, const char *game_name) {
+    char line_buf[2048];
+    int n;
+
+    char existing_config[512];
+    int has_existing = find_game_config(disc_id, game_name, existing_config, sizeof(existing_config));
+
+    int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (fd < 0) return 0;
+
+    if (has_existing) {
+        int src = open(existing_config, O_RDONLY);
+        if (src >= 0) {
+            char buf[65536];
+            int m = read(src, buf, sizeof(buf) - 1);
+            close(src);
+            if (m > 0) {
+                buf[m] = '\0';
+                char *p = buf;
+                while (*p) {
+                    char *line_end = p;
+                    while (*line_end && *line_end != '\n') line_end++;
+                    int line_len = line_end - p;
+
+                    if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { }
+                    else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { }
+                    else {
+                        write(fd, p, line_len);
+                        write(fd, "\n", 1);
+                    }
+                    p = line_end;
+                    if (*p == '\n') p++;
+                }
+            }
+        }
+    } else {
+        char template_buf[65536];
+        int template_len = 0;
+
+        int src = open(DEFAULT_CONFIG, O_RDONLY);
+        if (src >= 0) {
+            template_len = read(src, template_buf, sizeof(template_buf) - 1);
+            close(src);
+            if (template_len > 0) template_buf[template_len] = '\0';
+        }
+        if (template_len <= 0) {
+            template_len = strlen(embedded_default);
+            memcpy(template_buf, embedded_default, template_len);
+            template_buf[template_len] = '\0';
+        }
+        write(fd, template_buf, template_len);
+        if (template_len > 0 && template_buf[template_len - 1] != '\n')
+            write(fd, "\n", 1);
+    }
+
+    n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
+    write(fd, line_buf, n);
+    n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
+    write(fd, line_buf, n);
+    close(fd);
+
+    fd = open(MASTER_CONFIG, O_RDONLY);
+    if (fd < 0) return 0;
+    char buf[32768];
+    int m = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (m <= 0) return 0;
+    buf[m] = '\0';
+
+    fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (fd < 0) return 0;
+
+    char *p = buf;
+    while (*p) {
+        char *line_end = p;
+        while (*line_end && *line_end != '\n') line_end++;
+        int line_len = line_end - p;
+
+        if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
+        } else {
+            write(fd, p, line_len);
+            write(fd, "\n", 1);
+        }
+        p = line_end;
+        if (*p == '\n') p++;
+    }
+
+    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
+    write(fd, line_buf, n);
+    close(fd);
+    return 1;
 }
 
 // ============ CONFIG GENERATION ============
