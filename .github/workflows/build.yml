@@ -12,10 +12,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld python3 python3-pip curl
+          sudo apt-get install -y clang lld llvm python3 python3-pip curl
 
       - name: Download OpenOrbis Toolchain
         run: |
