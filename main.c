@@ -308,6 +308,8 @@ static int set_active_game(const char *iso_path, const char *disc_id) {
 }
 
 // ============ LAUNCH ============
+extern int32_t sceSystemServiceLaunchApp(const char* titleId, const char* args, void* reserved);
+
 static void launch_emulator(void) {
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
 }
@@ -320,7 +322,7 @@ static int init_video(void) {
     size_t size = (FB_SIZE + 0x1FFFFF) & ~0x1FFFFF;
     for (int i = 0; i < 2; i++) {
         off_t directMem = 0;
-        int r = sceKernelAllocateDirectMemory(0, SCE_KERNEL_MAIN_DMEM_SIZE, size, 0x200000, 3, &directMem);
+        int r = sceKernelAllocateDirectMemory(0, 0x180000000, size, 0x200000, 3, &directMem);
         if (r < 0) return -1;
         void *addr = NULL;
         r = sceKernelMapDirectMemory(&addr, size, 3, 0, directMem, 0x200000);
@@ -330,7 +332,7 @@ static int init_video(void) {
     }
 
     OrbisVideoOutBufferAttribute attr;
-    sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8R8G8B8_SRGB,
+    sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
                                   1, 0, 0, 0, 0, 0);
     sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
     sceVideoOutSetFlipRate(video, 0);
@@ -338,8 +340,7 @@ static int init_video(void) {
 }
 
 static void flip(void) {
-    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_MODE_VSYNC, 0);
-    sceVideoOutHandleEvents(video);
+    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
     current_buf ^= 1;
 }
 
