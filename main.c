@@ -435,26 +435,42 @@ static void launch_emulator(void) {
 // ============ VIDEO INIT ============
 static int init_video(void) {
     video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, 0);
-    if (video < 0) return -1;
+    if (video < 0) {
+        log_debug("VIDEO OPEN FAIL: %d", video);
+        return -1;
+    }
 
     size_t size = (FB_SIZE + 0x1FFFFF) & ~0x1FFFFF;
     for (int i = 0; i < 2; i++) {
         off_t directMem = 0;
         int r = sceKernelAllocateDirectMemory(0, 0x180000000, size, 0x200000, 3, &directMem);
-        if (r < 0) return -1;
+        if (r < 0) {
+            log_debug("ALLOC FAIL: %d", r);
+            return -1;
+        }
         void *addr = NULL;
-        r = sceKernelMapDirectMemory(&addr, size, 3, 0, directMem, 0x200000);
-        if (r < 0) return -1;
+        r = sceKernelMapDirectMemory(&addr, size, 0x33, 0, directMem, 0x200000);
+        if (r < 0) {
+            log_debug("MAP FAIL: %d", r);
+            return -1;
+        }
         memset(addr, 0, size);
         framebuffer[i] = (uint32_t*)addr;
     }
 
     OrbisVideoOutBufferAttribute attr;
     sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
-                                  1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0);
-    void *video_bufs[2] = { (void*)framebuffer[0], (void*)framebuffer[1] };
-sceVideoOutRegisterBuffers(video, 0, video_bufs, 2, &attr);
-    sceVideoOutSetFlipRate(video, 0);
+        ORBIS_VIDEO_OUT_TILING_MODE_LINEAR, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
+
+    void *bufs[2] = { (void*)framebuffer[0], (void*)framebuffer[1] };
+    int r = sceVideoOutRegisterBuffers(video, 0, bufs, 2, &attr);
+    if (r < 0) {
+        log_debug("REGISTER BUFFERS FAIL: %d", r);
+        return -1;
+    }
+
+    r = sceVideoOutSetFlipRate(video, 0);
+    log_debug("VIDEO INIT COMPLETE");
     return 0;
 }
 
@@ -477,6 +493,15 @@ int main(void) {
         return -1;
     }
     log_debug("VIDEO OK");
+    // --- VIDEO SMOKE TEST ---
+    memset(framebuffer[0], 0, FB_SIZE);
+    for (int i = 0; i < FB_SIZE / 4; i++) {
+        framebuffer[0][i] = 0xFFFFFF00; // bright cyan (A8B8G8R8)
+    }
+    sceVideoOutSubmitFlip(video, 0, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
+    log_debug("SMOKE TEST FLIP SUBMITTED");
+    sceKernelSleep(3);
+    // --- END SMOKE TEST ---
 
     // sceUserServiceInitialize(NULL);      // Removed — crashes homebrew
     // sceSystemServiceHideSplashScreen();  // Removed — no splash screen on homebrew
