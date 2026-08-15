@@ -50,15 +50,45 @@ jobs:
             cp $HOME/PkgTool.Core $OO_PS4_TOOLCHAIN/bin/linux/
           fi
 
-      - name: Patch make_fself.py for Python 3
+            - name: Patch make_fself.py for Python 3
         run: |
           SCRIPT="$OO_PS4_TOOLCHAIN/scripts/make_fself.py"
+          
+          # 1. Basic fixes
           sed -i "s/MAGIC = '\\\\x7FELF'/MAGIC = b'\\\\x7fELF'/g" "$SCRIPT"
           sed -i "s/EMPTY_DIGEST = '\\\\0' \\* DIGEST_SIZE/EMPTY_DIGEST = b'\\\\0' * DIGEST_SIZE/g" "$SCRIPT"
           sed -i "s/EMPTY_SIGNATURE = '\\\\0' \\* SIGNATURE_SIZE/EMPTY_SIGNATURE = b'\\\\0' * SIGNATURE_SIZE/g" "$SCRIPT"
           sed -i "s/val.decode('hex')/bytes.fromhex(val)/g" "$SCRIPT"
           sed -i 's/xrange/range/g' "$SCRIPT"
           sed -i "s/re.sub('\\\\s+', '', val)/re.sub(r'\\\\s+', '', val)/g" "$SCRIPT"
+          
+          # 2. Monkey-patch struct.pack to auto-convert strings to bytes
+          python3 << 'PYEOF'
+          import sys
+          path = sys.argv[1]
+          with open(path, 'r') as f:
+              content = f.read()
+          
+          monkey = '''
+import struct as _struct_module
+_original_struct_pack = _struct_module.pack
+def _struct_pack(fmt, *args):
+    new_args = []
+    for a in args:
+        if isinstance(a, str):
+            new_args.append(a.encode('latin-1'))
+        else:
+            new_args.append(a)
+    return _original_struct_pack(fmt, *new_args)
+_struct_module.pack = _struct_pack
+'''
+          # Insert right after "import struct"
+          content = content.replace('import struct', 'import struct\\n' + monkey)
+          
+          with open(path, 'w') as f:
+              f.write(content)
+          PYEOF "$SCRIPT"
+          
           echo "Patched make_fself.py"
 
       - name: Build PKG
