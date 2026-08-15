@@ -2,7 +2,7 @@
 TITLE       := PS2 ISO Launcher
 VERSION     := 01.00
 TITLE_ID    := ITEM00001
-CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER0000
+CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER00000
 
 # Libraries
 LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal
