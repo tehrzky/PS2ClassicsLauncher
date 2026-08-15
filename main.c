@@ -496,11 +496,75 @@ int main(void) {
         return 0;
     }
 
+        // Render one frame immediately before pad loop
+    memset(framebuffer[current_buf], 0, FB_SIZE);
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFFFF0000); // Bright red for testing
+    draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
+    draw_text(80, 90, "==================", 0xFFFFFFFF);
+
+    int start_y = 140;
+    int visible = 28;
+    for (int i = 0; i < game_count && i < visible; i++) {
+        int y = start_y + i * 28;
+        draw_text(80, y, games[i].name, 0xFFFFFFFF);
+        draw_text(500, y, games[i].id, 0xFF888888);
+    }
+
+    draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
+    flip();
+    log_debug("FIRST FRAME OK");
+
     OrbisPadData pad_data;
     unsigned int old_buttons = 0;
 
     while (1) {
-        scePadReadState(pad, &pad_data);
+        if (pad >= 0) {
+            scePadReadState(pad, &pad_data);
+            unsigned int buttons = pad_data.buttons;
+            unsigned int pressed = buttons & ~old_buttons;
+            old_buttons = buttons;
+
+            if (pressed & ORBIS_PAD_BUTTON_UP) {
+                selected = (selected - 1 + game_count) % game_count;
+            }
+            if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+                selected = (selected + 1) % game_count;
+            }
+            if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                log_debug("LAUNCH: %s", games[selected].name);
+                if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
+                    launch_emulator();
+                }
+            }
+        }
+
+        memset(framebuffer[current_buf], 0, FB_SIZE);
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFFFF0000); // Bright red for testing
+
+        draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
+        draw_text(80, 90, "==================", 0xFFFFFFFF);
+
+        start_y = 140;
+        visible = 28;
+        int scroll = 0;
+        if (selected >= visible) scroll = selected - visible + 1;
+
+        for (int i = scroll; i < game_count && i < scroll + visible; i++) {
+            int y = start_y + (i - scroll) * 28;
+            uint32_t color = (i == selected) ? 0xFFFFFF00 : 0xFFFFFFFF;
+            if (i == selected) {
+                draw_rect(70, y - 4, 800, 24, 0xFF333355);
+            }
+            draw_text(80, y, games[i].name, color);
+            draw_text(500, y, games[i].id, (i == selected) ? 0xFFFFFF00 : 0xFF888888);
+        }
+
+        draw_text(80, SCREEN_HEIGHT - 80, games[selected].path, 0xFF666666);
+        draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
+
+        flip();
+        sceKernelUsleep(16666);
+    }
         unsigned int buttons = pad_data.buttons;
         unsigned int pressed = buttons & ~old_buttons;
         old_buttons = buttons;
