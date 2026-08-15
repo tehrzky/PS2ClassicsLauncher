@@ -470,13 +470,14 @@ int main(void) {
     }
     log_debug("VIDEO OK");
 
-    sceUserServiceInitialize(NULL);
-    sceSystemServiceHideSplashScreen();
-    log_debug("SYSTEM INIT OK");
+    // sceUserServiceInitialize(NULL);      // Removed — crashes homebrew
+    // sceSystemServiceHideSplashScreen();  // Removed — no splash screen on homebrew
+    log_debug("SYSTEM INIT SKIPPED");
 
     scePadInit();
+    log_debug("PAD INIT DONE");
     int pad = scePadOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
-    log_debug("PAD OK");
+    log_debug("PAD OPEN: %d", pad);
 
     scan_games();
     log_debug("GAMES: %d", game_count);
