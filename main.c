@@ -308,7 +308,7 @@ static int set_active_game(const char *iso_path, const char *disc_id) {
 }
 
 // ============ LAUNCH ============
-extern int32_t sceSystemServiceLaunchApp(const char* titleId, const char* args, void* reserved);
+
 
 static void launch_emulator(void) {
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
@@ -333,7 +333,7 @@ static int init_video(void) {
 
     OrbisVideoOutBufferAttribute attr;
     sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
-                                  1, 0, 0, 0, 0, 0);
+                                  1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0);
     sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
     sceVideoOutSetFlipRate(video, 0);
     return 0;
