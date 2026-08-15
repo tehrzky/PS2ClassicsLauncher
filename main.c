@@ -1,5 +1,6 @@
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
+#include <orbis/UserService.h>
 #include <orbis/Pad.h>
 #include <orbis/VideoOut.h>
 #include <dirent.h>
@@ -440,6 +441,9 @@ static void flip(void) {
 int main(void) {
     if (init_video() < 0) return -1;
 
+    sceUserServiceInitialize(NULL);
+    sceSystemServiceHideSplashScreen();
+
     scePadInit();
     int pad = scePadOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
 
@@ -500,5 +504,16 @@ int main(void) {
         sceKernelUsleep(16666);
     }
 
-    return 0;
+    // Never return
+    while (1) {
+        sceKernelUsleep(1000000);
+    }
+}
+
+// PS4 loader entry point
+void _start(void) {
+    main();
+    while (1) {
+        sceKernelUsleep(1000000);
+    }
 }
