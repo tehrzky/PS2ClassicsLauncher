@@ -1,6 +1,7 @@
 void _init(void) {}
 void _fini(void) {}
 
+#include <sys/stat.h> 
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
@@ -19,6 +20,7 @@ void _fini(void) {}
 
 // ============ ERROR CODES ============
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
+
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ps4.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
@@ -457,7 +459,6 @@ static void list_installed_apps(void) {
             if (access(sfo_path, F_OK) == 0) {
                 log_debug("Found app: %s", entry->d_name);
                 
-                // Check if it's the emulator
                 if (strcmp(entry->d_name, EMULATOR_TID) == 0) {
                     log_debug("  >>> THIS IS YOUR EMULATOR! <<<");
                 }
@@ -473,11 +474,17 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     char line_buf[2048];
     int n;
 
+    // Create config directory if it doesn't exist
+    mkdir("/data/PS4ROMS/PS2ISO/config", 0777);
+    
     char existing_config[512];
     int has_existing = find_game_config(disc_id, game_name, existing_config, sizeof(existing_config));
 
     int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
+    if (fd < 0) {
+        log_debug("set_active_game: failed to open TEMP_CONFIG: %s", TEMP_CONFIG);
+        return 0;
+    }
 
     if (has_existing) {
         int src = open(existing_config, O_RDONLY);
@@ -531,15 +538,24 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     close(fd);
 
     fd = open(MASTER_CONFIG, O_RDONLY);
-    if (fd < 0) return 0;
+    if (fd < 0) {
+        log_debug("set_active_game: failed to open MASTER_CONFIG for reading: %s", MASTER_CONFIG);
+        return 0;
+    }
     char buf[32768];
     int m = read(fd, buf, sizeof(buf) - 1);
     close(fd);
-    if (m <= 0) return 0;
+    if (m <= 0) {
+        log_debug("set_active_game: MASTER_CONFIG is empty or read failed");
+        return 0;
+    }
     buf[m] = '\0';
 
     fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    if (fd < 0) return 0;
+    if (fd < 0) {
+        log_debug("set_active_game: failed to open MASTER_CONFIG for writing: %s", MASTER_CONFIG);
+        return 0;
+    }
 
     char *p = buf;
     while (*p) {
@@ -610,7 +626,7 @@ static int init_video(void) {
     return 0;
 }
 
-// ============ FLIP FUNCTION - MOVED HERE BEFORE LAUNCH ============
+// ============ FLIP FUNCTION ============
 static void flip(void) {
     sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
     current_buf ^= 1;
@@ -652,7 +668,6 @@ static void launch_emulator(void) {
     mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
     if (mod < 0) {
         log_debug("Failed to load libSceSystemService.sprx: %d", mod);
-        // Try again
         mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
         if (mod < 0) {
             log_debug("Second attempt failed: %d", mod);
@@ -688,7 +703,6 @@ static void launch_emulator(void) {
             exit(0);
         }
         
-        // If it failed with "already running", that's actually success
         if (ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
             log_debug("App already running!");
             sceKernelSleep(1);
@@ -712,7 +726,6 @@ static void launch_emulator(void) {
     // If all methods fail, show error
     log_debug("ALL LAUNCH METHODS FAILED!");
     
-    // Show error on screen
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
     draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
     flip();
@@ -783,15 +796,13 @@ int main(void) {
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].name);
                 if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                    if (check_app_installed(EMULATOR_TID)) {
-                        launch_emulator();
-                    } else {
-                        log_debug("EMULATOR NOT INSTALLED!");
-                        draw_text_scaled(80, SCREEN_HEIGHT - 100, "EMULATOR NOT INSTALLED!", COLOR_RED, 2);
-                        draw_text_scaled(80, SCREEN_HEIGHT - 60, "Press any button to continue", COLOR_GRAY, 2);
-                        flip();
-                        sceKernelSleep(3);
-                    }
+                    // Just try to launch - don't block on check_app_installed
+                    launch_emulator();
+                } else {
+                    log_debug("set_active_game FAILED for %s", games[selected].name);
+                    draw_text_scaled(80, SCREEN_HEIGHT - 100, "CONFIG WRITE FAILED!", COLOR_RED, 2);
+                    flip();
+                    sceKernelSleep(2);
                 }
             }
         }
