@@ -208,10 +208,9 @@ static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
     const unsigned char *f = font8x8[c - 32];
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
-            // Original: if (f[row] & (1 << (7 - col)))
-            // Rotated 90° clockwise: row becomes 7-col, col becomes row
-            if (f[7 - col] & (1 << row)) {
-                draw_rect(x + row * scale, y + col * scale, scale, scale, color);
+            // Rotated 90° counter-clockwise
+            if (f[col] & (1 << (7 - row))) {
+                draw_rect(x + (7 - row) * scale, y + col * scale, scale, scale, color);
             }
         }
     }
