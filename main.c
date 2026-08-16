@@ -22,7 +22,7 @@ void _fini(void) {}
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
 
 // ============ CONFIG ============
-#define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ps4.txt"
+#define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
