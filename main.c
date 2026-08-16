@@ -18,10 +18,10 @@ void _fini(void) {}
 #include <stdarg.h>
 
 // ============ CONFIG ============
-#define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config-emu-ps4.txt"
+#define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ps4.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
-#define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/default.txt"
-#define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/.launcher_temp.txt"
+#define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
+#define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
 #define EMULATOR_TID    "PCSX20042"
 
 #define SCREEN_WIDTH    1920
