@@ -28,15 +28,15 @@ void _fini(void) {}
 #define SCREEN_HEIGHT   1080
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
-// ============ COLORS (format is A8B8G8R8 => 0xAABBGGRR, NOT the usual ARGB) ============
+// ============ COLORS ============
 #define COLOR_BLACK      0xFF000000
 #define COLOR_WHITE      0xFFFFFFFF
-#define COLOR_RED        0xFF0000FF   // A=FF B=00 G=00 R=FF
-#define COLOR_GREEN      0xFF00FF00   // A=FF B=00 G=FF R=00
-#define COLOR_BLUE       0xFFFF0000   // A=FF B=FF G=00 R=00
-#define COLOR_YELLOW     0xFF00FFFF   // A=FF B=00 G=FF R=FF
-#define COLOR_BG_NAVY    0xFF2E1A1A   // dark navy-ish background (B=2E G=1A R=1A)
-#define COLOR_SELECT_BG  0xFF553333   // highlighted row background
+#define COLOR_RED        0xFF0000FF
+#define COLOR_GREEN      0xFF00FF00
+#define COLOR_BLUE       0xFFFF0000
+#define COLOR_YELLOW     0xFF00FFFF
+#define COLOR_BG_NAVY    0xFF2E1A1A
+#define COLOR_SELECT_BG  0xFF553333
 #define COLOR_GRAY       0xFF888888
 #define COLOR_DARKGRAY   0xFF666666
 
@@ -202,16 +202,12 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
             draw_pixel(xx, yy, color);
 }
 
-// scale = how many screen pixels each font pixel becomes (1 = original 8x8, 3 = 24x24)
 static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
     if (c < 32 || c > 127) return;
     const unsigned char *f = font8x8[c - 32];
     
-    // Swap rows and columns to fix rotation
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
-            // Original: f[row] & (1 << col)
-            // Swapped: f[col] & (1 << row)
             if (f[col] & (1 << row)) {
                 draw_rect(x + col * scale, y + row * scale, scale, scale, color);
             }
@@ -226,7 +222,6 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
     }
 }
 
-// Back-compat wrappers at scale 1
 static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
 static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
 
@@ -423,7 +418,7 @@ static int check_app_installed(const char *title_id) {
     return 0;
 }
 
-// ============ LIST INSTALLED APPS (for debugging) ============
+// ============ LIST INSTALLED APPS ============
 static void list_installed_apps(void) {
     DIR *dir = opendir("/system/app/");
     if (!dir) {
@@ -540,6 +535,59 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     return 1;
 }
 
+// ============ VIDEO INIT ============
+static int init_video(void) {
+    video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, 0);
+    if (video < 0) {
+        log_debug("VIDEO OPEN FAIL: %d", video);
+        return -1;
+    }
+    log_debug("VIDEO HANDLE: %d", video);
+
+    size_t size = (FB_SIZE + 0x1FFFFF) & ~0x1FFFFF;
+    log_debug("FB SIZE: %zu", size);
+
+    for (int i = 0; i < 2; i++) {
+        off_t directMem = 0;
+        int r = sceKernelAllocateDirectMemory(0, 0x180000000, size, 0x200000, 3, &directMem);
+        if (r < 0) {
+            log_debug("ALLOC FAIL[%d]: %d", i, r);
+            return -1;
+        }
+        void *addr = NULL;
+        r = sceKernelMapDirectMemory(&addr, size, 0x33, 0, directMem, 0x200000);
+        if (r < 0) {
+            log_debug("MAP FAIL[%d]: %d", i, r);
+            return -1;
+        }
+        memset(addr, 0, size);
+        framebuffer[i] = (uint32_t*)addr;
+        log_debug("BUFFER[%d]: %p", i, addr);
+    }
+
+    OrbisVideoOutBufferAttribute attr;
+    memset(&attr, 0, sizeof(attr));
+    sceVideoOutSetBufferAttribute(&attr, 0x80000000, 1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
+
+    int r = sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
+    if (r < 0) {
+        log_debug("REGISTER BUFFERS FAIL: %d", r);
+        return -1;
+    }
+    log_debug("REGISTER BUFFERS OK");
+
+    r = sceVideoOutSetFlipRate(video, 0);
+    log_debug("SET FLIP RATE: %d", r);
+
+    return 0;
+}
+
+// ============ FLIP FUNCTION - MOVED HERE BEFORE LAUNCH ============
+static void flip(void) {
+    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
+    current_buf ^= 1;
+}
+
 // ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
@@ -558,7 +606,6 @@ static void launch_emulator(void) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
     
-    // Get current user
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
@@ -642,11 +689,9 @@ static void launch_emulator(void) {
         }
     }
     
-    // If all methods fail, show error on screen
     log_debug("ALL LAUNCH METHODS FAILED!");
     log_debug("Please check if emulator TID '%s' is correct", EMULATOR_TID);
     
-    // Show error on screen
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
     char error_msg[256];
     snprintf(error_msg, sizeof(error_msg), "TID: %s", EMULATOR_TID);
@@ -656,62 +701,6 @@ static void launch_emulator(void) {
     sceKernelSleep(5);
     exit(0);
 }
-
-
-static void flip(void) {
-    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
-    current_buf ^= 1;
-}
-
-
-// ============ VIDEO INIT ============
-static int init_video(void) {
-    video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, 0);
-    if (video < 0) {
-        log_debug("VIDEO OPEN FAIL: %d", video);
-        return -1;
-    }
-    log_debug("VIDEO HANDLE: %d", video);
-
-    size_t size = (FB_SIZE + 0x1FFFFF) & ~0x1FFFFF;
-    log_debug("FB SIZE: %zu", size);
-
-    for (int i = 0; i < 2; i++) {
-        off_t directMem = 0;
-        int r = sceKernelAllocateDirectMemory(0, 0x180000000, size, 0x200000, 3, &directMem);
-        if (r < 0) {
-            log_debug("ALLOC FAIL[%d]: %d", i, r);
-            return -1;
-        }
-        void *addr = NULL;
-        r = sceKernelMapDirectMemory(&addr, size, 0x33, 0, directMem, 0x200000);
-        if (r < 0) {
-            log_debug("MAP FAIL[%d]: %d", i, r);
-            return -1;
-        }
-        memset(addr, 0, size);
-        framebuffer[i] = (uint32_t*)addr;
-        log_debug("BUFFER[%d]: %p", i, addr);
-    }
-
-    OrbisVideoOutBufferAttribute attr;
-    memset(&attr, 0, sizeof(attr));
-    sceVideoOutSetBufferAttribute(&attr, 0x80000000, 1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
-
-    int r = sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
-    if (r < 0) {
-        log_debug("REGISTER BUFFERS FAIL: %d", r);
-        return -1;
-    }
-    log_debug("REGISTER BUFFERS OK");
-
-    r = sceVideoOutSetFlipRate(video, 0);
-    log_debug("SET FLIP RATE: %d", r);
-
-    return 0;
-}
-
-
 
 // ============ MAIN ============
 int main(void) {
@@ -744,10 +733,8 @@ int main(void) {
     scan_games();
     log_debug("GAMES: %d", game_count);
     
-    // DEBUG: List installed apps
     list_installed_apps();
     
-    // Check if emulator is installed
     if (!check_app_installed(EMULATOR_TID)) {
         log_debug("WARNING: Emulator '%s' not found!", EMULATOR_TID);
     }
@@ -778,7 +765,6 @@ int main(void) {
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].name);
                 if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                    // Check if emulator is installed first
                     if (check_app_installed(EMULATOR_TID)) {
                         launch_emulator();
                     } else {
