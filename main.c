@@ -204,11 +204,16 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
 
 // scale = how many screen pixels each font pixel becomes (1 = original 8x8, 3 = 24x24)
 static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
-    if (c < 32 || c > 127) return;
-    const unsigned char *f = font8x8[c - 32];
+    unsigned char uc = (unsigned char)c;  // FIX: force unsigned
+    if (uc < 32 || uc > 127) {
+        draw_rect(x, y, 8 * scale, 8 * scale, 0xFFFF0000); // red box = invalid char
+        return;
+    }
+    const unsigned char *f = font8x8[uc - 32];  // now safe index
     for (int row = 0; row < 8; row++) {
+        unsigned char byte = f[row];
         for (int col = 0; col < 8; col++) {
-            if (f[row] & (1 << (7 - col))) {
+            if (byte & (1 << (7 - col))) {
                 draw_rect(x + col * scale, y + row * scale, scale, scale, color);
             }
         }
@@ -225,6 +230,11 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
 // Back-compat wrappers at scale 1, kept in case anything still calls the old names
 static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
 static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
+
+
+
+
+// ============ ISO DISC ID EXTRACTION ============
 
 // ============ ISO DISC ID EXTRACTION ============
 static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
