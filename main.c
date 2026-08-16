@@ -553,14 +553,77 @@ static void flip(void) {
 
 // ============ LAUNCH ============
 static void launch_emulator(void) {
+    int userId = 0;
+    int ret;
+    
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
     
-    // Simple launch - this is how Itemzflow does it for PKG apps
+    // Load required system modules
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
+    
+    // Get the current user
+    ret = sceUserServiceGetForegroundUser(&userId);
+    if (ret < 0) {
+        log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
+        ret = sceUserServiceGetInitialUser(&userId);
+        if (ret < 0) {
+            log_debug("Failed to get initial user: 0x%08X, using 0", ret);
+            userId = 0;
+        }
+    }
+    log_debug("User ID: %d", userId);
+    
+    // Load the system service module
+    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    log_debug("libSceSystemService.sprx load result: %d", mod);
+    
+    // Try sceLncUtilLaunchApp first
+    void *launch_func = NULL;
+    if (mod >= 0) {
+        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+        log_debug("sceLncUtilLaunchApp dlsym: 0x%08X", ret);
+    }
+    
+    if (ret == 0 && launch_func) {
+        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
+        
+        typedef struct {
+            uint32_t sz;
+            uint32_t user_id;
+            uint32_t app_opt;
+            uint32_t crash_report;
+            uint32_t check_flag;
+            uint32_t unk[2];
+        } LncAppParam;
+        
+        LncAppParam param;
+        memset(&param, 0, sizeof(param));
+        param.sz = sizeof(LncAppParam);
+        param.user_id = userId;
+        param.app_opt = 0;
+        param.crash_report = 0;
+        param.check_flag = 0x20000; // SkipSystemUpdateCheck
+        
+        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+        
+        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
+        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+        
+        if (ret == 0 || ret == 0x80D00504) {
+            log_debug("Launch successful!");
+            sceKernelSleep(1);
+            exit(0);
+        }
+    }
+    
+    // Fallback
+    log_debug("Falling back to sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
     log_debug("sceSystemServiceLaunchApp called");
-    
-    // Wait a moment then exit cleanly
     sceKernelSleep(2);
     exit(0);
 }
