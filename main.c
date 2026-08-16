@@ -510,25 +510,45 @@ typedef struct {
     uint32_t check_flag;
 } LncAppParam;
 
+typedef int (*sceLncUtilLaunchApp_t)(const char *titleId, const char *args, void *param);
+static sceLncUtilLaunchApp_t sceLncUtilLaunchApp_ptr = NULL;
+
+static void init_lncutil(void) {
+    if (sceLncUtilLaunchApp_ptr) return;
+    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    if (mod > 0) {
+        sceKernelDlsym(mod, "sceLncUtilLaunchApp", (void**)&sceLncUtilLaunchApp_ptr);
+    }
+    log_debug("LNCUTIL INIT: mod=%d ptr=%p", mod, (void*)sceLncUtilLaunchApp_ptr);
+}
+
 static void launch_emulator(void) {
-    uint32_t userId = 0;
+    init_lncutil();
+
+    int userId = 0;
     sceUserServiceGetForegroundUser(&userId);
-    log_debug("FOREGROUND USER: %u", userId);
+    log_debug("FOREGROUND USER: %d", userId);
 
     LncAppParam param;
     param.sz = sizeof(LncAppParam);
-    param.user_id = userId;
+    param.user_id = (uint32_t)userId;
     param.app_opt = 0;
     param.crash_report = 0;
     param.check_flag = 0;
 
     log_debug("CALLING sceLncUtilLaunchApp: %s", EMULATOR_TID);
-    int r = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
-    log_debug("LAUNCH RESULT: %d", r);
 
-    // If we get here, it failed — sleep so we can read the log, then die
+    if (sceLncUtilLaunchApp_ptr) {
+        int r = sceLncUtilLaunchApp_ptr(EMULATOR_TID, NULL, &param);
+        log_debug("LAUNCH RESULT: %d", r);
+    } else {
+        log_debug("sceLncUtilLaunchApp NOT FOUND, fallback to SystemServiceLaunchApp");
+        sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    }
+
+    // If we get here, launch failed — pause so log is readable, then die cleanly
     sceKernelSleep(2);
-    sceKernelExitProcess(0);
+    exit(0);
 }
 
 // ============ VIDEO INIT ============
