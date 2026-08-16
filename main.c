@@ -226,14 +226,9 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
     }
 }
 
-// Back-compat wrappers at scale 1, kept in case anything still calls the old names
+// Back-compat wrappers at scale 1
 static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
 static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
-
-
-
-
-// ============ ISO DISC ID EXTRACTION ============
 
 // ============ ISO DISC ID EXTRACTION ============
 static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
@@ -325,7 +320,6 @@ static void scan_games(void) {
                  "%s%s", ISO_DIR, entry->d_name);
 
         if (!extract_disc_id(games[game_count].path, games[game_count].id, sizeof(games[game_count].id))) {
-            // Fallback: uppercase first 4 chars + "_00000" from filename
             char *name = games[game_count].name;
             int k = 0;
             while (k < 4 && name[k] && isalnum((unsigned char)name[k])) {
@@ -413,6 +407,42 @@ static int find_game_config(const char *disc_id, const char *game_name, char *ou
     if (access(out_path, F_OK) == 0) return 1;
 
     return 0;
+}
+
+// ============ CHECK IF APP IS INSTALLED ============
+static int check_app_installed(const char *title_id) {
+    char path[256];
+    snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", title_id);
+    int fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        close(fd);
+        log_debug("App %s is installed", title_id);
+        return 1;
+    }
+    log_debug("App %s is NOT installed", title_id);
+    return 0;
+}
+
+// ============ LIST INSTALLED APPS (for debugging) ============
+static void list_installed_apps(void) {
+    DIR *dir = opendir("/system/app/");
+    if (!dir) {
+        log_debug("Cannot open /system/app/");
+        return;
+    }
+    
+    struct dirent *entry;
+    log_debug("=== INSTALLED APPS ===");
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        char path[256];
+        snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", entry->d_name);
+        if (access(path, F_OK) == 0) {
+            log_debug("Found app: %s", entry->d_name);
+        }
+    }
+    closedir(dir);
+    log_debug("=== END LIST ===");
 }
 
 // ============ CONFIG GENERATION ============
@@ -510,8 +540,6 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     return 1;
 }
 
-
-// ============ LAUNCH ============
 // ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
@@ -581,7 +609,7 @@ static void launch_emulator(void) {
         log_debug("Failed to load libSceSystemService.sprx: %d", mod);
     }
     
-    // METHOD 2: Try sceSystemServiceLaunchApp (simpler - void return)
+    // METHOD 2: Try sceSystemServiceLaunchApp
     log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
     log_debug("sceSystemServiceLaunchApp called - if it worked, we won't reach here");
@@ -628,43 +656,6 @@ static void launch_emulator(void) {
     sceKernelSleep(5);
     exit(0);
 }
-
-// ============ CHECK IF APP IS INSTALLED ============
-static int check_app_installed(const char *title_id) {
-    char path[256];
-    snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", title_id);
-    int fd = open(path, O_RDONLY);
-    if (fd >= 0) {
-        close(fd);
-        log_debug("App %s is installed", title_id);
-        return 1;
-    }
-    log_debug("App %s is NOT installed", title_id);
-    return 0;
-}
-
-// ============ LIST INSTALLED APPS (for debugging) ============
-static void list_installed_apps(void) {
-    DIR *dir = opendir("/system/app/");
-    if (!dir) {
-        log_debug("Cannot open /system/app/");
-        return;
-    }
-    
-    struct dirent *entry;
-    log_debug("=== INSTALLED APPS ===");
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        char path[256];
-        snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", entry->d_name);
-        if (access(path, F_OK) == 0) {
-            log_debug("Found app: %s", entry->d_name);
-        }
-    }
-    closedir(dir);
-    log_debug("=== END LIST ===");
-}
-
 
 // ============ VIDEO INIT ============
 static int init_video(void) {
@@ -733,9 +724,6 @@ int main(void) {
     }
     log_debug("VIDEO OK");
 
-    // UserService MUST be initialized before GetInitialUser/scePadOpen will work.
-    // (Previously commented out — that was masking an unrelated crash; video-out
-    // is confirmed working now, so this is safe to run.)
     int userInitRc = sceUserServiceInitialize(NULL);
     log_debug("USER SERVICE INIT: %d", userInitRc);
 
@@ -783,7 +771,7 @@ int main(void) {
             if (pressed & ORBIS_PAD_BUTTON_DOWN) {
                 selected = (selected + 1) % game_count;
             }
-                        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+            if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].name);
                 if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
                     // Check if emulator is installed first
@@ -791,7 +779,6 @@ int main(void) {
                         launch_emulator();
                     } else {
                         log_debug("EMULATOR NOT INSTALLED!");
-                        // Show error on screen
                         draw_text_scaled(80, SCREEN_HEIGHT - 100, "EMULATOR NOT INSTALLED!", COLOR_RED, 2);
                         draw_text_scaled(80, SCREEN_HEIGHT - 60, "Press any button to continue", COLOR_GRAY, 2);
                         flip();
@@ -807,7 +794,7 @@ int main(void) {
         draw_text_scaled(80, 50, "PS2 ISO LAUNCHER", COLOR_WHITE, 3);
 
         int start_y = 140;
-        int row_height = 42;      // 8*3=24px font + 18px spacing
+        int row_height = 42;
         int visible = (SCREEN_HEIGHT - start_y - 100) / row_height;
         int scroll = 0;
         if (selected >= visible) scroll = selected - visible + 1;
