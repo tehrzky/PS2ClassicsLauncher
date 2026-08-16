@@ -28,6 +28,18 @@ void _fini(void) {}
 #define SCREEN_HEIGHT   1080
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
+// ============ COLORS (format is A8B8G8R8 => 0xAABBGGRR, NOT the usual ARGB) ============
+#define COLOR_BLACK      0xFF000000
+#define COLOR_WHITE      0xFFFFFFFF
+#define COLOR_RED        0xFF0000FF   // A=FF B=00 G=00 R=FF
+#define COLOR_GREEN      0xFF00FF00   // A=FF B=00 G=FF R=00
+#define COLOR_BLUE       0xFFFF0000   // A=FF B=FF G=00 R=00
+#define COLOR_YELLOW     0xFF00FFFF   // A=FF B=00 G=FF R=FF
+#define COLOR_BG_NAVY    0xFF2E1A1A   // dark navy-ish background (B=2E G=1A R=1A)
+#define COLOR_SELECT_BG  0xFF553333   // highlighted row background
+#define COLOR_GRAY       0xFF888888
+#define COLOR_DARKGRAY   0xFF666666
+
 // ============ EMBEDDED DEFAULT CONFIG ============
 static const char *embedded_default =
 "--max-disc-num=1\n"
@@ -143,24 +155,29 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
             draw_pixel(xx, yy, color);
 }
 
-static void draw_char(int x, int y, char c, uint32_t color) {
+// scale = how many screen pixels each font pixel becomes (1 = original 8x8, 3 = 24x24)
+static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
     if (c < 32 || c > 127) return;
     const unsigned char *f = font8x8[c - 32];
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
             if (f[row] & (1 << (7 - col))) {
-                draw_pixel(x + col, y + row, color);
+                draw_rect(x + col * scale, y + row * scale, scale, scale, color);
             }
         }
     }
 }
 
-static void draw_text(int x, int y, const char *s, uint32_t color) {
+static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int scale) {
     while (*s) {
-        draw_char(x, y, *s++, color);
-        x += 8;
+        draw_char_scaled(x, y, *s++, color, scale);
+        x += 8 * scale;
     }
 }
+
+// Back-compat wrappers at scale 1, kept in case anything still calls the old names
+static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
+static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
 
 // ============ ISO DISC ID EXTRACTION ============
 static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
@@ -498,27 +515,19 @@ int main(void) {
         return -1;
     }
     log_debug("VIDEO OK");
-    // --- VIDEO SMOKE TEST ---
-    memset(framebuffer[0], 0, FB_SIZE);
-    for (int i = 0; i < FB_SIZE / 4; i++) {
-        framebuffer[0][i] = 0xFFFFFF00; // bright cyan (A8B8G8R8)
-    }
-    sceVideoOutSubmitFlip(video, 0, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
-    log_debug("SMOKE TEST FLIP SUBMITTED");
-    sceKernelSleep(3);
-    // --- END SMOKE TEST ---
 
-    // sceUserServiceInitialize(NULL);      // Removed — crashes homebrew
-    // sceSystemServiceHideSplashScreen();  // Removed — no splash screen on homebrew
-    log_debug("SYSTEM INIT SKIPPED");
+    // UserService MUST be initialized before GetInitialUser/scePadOpen will work.
+    // (Previously commented out — that was masking an unrelated crash; video-out
+    // is confirmed working now, so this is safe to run.)
+    int userInitRc = sceUserServiceInitialize(NULL);
+    log_debug("USER SERVICE INIT: %d", userInitRc);
 
     scePadInit();
     log_debug("PAD INIT DONE");
 
-    int userId = 1; // common fallback for first user
+    int userId = 1;
     int ret = sceUserServiceGetInitialUser(&userId);
     log_debug("GetInitialUser: %d (uid=%d)", ret, userId);
-    if (ret < 0) userId = 1;
 
     int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
     log_debug("PAD OPEN: %d (uid=%d)", pad, userId);
@@ -527,33 +536,11 @@ int main(void) {
     log_debug("GAMES: %d", game_count);
 
     if (game_count == 0) {
-        draw_text(100, 100, "NO ISO FILES FOUND", 0xFFFFFFFF);
+        draw_text_scaled(100, 100, "NO ISO FILES FOUND", COLOR_WHITE, 3);
         flip();
         sceKernelSleep(3);
         return 0;
     }
-
-        // Render one frame immediately before pad loop
-    memset(framebuffer[current_buf], 0, FB_SIZE);
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFFFF0000); // Bright red for testing
-    draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
-    draw_text(80, 90, "==================", 0xFFFFFFFF);
-
-    int start_y = 140;
-    int visible = 28;
-    for (int i = 0; i < game_count && i < visible; i++) {
-        draw_rect(70, 130, 700, 790, 0xFF00FF00); // bright green list background
-        int y = start_y + i * 28;
-        draw_text(80, y, games[i].name, 0xFFFFFFFF);
-        draw_text(500, y, games[i].id, 0xFF888888);
-    }
-
-    draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
-    flip();
-    log_debug("FIRST FRAME OK");
-    sceKernelSleep(3);
-    log_debug("GAME[0]: name='%s' id='%s' path='%s'", games[0].name, games[0].id, games[0].path);
-    log_debug("GAME[1]: name='%s' id='%s'", games[1].name, games[1].id);
 
     OrbisPadData pad_data;
     unsigned int old_buttons = 0;
@@ -580,55 +567,30 @@ int main(void) {
         }
 
         memset(framebuffer[current_buf], 0, FB_SIZE);
-        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFFFF0000); // Bright red for testing
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG_NAVY);
 
-        draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
-        draw_text(80, 90, "==================", 0xFFFFFFFF);
+        draw_text_scaled(80, 50, "PS2 ISO LAUNCHER", COLOR_WHITE, 3);
 
-        start_y = 140;
-        visible = 28;
+        int start_y = 140;
+        int row_height = 34;      // 8px font * scale 3 (=24) + a little spacing
+        int visible = (SCREEN_HEIGHT - start_y - 80) / row_height;
         int scroll = 0;
         if (selected >= visible) scroll = selected - visible + 1;
 
         for (int i = scroll; i < game_count && i < scroll + visible; i++) {
-            int y = start_y + (i - scroll) * 28;
-            uint32_t color = (i == selected) ? 0xFFFFFF00 : 0xFFFFFFFF;
+            int y = start_y + (i - scroll) * row_height;
+            uint32_t color = (i == selected) ? COLOR_YELLOW : COLOR_WHITE;
             if (i == selected) {
-                draw_rect(70, y - 4, 800, 24, 0xFF333355);
+                draw_rect(60, y - 4, SCREEN_WIDTH - 120, row_height, COLOR_SELECT_BG);
             }
-            draw_text(80, y, games[i].name, color);
-            draw_text(500, y, games[i].id, (i == selected) ? 0xFFFFFF00 : 0xFF888888);
+            draw_text_scaled(80, y, games[i].name, color, 2);
         }
 
-        draw_text(80, SCREEN_HEIGHT - 80, games[selected].path, 0xFF666666);
-        draw_text(80, SCREEN_HEIGHT - 50, "[X] LAUNCH    [UP/DOWN] SELECT", 0xFF888888);
+        draw_text_scaled(80, SCREEN_HEIGHT - 40, "[X] LAUNCH   [UP/DOWN] SELECT", COLOR_GRAY, 2);
 
         flip();
         sceKernelUsleep(16666);
     }
-        unsigned int buttons = pad_data.buttons;
-        unsigned int pressed = buttons & ~old_buttons;
-        old_buttons = buttons;
 
-        if (pressed & ORBIS_PAD_BUTTON_UP) {
-            selected = (selected - 1 + game_count) % game_count;
-        }
-        if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-            selected = (selected + 1) % game_count;
-        }
-        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-            log_debug("LAUNCH: %s", games[selected].name);
-            if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                launch_emulator();
-            }
-        }
-
-        memset(framebuffer[current_buf], 0, FB_SIZE);
-        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xFF224466);
-
-        draw_text(80, 60, "PS2 ISO LAUNCHER", 0xFFFFFFFF);
-       
-    while (1) {
-        sceKernelUsleep(1000000);
-    }
+    return 0;
 }
