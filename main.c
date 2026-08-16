@@ -446,7 +446,8 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
 
 // ============ LAUNCH ============
 static void launch_emulator(void) {
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    int r = sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    log_debug("LAUNCH RESULT: %d", r);
 }
 
 // ============ VIDEO INIT ============
@@ -572,8 +573,8 @@ int main(void) {
         draw_text_scaled(80, 50, "PS2 ISO LAUNCHER", COLOR_WHITE, 3);
 
         int start_y = 140;
-        int row_height = 34;      // 8px font * scale 3 (=24) + a little spacing
-        int visible = (SCREEN_HEIGHT - start_y - 80) / row_height;
+        int row_height = 42;      // 8*3=24px font + 18px spacing
+        int visible = (SCREEN_HEIGHT - start_y - 100) / row_height;
         int scroll = 0;
         if (selected >= visible) scroll = selected - visible + 1;
 
@@ -583,7 +584,7 @@ int main(void) {
             if (i == selected) {
                 draw_rect(60, y - 4, SCREEN_WIDTH - 120, row_height, COLOR_SELECT_BG);
             }
-            draw_text_scaled(80, y, games[i].name, color, 2);
+            draw_text_scaled(80, y, games[i].name, color, 3);
         }
 
         draw_text_scaled(80, SCREEN_HEIGHT - 40, "[X] LAUNCH   [UP/DOWN] SELECT", COLOR_GRAY, 2);
