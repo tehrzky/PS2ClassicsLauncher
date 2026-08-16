@@ -1,7 +1,6 @@
 void _init(void) {}
 void _fini(void) {}
 
-#include <sys/stat.h> 
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
@@ -11,6 +10,7 @@ void _fini(void) {}
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
@@ -20,10 +20,10 @@ void _fini(void) {}
 
 // ============ ERROR CODES ============
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
-
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
+#define GAMECONFIG_DIR  "/data/PS4ROMS/PS2ISO/gameconfig/"
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
 #define EMULATOR_TID    "PCSX20042"
@@ -209,7 +209,7 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
 static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
     if (c < 32 || c > 127) return;
     const unsigned char *f = font8x8[c - 32];
-    
+
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
             if (f[col] & (1 << row)) {
@@ -229,72 +229,95 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
 static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
 static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
 
-// ============ ISO DISC ID EXTRACTION ============
+// ============ helper: little-endian 32-bit read ============
+static uint32_t read_le32(const unsigned char *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+// ============ ISO9660-BASED DISC ID EXTRACTION ============
+// Properly parses the ISO filesystem (Primary Volume Descriptor -> root
+// directory -> SYSTEM.CNF's real on-disc location) instead of blindly
+// byte-scanning the first N bytes of the file, which is unreliable because
+// SYSTEM.CNF's actual data can be located anywhere in the image.
 static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
 
-    char buf[131072];
-    int n = read(fd, buf, sizeof(buf));
+    unsigned char sector[2048];
+
+    // Primary Volume Descriptor is always at LBA 16 for ISO9660
+    if (lseek(fd, (off_t)16 * 2048, SEEK_SET) < 0) { close(fd); return 0; }
+    if (read(fd, sector, 2048) != 2048) { close(fd); return 0; }
+    if (sector[0] != 1 || memcmp(sector + 1, "CD001", 5) != 0) { close(fd); return 0; }
+
+    // Root directory record starts at offset 156 within the PVD
+    const unsigned char *root = sector + 156;
+    uint32_t root_lba  = read_le32(root + 2);
+    uint32_t root_size = read_le32(root + 10);
+
+    if (root_lba == 0 || root_size == 0 || root_size > 1024 * 1024) { close(fd); return 0; }
+
+    unsigned char *dir = (unsigned char*)malloc(((root_size + 2047) / 2048) * 2048);
+    if (!dir) { close(fd); return 0; }
+
+    if (lseek(fd, (off_t)root_lba * 2048, SEEK_SET) < 0) { free(dir); close(fd); return 0; }
+    if (read(fd, dir, root_size) != (int)root_size) { free(dir); close(fd); return 0; }
+
+    uint32_t cnf_lba = 0, cnf_size = 0;
+    uint32_t pos = 0;
+    while (pos + 33 < root_size) {
+        unsigned char len = dir[pos];
+        if (len == 0) {
+            // zero-length record means padding to the next 2048-byte sector
+            uint32_t next = ((pos / 2048) + 1) * 2048;
+            if (next <= pos) break;
+            pos = next;
+            continue;
+        }
+        unsigned char fi_len = dir[pos + 32];
+        const char *name = (const char*)(dir + pos + 33);
+
+        if ((fi_len == 10 && strncasecmp(name, "SYSTEM.CNF", 10) == 0) ||
+            (fi_len == 12 && strncasecmp(name, "SYSTEM.CNF;1", 12) == 0)) {
+            cnf_lba  = read_le32(dir + pos + 2);
+            cnf_size = read_le32(dir + pos + 10);
+            break;
+        }
+        pos += len;
+    }
+    free(dir);
+
+    if (cnf_lba == 0) { close(fd); return 0; }
+
+    char cnf_buf[2048];
+    size_t to_read = (cnf_size > 0 && cnf_size < sizeof(cnf_buf) - 1) ? cnf_size : sizeof(cnf_buf) - 1;
+    if (lseek(fd, (off_t)cnf_lba * 2048, SEEK_SET) < 0) { close(fd); return 0; }
+    int n = read(fd, cnf_buf, to_read);
     close(fd);
     if (n <= 0) return 0;
+    cnf_buf[n] = '\0';
 
-    for (int i = 0; i < n - 30; i++) {
-        if (strncmp(buf + i, "BOOT2", 5) == 0 || strncmp(buf + i, "BOOT", 4) == 0) {
-            int limit = i + 256;
-            if (limit > n) limit = n;
-            for (int j = i; j < limit - 8; j++) {
-                if (strncmp(buf + j, "cdrom0:", 7) == 0) {
-                    char *p = buf + j + 7;
-                    if (*p == '\\' || *p == '/') p++;
-                    char raw[32] = {0};
-                    int k = 0;
-                    while (k < 31 && p[k] && p[k] != ';' && p[k] != '\n' && p[k] != '\r' && p[k] != ' ') {
-                        raw[k] = p[k];
-                        k++;
-                    }
-                    int fi = 0;
-                    for (int r = 0; raw[r] && fi < (int)out_len - 1; r++) {
-                        if (raw[r] == '_') out_id[fi++] = '-';
-                        else if (raw[r] == '.') { }
-                        else out_id[fi++] = raw[r];
-                    }
-                    out_id[fi] = '\0';
-                    return 1;
-                }
-            }
-        }
+    // SYSTEM.CNF contains a line like: BOOT2 = cdrom0:\SLUS_213.85;1
+    char *p = strstr(cnf_buf, "cdrom0:");
+    if (!p) return 0;
+    p += 7;
+    if (*p == '\\' || *p == '/') p++;
+
+    char raw[32] = {0};
+    int k = 0;
+    while (k < 31 && p[k] && p[k] != ';' && p[k] != '\n' && p[k] != '\r' && p[k] != ' ') {
+        raw[k] = p[k];
+        k++;
     }
 
-    for (int i = 0; i < n - 15; i++) {
-        char c0 = buf[i];
-        char c1 = buf[i+1];
-        char c2 = buf[i+2];
-        char c3 = buf[i+3];
-        if ((c0 == 'S' || c0 == 's') &&
-            (c1 == 'C' || c1 == 'c' || c1 == 'L' || c1 == 'l') &&
-            (c2 == 'U' || c2 == 'u' || c2 == 'E' || c2 == 'e' || c2 == 'L' || c2 == 'l') &&
-            (c3 == 'S' || c3 == 's' || c3 == 'M' || c3 == 'm' || c3 == 'A' || c3 == 'a') &&
-            buf[i+4] == '_' &&
-            isdigit((unsigned char)buf[i+5])) {
-            char raw[32] = {0};
-            int k = 0;
-            while (k < 31 && (isalnum((unsigned char)buf[i+k]) || buf[i+k] == '_' || buf[i+k] == '.')) {
-                raw[k] = buf[i+k];
-                k++;
-            }
-            int fi = 0;
-            for (int r = 0; raw[r] && fi < (int)out_len - 1; r++) {
-                if (raw[r] == '_') out_id[fi++] = '-';
-                else if (raw[r] == '.') { }
-                else out_id[fi++] = raw[r];
-            }
-            out_id[fi] = '\0';
-            return 1;
-        }
+    int fi = 0;
+    for (int r = 0; raw[r] && fi < (int)out_len - 1; r++) {
+        if (raw[r] == '_') out_id[fi++] = '-';
+        else if (raw[r] == '.') { /* skip the dot, e.g. SLUS_213.85 -> SLUS-21385 */ }
+        else out_id[fi++] = raw[r];
     }
-
-    return 0;
+    out_id[fi] = '\0';
+    return fi > 0;
 }
 
 // ============ GAME SCANNING ============
@@ -319,15 +342,8 @@ static void scan_games(void) {
                  "%s%s", ISO_DIR, entry->d_name);
 
         if (!extract_disc_id(games[game_count].path, games[game_count].id, sizeof(games[game_count].id))) {
-            char *name = games[game_count].name;
-            int k = 0;
-            while (k < 4 && name[k] && isalnum((unsigned char)name[k])) {
-                games[game_count].id[k] = toupper((unsigned char)name[k]);
-                k++;
-            }
-            while (k < 4) games[game_count].id[k++] = 'X';
-            games[game_count].id[k] = '\0';
-            strncat(games[game_count].id, "_00000", sizeof(games[game_count].id) - strlen(games[game_count].id) - 1);
+            strncpy(games[game_count].id, "UNKNOWN", sizeof(games[game_count].id) - 1);
+            log_debug("DISC ID extraction FAILED for: %s", games[game_count].name);
         }
 
         game_count++;
@@ -336,88 +352,15 @@ static void scan_games(void) {
     qsort(games, game_count, sizeof(Game), name_compare);
 }
 
-// ============ FUZZY NAME MATCHING ============
-static void normalize_name(char *dst, const char *src, size_t dst_len) {
-    size_t j = 0;
-    int in_brackets = 0;
-
-    for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
-        char c = src[i];
-        if (c == '(' || c == '[') in_brackets++;
-        if (c == ')' || c == ']') { in_brackets--; continue; }
-        if (in_brackets > 0) continue;
-        if (isalnum((unsigned char)c) || c == ' ') {
-            if (c == ' ') {
-                if (j > 0 && dst[j-1] != ' ') dst[j++] = ' ';
-            } else {
-                dst[j++] = tolower((unsigned char)c);
-            }
-        }
-    }
-    if (j > 0 && dst[j-1] == ' ') j--;
-    dst[j] = '\0';
-}
-
-static int fuzzy_match(const char *iso_name, const char *config_name) {
-    char norm_iso[256], norm_cfg[256];
-    normalize_name(norm_iso, iso_name, sizeof(norm_iso));
-    normalize_name(norm_cfg, config_name, sizeof(norm_cfg));
-    if (strstr(norm_iso, norm_cfg) != NULL) return 1;
-    if (strstr(norm_cfg, norm_iso) != NULL) return 1;
-    return 0;
-}
-
-// ============ EXISTING CONFIG LOOKUP ============
-static int find_game_config(const char *disc_id, const char *game_name, char *out_path, size_t out_len) {
-    DIR *dir = opendir(ISO_DIR "gameconfig/");
-    if (!dir) return 0;
-
-    struct dirent *entry;
-    char best_match[256] = {0};
-
-    while ((entry = readdir(dir)) != NULL) {
-        int len = strlen(entry->d_name);
-        if (len < 5) continue;
-        if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
-
-        char cfg_name[256];
-        strncpy(cfg_name, entry->d_name, len - 4);
-        cfg_name[len - 4] = '\0';
-
-        if (fuzzy_match(game_name, cfg_name)) {
-            if (strcasecmp(game_name, cfg_name) == 0) {
-                snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, entry->d_name);
-                closedir(dir);
-                return 1;
-            }
-            if (best_match[0] == '\0') {
-                strncpy(best_match, entry->d_name, sizeof(best_match) - 1);
-            }
-        }
-    }
-    closedir(dir);
-
-    if (best_match[0] != '\0') {
-        snprintf(out_path, out_len, "%sgameconfig/%s", ISO_DIR, best_match);
-        return 1;
-    }
-
-    snprintf(out_path, out_len, "%sgameconfig/%s.txt", ISO_DIR, disc_id);
-    if (access(out_path, F_OK) == 0) return 1;
-
-    return 0;
-}
-
-// ============ CHECK IF APP IS INSTALLED ============
+// ============ CHECK IF APP IS INSTALLED (informational only, not a launch gate) ============
 static int check_app_installed(const char *title_id) {
-    // Check multiple locations where homebrew apps can be installed
     const char *search_paths[] = {
         "/user/app/%s/sce_sys/param.sfo",
         "/data/app/%s/sce_sys/param.sfo",
         "/system/app/%s/sce_sys/param.sfo",
         NULL
     };
-    
+
     char path[512];
     for (int i = 0; search_paths[i] != NULL; i++) {
         snprintf(path, sizeof(path), search_paths[i], title_id);
@@ -428,107 +371,83 @@ static int check_app_installed(const char *title_id) {
             return 1;
         }
     }
-    
-    log_debug("App %s is NOT installed in any standard location", title_id);
+
+    log_debug("App %s check inconclusive (sandbox may not expose these paths)", title_id);
     return 0;
 }
 
-// ============ LIST INSTALLED APPS ============
-static void list_installed_apps(void) {
-    const char *search_paths[] = {
-        "/user/app/",
-        "/data/app/",
-        "/system/app/",
-        NULL
-    };
-    
-    for (int p = 0; search_paths[p] != NULL; p++) {
-        DIR *dir = opendir(search_paths[p]);
-        if (!dir) {
-            log_debug("Cannot open %s", search_paths[p]);
-            continue;
-        }
-        
-        struct dirent *entry;
-        log_debug("=== APPS IN %s ===", search_paths[p]);
-        while ((entry = readdir(dir)) != NULL) {
-            if (entry->d_name[0] == '.') continue;
-            
-            char sfo_path[512];
-            snprintf(sfo_path, sizeof(sfo_path), "%s%s/sce_sys/param.sfo", search_paths[p], entry->d_name);
-            if (access(sfo_path, F_OK) == 0) {
-                log_debug("Found app: %s", entry->d_name);
-                
-                if (strcmp(entry->d_name, EMULATOR_TID) == 0) {
-                    log_debug("  >>> THIS IS YOUR EMULATOR! <<<");
-                }
-            }
-        }
-        closedir(dir);
-    }
-    log_debug("=== END LIST ===");
-}
-
-// ============ CONFIG GENERATION ============
+// ============ PER-GAME CONFIG: save/reuse by exact game name in gameconfig/ ============
+// If /data/PS4ROMS/PS2ISO/gameconfig/<game name>.txt already exists, it is
+// left untouched (so manual per-game tweaks persist). If it doesn't exist,
+// it's created from the default template. Either way, the live --image=
+// and --ps2-title-id= lines are written fresh into TEMP_CONFIG each launch.
 static int set_active_game(const char *iso_path, const char *disc_id, const char *game_name) {
     char line_buf[2048];
     int n;
 
-    // Create config directory if it doesn't exist
     mkdir("/data/PS4ROMS/PS2ISO/config", 0777);
-    
-    char existing_config[512];
-    int has_existing = find_game_config(disc_id, game_name, existing_config, sizeof(existing_config));
+    mkdir(GAMECONFIG_DIR, 0777);
+
+    char game_config_path[700];
+    snprintf(game_config_path, sizeof(game_config_path), "%s%s.txt", GAMECONFIG_DIR, game_name);
+
+    int has_existing = (access(game_config_path, F_OK) == 0);
+
+    if (!has_existing) {
+        int gfd = open(game_config_path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        if (gfd < 0) {
+            log_debug("set_active_game: failed to create %s", game_config_path);
+        } else {
+            int dlen = 0;
+            int dsrc = open(DEFAULT_CONFIG, O_RDONLY);
+            char default_buf[65536];
+            if (dsrc >= 0) {
+                dlen = read(dsrc, default_buf, sizeof(default_buf) - 1);
+                close(dsrc);
+                if (dlen > 0) default_buf[dlen] = '\0';
+            }
+            if (dlen <= 0) {
+                dlen = strlen(embedded_default);
+                memcpy(default_buf, embedded_default, dlen);
+                default_buf[dlen] = '\0';
+            }
+            write(gfd, default_buf, dlen);
+            close(gfd);
+            log_debug("Created new gameconfig: %s", game_config_path);
+        }
+    }
 
     int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open TEMP_CONFIG: %s", TEMP_CONFIG);
+        log_debug("set_active_game: failed to open %s", TEMP_CONFIG);
         return 0;
     }
 
-    if (has_existing) {
-        int src = open(existing_config, O_RDONLY);
-        if (src >= 0) {
-            char buf[65536];
-            int m = read(src, buf, sizeof(buf) - 1);
-            close(src);
-            if (m > 0) {
-                buf[m] = '\0';
-                char *p = buf;
-                while (*p) {
-                    char *line_end = p;
-                    while (*line_end && *line_end != '\n') line_end++;
-                    int line_len = line_end - p;
+    int src = open(game_config_path, O_RDONLY);
+    if (src >= 0) {
+        char buf[65536];
+        int m = read(src, buf, sizeof(buf) - 1);
+        close(src);
+        if (m > 0) {
+            buf[m] = '\0';
+            char *p = buf;
+            while (*p) {
+                char *line_end = p;
+                while (*line_end && *line_end != '\n') line_end++;
+                int line_len = line_end - p;
 
-                    if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { }
-                    else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { }
-                    else {
-                        write(fd, p, line_len);
-                        write(fd, "\n", 1);
-                    }
-                    p = line_end;
-                    if (*p == '\n') p++;
+                if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { }
+                else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { }
+                else {
+                    write(fd, p, line_len);
+                    write(fd, "\n", 1);
                 }
+                p = line_end;
+                if (*p == '\n') p++;
             }
         }
     } else {
-        char template_buf[65536];
-        int template_len = 0;
-
-        int src = open(DEFAULT_CONFIG, O_RDONLY);
-        if (src >= 0) {
-            template_len = read(src, template_buf, sizeof(template_buf) - 1);
-            close(src);
-            if (template_len > 0) template_buf[template_len] = '\0';
-        }
-        if (template_len <= 0) {
-            template_len = strlen(embedded_default);
-            memcpy(template_buf, embedded_default, template_len);
-            template_buf[template_len] = '\0';
-        }
-        write(fd, template_buf, template_len);
-        if (template_len > 0 && template_buf[template_len - 1] != '\n')
-            write(fd, "\n", 1);
+        log_debug("set_active_game: could not read %s", game_config_path);
     }
 
     n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
@@ -539,21 +458,21 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
 
     fd = open(MASTER_CONFIG, O_RDONLY);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open MASTER_CONFIG for reading: %s", MASTER_CONFIG);
+        log_debug("set_active_game: failed to open %s", MASTER_CONFIG);
         return 0;
     }
     char buf[32768];
     int m = read(fd, buf, sizeof(buf) - 1);
     close(fd);
     if (m <= 0) {
-        log_debug("set_active_game: MASTER_CONFIG is empty or read failed");
+        log_debug("set_active_game: %s empty or unreadable", MASTER_CONFIG);
         return 0;
     }
     buf[m] = '\0';
 
     fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open MASTER_CONFIG for writing: %s", MASTER_CONFIG);
+        log_debug("set_active_game: failed to rewrite %s", MASTER_CONFIG);
         return 0;
     }
 
@@ -575,7 +494,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
     write(fd, line_buf, n);
     close(fd);
-    log_debug("WROTE MASTER CONFIG: %s", MASTER_CONFIG);
+    log_debug("WROTE MASTER CONFIG: %s (game config: %s)", MASTER_CONFIG, game_config_path);
     return 1;
 }
 
@@ -626,7 +545,6 @@ static int init_video(void) {
     return 0;
 }
 
-// ============ FLIP FUNCTION ============
 static void flip(void) {
     sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
     current_buf ^= 1;
@@ -647,12 +565,10 @@ typedef struct {
 static void launch_emulator(void) {
     int ret;
     int userId = 0;
-    int mod;
-    
+
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
-    
-    // Get current user
+
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
@@ -663,74 +579,23 @@ static void launch_emulator(void) {
         }
     }
     log_debug("User ID: %d", userId);
-    
-    // Load the system service module
-    mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    if (mod < 0) {
-        log_debug("Failed to load libSceSystemService.sprx: %d", mod);
-        mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-        if (mod < 0) {
-            log_debug("Second attempt failed: %d", mod);
-        }
+
+    log_debug("Calling sceSystemServiceLaunchApp with TID: %s", EMULATOR_TID);
+    ret = sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    log_debug("sceSystemServiceLaunchApp returned: 0x%08X (%d)", ret, ret);
+
+    if (ret >= 0) {
+        log_debug("Launch call succeeded, exiting launcher");
+        sceKernelSleep(1);
+        exit(0);
     }
-    log_debug("Module loaded: %d", mod);
-    
-    // Get the launch function
-    void *launch_func = NULL;
-    ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-    
-    if (ret == 0 && launch_func) {
-        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
-        
-        LncAppParam param;
-        memset(&param, 0, sizeof(param));
-        param.sz = sizeof(LncAppParam);
-        param.user_id = userId;
-        param.app_opt = 0;
-        param.crash_report = 0;
-        param.check_flag = SkipSystemUpdateCheck;
-        
-        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-        
-        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
-        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
-        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-        
-        if (ret == 0) {
-            log_debug("Launch successful!");
-            sceKernelSleep(1);
-            exit(0);
-        }
-        
-        if (ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
-            log_debug("App already running!");
-            sceKernelSleep(1);
-            exit(0);
-        }
-    } else {
-        log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
-    }
-    
-    // Method 2: Try sceSystemServiceLaunchApp
-    log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp called");
-    sceKernelSleep(2);
-    
-    // Method 3: Try with empty args
-    log_debug("METHOD 3: Trying sceSystemServiceLaunchApp with empty args");
-    sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
-    sceKernelSleep(2);
-    
-    // If all methods fail, show error
-    log_debug("ALL LAUNCH METHODS FAILED!");
-    
+
+    log_debug("LAUNCH FAILED! Check the return code above against PS4 error tables.");
+
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
     draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
     flip();
     sceKernelSleep(5);
-    exit(0);
 }
 
 // ============ MAIN ============
@@ -763,12 +628,8 @@ int main(void) {
 
     scan_games();
     log_debug("GAMES: %d", game_count);
-    
-    list_installed_apps();
-    
-    if (!check_app_installed(EMULATOR_TID)) {
-        log_debug("WARNING: Emulator '%s' not found!", EMULATOR_TID);
-    }
+
+    check_app_installed(EMULATOR_TID); // informational log only, does not block launch
 
     if (game_count == 0) {
         draw_text_scaled(100, 100, "NO ISO FILES FOUND", COLOR_WHITE, 3);
@@ -796,13 +657,9 @@ int main(void) {
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].name);
                 if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                    // Just try to launch - don't block on check_app_installed
                     launch_emulator();
                 } else {
                     log_debug("set_active_game FAILED for %s", games[selected].name);
-                    draw_text_scaled(80, SCREEN_HEIGHT - 100, "CONFIG WRITE FAILED!", COLOR_RED, 2);
-                    flip();
-                    sceKernelSleep(2);
                 }
             }
         }
