@@ -657,6 +657,13 @@ static void launch_emulator(void) {
     exit(0);
 }
 
+
+static void flip(void) {
+    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
+    current_buf ^= 1;
+}
+
+
 // ============ VIDEO INIT ============
 static int init_video(void) {
     video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, 0);
@@ -704,10 +711,7 @@ static int init_video(void) {
     return 0;
 }
 
-static void flip(void) {
-    sceVideoOutSubmitFlip(video, current_buf, ORBIS_VIDEO_OUT_FLIP_VSYNC, 0);
-    current_buf ^= 1;
-}
+
 
 // ============ MAIN ============
 int main(void) {
