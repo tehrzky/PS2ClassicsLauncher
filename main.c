@@ -463,9 +463,8 @@ static int init_video(void) {
     }
 
     OrbisVideoOutBufferAttribute attr;
-    memset(&attr, 0, sizeof(attr));  // ZERO the whole struct first
-    sceVideoOutSetBufferAttribute(&attr, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB,
-    1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
+    memset(&attr, 0, sizeof(attr));
+    sceVideoOutSetBufferAttribute(&attr, 0x80000000, 1, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH);
 
     int r = sceVideoOutRegisterBuffers(video, 0, (void*)framebuffer, 2, &attr);
     if (r < 0) {
