@@ -581,22 +581,20 @@ static void launch_emulator(void) {
     log_debug("User ID: %d", userId);
 
     log_debug("Calling sceSystemServiceLaunchApp with TID: %s", EMULATOR_TID);
-    ret = sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp returned: 0x%08X (%d)", ret, ret);
+sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+log_debug("sceSystemServiceLaunchApp called (no return value on this SDK)");
 
-    if (ret >= 0) {
-        log_debug("Launch call succeeded, exiting launcher");
-        sceKernelSleep(1);
-        exit(0);
-    }
+// Give the system a moment to actually switch apps. If we're still here
+// after this, the launch didn't happen — exit(0) below never gets skipped
+// on success because a successful launch tears this process down for us.
+sceKernelSleep(2);
 
-    log_debug("LAUNCH FAILED! Check the return code above against PS4 error tables.");
+log_debug("LAUNCH FAILED! Still running after sceSystemServiceLaunchApp — check launcher_log.txt above this line.");
 
-    draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
-    draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
-    flip();
-    sceKernelSleep(5);
-}
+draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
+draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
+flip();
+sceKernelSleep(5);
 
 // ============ MAIN ============
 int main(void) {
