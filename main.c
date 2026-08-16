@@ -17,6 +17,8 @@ void _fini(void) {}
 #include <ctype.h>
 #include <stdarg.h>
 
+// ============ ERROR CODES ============
+#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ps4.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
@@ -406,37 +408,63 @@ static int find_game_config(const char *disc_id, const char *game_name, char *ou
 
 // ============ CHECK IF APP IS INSTALLED ============
 static int check_app_installed(const char *title_id) {
-    char path[256];
-    snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", title_id);
-    int fd = open(path, O_RDONLY);
-    if (fd >= 0) {
-        close(fd);
-        log_debug("App %s is installed", title_id);
-        return 1;
+    // Check multiple locations where homebrew apps can be installed
+    const char *search_paths[] = {
+        "/user/app/%s/sce_sys/param.sfo",
+        "/data/app/%s/sce_sys/param.sfo",
+        "/system/app/%s/sce_sys/param.sfo",
+        NULL
+    };
+    
+    char path[512];
+    for (int i = 0; search_paths[i] != NULL; i++) {
+        snprintf(path, sizeof(path), search_paths[i], title_id);
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            log_debug("App %s is installed at: %s", title_id, path);
+            return 1;
+        }
     }
-    log_debug("App %s is NOT installed", title_id);
+    
+    log_debug("App %s is NOT installed in any standard location", title_id);
     return 0;
 }
 
 // ============ LIST INSTALLED APPS ============
 static void list_installed_apps(void) {
-    DIR *dir = opendir("/system/app/");
-    if (!dir) {
-        log_debug("Cannot open /system/app/");
-        return;
-    }
+    const char *search_paths[] = {
+        "/user/app/",
+        "/data/app/",
+        "/system/app/",
+        NULL
+    };
     
-    struct dirent *entry;
-    log_debug("=== INSTALLED APPS ===");
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        char path[256];
-        snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", entry->d_name);
-        if (access(path, F_OK) == 0) {
-            log_debug("Found app: %s", entry->d_name);
+    for (int p = 0; search_paths[p] != NULL; p++) {
+        DIR *dir = opendir(search_paths[p]);
+        if (!dir) {
+            log_debug("Cannot open %s", search_paths[p]);
+            continue;
         }
+        
+        struct dirent *entry;
+        log_debug("=== APPS IN %s ===", search_paths[p]);
+        while ((entry = readdir(dir)) != NULL) {
+            if (entry->d_name[0] == '.') continue;
+            
+            char sfo_path[512];
+            snprintf(sfo_path, sizeof(sfo_path), "%s%s/sce_sys/param.sfo", search_paths[p], entry->d_name);
+            if (access(sfo_path, F_OK) == 0) {
+                log_debug("Found app: %s", entry->d_name);
+                
+                // Check if it's the emulator
+                if (strcmp(entry->d_name, EMULATOR_TID) == 0) {
+                    log_debug("  >>> THIS IS YOUR EMULATOR! <<<");
+                }
+            }
+        }
+        closedir(dir);
     }
-    closedir(dir);
     log_debug("=== END LIST ===");
 }
 
@@ -598,6 +626,8 @@ typedef struct {
     uint32_t unk[2];
 } LncAppParam;
 
+#define SkipSystemUpdateCheck 0x20000
+
 static void launch_emulator(void) {
     int ret;
     int userId = 0;
@@ -606,6 +636,7 @@ static void launch_emulator(void) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
     
+    // Get current user
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
@@ -617,86 +648,73 @@ static void launch_emulator(void) {
     }
     log_debug("User ID: %d", userId);
     
-    // METHOD 1: Try sceLncUtilLaunchApp
-    log_debug("METHOD 1: Trying sceLncUtilLaunchApp");
+    // Load the system service module
     mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    if (mod > 0) {
-        log_debug("Loaded libSceSystemService.sprx: %d", mod);
+    if (mod < 0) {
+        log_debug("Failed to load libSceSystemService.sprx: %d", mod);
+        // Try again
+        mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+        if (mod < 0) {
+            log_debug("Second attempt failed: %d", mod);
+        }
+    }
+    log_debug("Module loaded: %d", mod);
+    
+    // Get the launch function
+    void *launch_func = NULL;
+    ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+    
+    if (ret == 0 && launch_func) {
+        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
         
-        void *launch_func = NULL;
-        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-        if (ret == 0 && launch_func) {
-            log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
-            
-            LncAppParam param;
-            memset(&param, 0, sizeof(param));
-            param.sz = sizeof(LncAppParam);
-            param.user_id = userId;
-            param.app_opt = 0;
-            param.crash_report = 0;
-            param.check_flag = 0;
-            
-            typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-            LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-            
-            log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
-            ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
-            log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-            
-            if (ret == 0) {
-                log_debug("Launch successful! Exiting...");
-                sceKernelSleep(1);
-                exit(0);
-            }
-            log_debug("Launch failed with error: 0x%08X", ret);
-        } else {
-            log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
+        LncAppParam param;
+        memset(&param, 0, sizeof(param));
+        param.sz = sizeof(LncAppParam);
+        param.user_id = userId;
+        param.app_opt = 0;
+        param.crash_report = 0;
+        param.check_flag = SkipSystemUpdateCheck;
+        
+        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+        
+        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
+        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+        
+        if (ret == 0) {
+            log_debug("Launch successful!");
+            sceKernelSleep(1);
+            exit(0);
+        }
+        
+        // If it failed with "already running", that's actually success
+        if (ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+            log_debug("App already running!");
+            sceKernelSleep(1);
+            exit(0);
         }
     } else {
-        log_debug("Failed to load libSceSystemService.sprx: %d", mod);
+        log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
     }
     
-    // METHOD 2: Try sceSystemServiceLaunchApp
+    // Method 2: Try sceSystemServiceLaunchApp
     log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp called - if it worked, we won't reach here");
-    sceKernelSleep(1);
+    log_debug("sceSystemServiceLaunchApp called");
+    sceKernelSleep(2);
     
-    // METHOD 3: Try with empty args string
+    // Method 3: Try with empty args
     log_debug("METHOD 3: Trying sceSystemServiceLaunchApp with empty args");
     sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
-    log_debug("sceSystemServiceLaunchApp called with args - if it worked, we won't reach here");
-    sceKernelSleep(1);
+    sceKernelSleep(2);
     
-    // METHOD 4: Try with user ID
-    log_debug("METHOD 4: Trying sceSystemServiceLaunchAppWithUser");
-    mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    if (mod > 0) {
-        void *launch_user_func = NULL;
-        ret = sceKernelDlsym(mod, "sceSystemServiceLaunchAppWithUser", &launch_user_func);
-        if (ret == 0 && launch_user_func) {
-            typedef int (*LaunchAppWithUser_t)(const char *titleId, const char *args, int userId, void *param);
-            LaunchAppWithUser_t sceSystemServiceLaunchAppWithUser = (LaunchAppWithUser_t)launch_user_func;
-            
-            log_debug("Calling sceSystemServiceLaunchAppWithUser with user: %d", userId);
-            ret = sceSystemServiceLaunchAppWithUser(EMULATOR_TID, "", userId, NULL);
-            log_debug("sceSystemServiceLaunchAppWithUser returned: 0x%08X", ret);
-            if (ret == 0) {
-                log_debug("Launch successful! Exiting...");
-                sceKernelSleep(1);
-                exit(0);
-            }
-        }
-    }
-    
+    // If all methods fail, show error
     log_debug("ALL LAUNCH METHODS FAILED!");
-    log_debug("Please check if emulator TID '%s' is correct", EMULATOR_TID);
     
+    // Show error on screen
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
-    char error_msg[256];
-    snprintf(error_msg, sizeof(error_msg), "TID: %s", EMULATOR_TID);
-    draw_text_scaled(80, 550, error_msg, COLOR_WHITE, 2);
-    draw_text_scaled(80, 600, "Check launcher_log.txt for details", COLOR_GRAY, 2);
+    draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
     flip();
     sceKernelSleep(5);
     exit(0);
