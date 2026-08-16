@@ -641,6 +641,43 @@ static void launch_emulator(void) {
     exit(0);
 }
 
+// ============ CHECK IF APP IS INSTALLED ============
+static int check_app_installed(const char *title_id) {
+    char path[256];
+    snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", title_id);
+    int fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        close(fd);
+        log_debug("App %s is installed", title_id);
+        return 1;
+    }
+    log_debug("App %s is NOT installed", title_id);
+    return 0;
+}
+
+// ============ LIST INSTALLED APPS (for debugging) ============
+static void list_installed_apps(void) {
+    DIR *dir = opendir("/system/app/");
+    if (!dir) {
+        log_debug("Cannot open /system/app/");
+        return;
+    }
+    
+    struct dirent *entry;
+    log_debug("=== INSTALLED APPS ===");
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        char path[256];
+        snprintf(path, sizeof(path), "/system/app/%s/sce_sys/param.sfo", entry->d_name);
+        if (access(path, F_OK) == 0) {
+            log_debug("Found app: %s", entry->d_name);
+        }
+    }
+    closedir(dir);
+    log_debug("=== END LIST ===");
+}
+
+
 // ============ VIDEO INIT ============
 static int init_video(void) {
     video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, 0);
@@ -726,6 +763,14 @@ int main(void) {
 
     scan_games();
     log_debug("GAMES: %d", game_count);
+    
+    // DEBUG: List installed apps
+    list_installed_apps();
+    
+    // Check if emulator is installed
+    if (!check_app_installed(EMULATOR_TID)) {
+        log_debug("WARNING: Emulator '%s' not found!", EMULATOR_TID);
+    }
 
     if (game_count == 0) {
         draw_text_scaled(100, 100, "NO ISO FILES FOUND", COLOR_WHITE, 3);
@@ -750,10 +795,20 @@ int main(void) {
             if (pressed & ORBIS_PAD_BUTTON_DOWN) {
                 selected = (selected + 1) % game_count;
             }
-            if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].name);
                 if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                    launch_emulator();
+                    // Check if emulator is installed first
+                    if (check_app_installed(EMULATOR_TID)) {
+                        launch_emulator();
+                    } else {
+                        log_debug("EMULATOR NOT INSTALLED!");
+                        // Show error on screen
+                        draw_text_scaled(80, SCREEN_HEIGHT - 100, "EMULATOR NOT INSTALLED!", COLOR_RED, 2);
+                        draw_text_scaled(80, SCREEN_HEIGHT - 60, "Press any button to continue", COLOR_GRAY, 2);
+                        flip();
+                        sceKernelSleep(3);
+                    }
                 }
             }
         }
