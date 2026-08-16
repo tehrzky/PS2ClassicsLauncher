@@ -452,7 +452,7 @@ static int init_video(void) {
             return -1;
         }
         void *addr = NULL;
-        r = sceKernelMapDirectMemory(&addr, size, 3, 0, directMem, 0x200000);
+        r = sceKernelMapDirectMemory(&addr, size, 0x33, 0, directMem, 0x200000);
         if (r < 0) {
             log_debug("MAP FAIL[%d]: %d", i, r);
             return -1;
