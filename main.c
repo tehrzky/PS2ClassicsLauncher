@@ -512,6 +512,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
 
 
 // ============ LAUNCH ============
+// ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
     uint32_t user_id;
@@ -580,25 +581,17 @@ static void launch_emulator(void) {
         log_debug("Failed to load libSceSystemService.sprx: %d", mod);
     }
     
-    // METHOD 2: Try sceSystemServiceLaunchApp (simpler)
+    // METHOD 2: Try sceSystemServiceLaunchApp (simpler - void return)
     log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
-    ret = sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
-    if (ret == 0) {
-        log_debug("Launch successful! Exiting...");
-        sceKernelSleep(1);
-        exit(0);
-    }
+    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    log_debug("sceSystemServiceLaunchApp called - if it worked, we won't reach here");
+    sceKernelSleep(1);
     
     // METHOD 3: Try with empty args string
     log_debug("METHOD 3: Trying sceSystemServiceLaunchApp with empty args");
-    ret = sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
-    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
-    if (ret == 0) {
-        log_debug("Launch successful! Exiting...");
-        sceKernelSleep(1);
-        exit(0);
-    }
+    sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    log_debug("sceSystemServiceLaunchApp called with args - if it worked, we won't reach here");
+    sceKernelSleep(1);
     
     // METHOD 4: Try with user ID
     log_debug("METHOD 4: Trying sceSystemServiceLaunchAppWithUser");
@@ -620,11 +613,6 @@ static void launch_emulator(void) {
             }
         }
     }
-    
-    // METHOD 5: Try calling the emulator directly via exec
-    log_debug("METHOD 5: Trying sceKernelExec");
-    ret = sceKernelExec("/system/sys/external/sysmodule_loader", 0, NULL);
-    log_debug("sceKernelExec returned: 0x%08X", ret);
     
     // If all methods fail, show error on screen
     log_debug("ALL LAUNCH METHODS FAILED!");
