@@ -204,17 +204,14 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
 
 // scale = how many screen pixels each font pixel becomes (1 = original 8x8, 3 = 24x24)
 static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
-    unsigned char uc = (unsigned char)c;  // FIX: force unsigned
-    if (uc < 32 || uc > 127) {
-        draw_rect(x, y, 8 * scale, 8 * scale, 0xFFFF0000); // red box = invalid char
-        return;
-    }
-    const unsigned char *f = font8x8[uc - 32];  // now safe index
+    if (c < 32 || c > 127) return;
+    const unsigned char *f = font8x8[c - 32];
     for (int row = 0; row < 8; row++) {
-        unsigned char byte = f[row];
         for (int col = 0; col < 8; col++) {
-            if (byte & (1 << (7 - col))) {
-                draw_rect(x + col * scale, y + row * scale, scale, scale, color);
+            // Original: if (f[row] & (1 << (7 - col)))
+            // Rotated 90° clockwise: row becomes 7-col, col becomes row
+            if (f[7 - col] & (1 << row)) {
+                draw_rect(x + row * scale, y + col * scale, scale, scale, color);
             }
         }
     }
