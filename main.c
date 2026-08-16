@@ -552,26 +552,13 @@ static void flip(void) {
 
 
 // ============ LAUNCH ============
-typedef struct {
-    uint32_t sz;
-    uint32_t user_id;
-    uint32_t app_opt;
-    uint32_t crash_report;
-    uint32_t check_flag;
-    uint32_t unk[2];
-} LncAppParam;
-
-#define SkipSystemUpdateCheck 0x20000
-#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
-
 static void launch_emulator(void) {
     int userId = 0;
     int ret;
-    
+
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
-    
-    // Get current user
+
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
@@ -582,81 +569,75 @@ static void launch_emulator(void) {
         }
     }
     log_debug("User ID: %d", userId);
-    
-    // Try loading the system service module with different paths
-    const char *module_paths[] = {
-        "/system/common/lib/libSceSystemService.sprx",
-        "/system/common/lib/libSceSystemService.sprx",
-        NULL
-    };
-    
-    int mod = -1;
-    for (int i = 0; module_paths[i] != NULL; i++) {
-        mod = sceKernelLoadStartModule(module_paths[i], 0, NULL, 0, 0, 0);
-        log_debug("Load %s: %d", module_paths[i], mod);
-        if (mod >= 0) break;
-    }
-    
-    // METHOD 1: Try sceLncUtilLaunchApp (more reliable)
-    void *launch_func = NULL;
-    if (mod >= 0) {
-        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-        log_debug("sceLncUtilLaunchApp dlsym: 0x%08X", ret);
-    }
-    
-    if (ret == 0 && launch_func) {
-        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
-        
+
+    // Try to resolve LNC helpers from the already-resident libSceSystemService.sprx
+    void *lncInit = NULL;
+    void *lncLaunch = NULL;
+    int foundLnc = 0;
+
+    ret = sceKernelDlsym(0, "sceLncUtilInitialize", &lncInit);
+    log_debug("sceKernelDlsym(sceLncUtilInitialize) = 0x%08X, ptr=%p", ret, lncInit);
+    ret = sceKernelDlsym(0, "sceLncUtilLaunchApp", &lncLaunch);
+    log_debug("sceKernelDlsym(sceLncUtilLaunchApp) = 0x%08X, ptr=%p", ret, lncLaunch);
+
+    if (lncInit && lncLaunch) {
+        typedef int (*LncInit_t)(void);
+        typedef uint32_t (*LncLaunch_t)(const char *, const char *, LncAppParam *);
+
+        LncInit_t  init_fn  = (LncInit_t)lncInit;
+        LncLaunch_t launch_fn = (LncLaunch_t)lncLaunch;
+
+        ret = init_fn();
+        log_debug("sceLncUtilInitialize() = 0x%08X", ret);
+
         LncAppParam param;
         memset(&param, 0, sizeof(param));
         param.sz = sizeof(LncAppParam);
-        param.user_id = userId;
+        param.user_id = (uint32_t)userId;
         param.app_opt = 0;
         param.crash_report = 0;
         param.check_flag = SkipSystemUpdateCheck;
-        
-        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-        
-        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
-        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
-        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-        
-        if (ret == 0 || ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
-            log_debug("Launch successful (or already running)!");
+
+        log_debug("Calling sceLncUtilLaunchApp(%s, NULL, &param)", EMULATOR_TID);
+        uint32_t appId = launch_fn(EMULATOR_TID, NULL, &param);
+        log_debug("sceLncUtilLaunchApp returned appId=0x%08X", appId);
+
+        if ((appId & 0x80000000) == 0) {   // success: appId is 0x6XXXXXXX
+            log_debug("Launch accepted (appId 0x%08X). Exiting launcher.", appId);
             sceKernelSleep(1);
-            return;  // Don't exit, just return to let the app close naturally
+            exit(0);
+        } else if (appId == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+            log_debug("Emulator already running. Exiting launcher.");
+            sceKernelSleep(1);
+            exit(0);
+        } else {
+            log_debug("sceLncUtilLaunchApp failed, will try fallback.");
         }
+    } else {
+        log_debug("LNC symbols not found in process, using sceSystemServiceLaunchApp fallback.");
     }
-    
-    // METHOD 2: Try sceSystemServiceLaunchApp (simpler, works for known TIDs)
-    log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp called - if it worked, we won't be here");
-    sceKernelSleep(1);
-    
-    // METHOD 3: Try with the user ID
-    log_debug("METHOD 3: Trying sceSystemServiceLaunchAppWithUser");
-    // Try to get the function dynamically
-    if (mod >= 0) {
-        void *launch_user_func = NULL;
-        ret = sceKernelDlsym(mod, "sceSystemServiceLaunchAppWithUser", &launch_user_func);
-        if (ret == 0 && launch_user_func) {
-            typedef int (*LaunchWithUser_t)(const char *titleId, const char *args, int userId, void *param);
-            LaunchWithUser_t sceSystemServiceLaunchAppWithUser = (LaunchWithUser_t)launch_user_func;
-            ret = sceSystemServiceLaunchAppWithUser(EMULATOR_TID, "", userId, NULL);
-            log_debug("sceSystemServiceLaunchAppWithUser returned: 0x%08X", ret);
-            if (ret == 0) {
-                log_debug("Launch successful!");
-                sceKernelSleep(1);
-                return;
-            }
-        }
+
+    // Fallback: use the linked stub directly, but pass a real param struct
+    LncAppParam param2;
+    memset(&param2, 0, sizeof(param2));
+    param2.sz = sizeof(LncAppParam);
+    param2.user_id = (uint32_t)userId;
+    param2.app_opt = 0;
+    param2.crash_report = 0;
+    param2.check_flag = SkipSystemUpdateCheck;
+
+    log_debug("Calling sceSystemServiceLaunchApp(%s, NULL, &param2)", EMULATOR_TID);
+    ret = sceSystemServiceLaunchApp(EMULATOR_TID, NULL, &param2);
+    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
+
+    if (ret == 0 || ret == (int)SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+        log_debug("Fallback launch accepted. Exiting launcher.");
+        sceKernelSleep(1);
+        exit(0);
     }
-    
-    // If all methods failed, show error
-    log_debug("ALL LAUNCH METHODS FAILED!");
-    
+
+    log_debug("LAUNCH FAILED! Both methods returned errors.");
+
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
     draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
     flip();
