@@ -206,11 +206,12 @@ static void draw_rect(int x, int y, int w, int h, uint32_t color) {
 static void draw_char_scaled(int x, int y, char c, uint32_t color, int scale) {
     if (c < 32 || c > 127) return;
     const unsigned char *f = font8x8[c - 32];
+    
+    // Try this first - direct mapping with bit reversal
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
-            // Rotated 90° counter-clockwise
-            if (f[col] & (1 << (7 - row))) {
-                draw_rect(x + (7 - row) * scale, y + col * scale, scale, scale, color);
+            if (f[row] & (1 << col)) {  // Note: col instead of (7-col)
+                draw_rect(x + col * scale, y + row * scale, scale, scale, color);
             }
         }
     }
