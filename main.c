@@ -510,6 +510,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     return 1;
 }
 
+
 // ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
@@ -517,46 +518,126 @@ typedef struct {
     uint32_t app_opt;
     uint32_t crash_report;
     uint32_t check_flag;
+    uint32_t unk[2];
 } LncAppParam;
 
-typedef int (*sceLncUtilLaunchApp_t)(const char *titleId, const char *args, void *param);
-static sceLncUtilLaunchApp_t sceLncUtilLaunchApp_ptr = NULL;
-
-static void init_lncutil(void) {
-    if (sceLncUtilLaunchApp_ptr) return;
-    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    if (mod > 0) {
-        sceKernelDlsym(mod, "sceLncUtilLaunchApp", (void**)&sceLncUtilLaunchApp_ptr);
-    }
-    log_debug("LNCUTIL INIT: mod=%d ptr=%p", mod, (void*)sceLncUtilLaunchApp_ptr);
-}
-
 static void launch_emulator(void) {
-    init_lncutil();
-
+    int ret;
     int userId = 0;
-    sceUserServiceGetForegroundUser(&userId);
-    log_debug("FOREGROUND USER: %d", userId);
-
-    LncAppParam param;
-    param.sz = sizeof(LncAppParam);
-    param.user_id = (uint32_t)userId;
-    param.app_opt = 0;
-    param.crash_report = 0;
-    param.check_flag = 0;
-
-    log_debug("CALLING sceLncUtilLaunchApp: %s", EMULATOR_TID);
-
-    if (sceLncUtilLaunchApp_ptr) {
-        int r = sceLncUtilLaunchApp_ptr(EMULATOR_TID, NULL, &param);
-        log_debug("LAUNCH RESULT: %d", r);
-    } else {
-        log_debug("sceLncUtilLaunchApp NOT FOUND, fallback to SystemServiceLaunchApp");
-        sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    int mod;
+    
+    log_debug("=== LAUNCHING EMULATOR ===");
+    log_debug("EMULATOR_TID: %s", EMULATOR_TID);
+    
+    // Get current user
+    ret = sceUserServiceGetForegroundUser(&userId);
+    if (ret < 0) {
+        log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
+        ret = sceUserServiceGetInitialUser(&userId);
+        if (ret < 0) {
+            log_debug("Failed to get initial user: 0x%08X, using 0", ret);
+            userId = 0;
+        }
     }
-
-    // If we get here, launch failed — pause so log is readable, then die cleanly
-    sceKernelSleep(2);
+    log_debug("User ID: %d", userId);
+    
+    // METHOD 1: Try sceLncUtilLaunchApp
+    log_debug("METHOD 1: Trying sceLncUtilLaunchApp");
+    mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    if (mod > 0) {
+        log_debug("Loaded libSceSystemService.sprx: %d", mod);
+        
+        void *launch_func = NULL;
+        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+        if (ret == 0 && launch_func) {
+            log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
+            
+            LncAppParam param;
+            memset(&param, 0, sizeof(param));
+            param.sz = sizeof(LncAppParam);
+            param.user_id = userId;
+            param.app_opt = 0;
+            param.crash_report = 0;
+            param.check_flag = 0;
+            
+            typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+            LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+            
+            log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
+            ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+            log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+            
+            if (ret == 0) {
+                log_debug("Launch successful! Exiting...");
+                sceKernelSleep(1);
+                exit(0);
+            }
+            log_debug("Launch failed with error: 0x%08X", ret);
+        } else {
+            log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
+        }
+    } else {
+        log_debug("Failed to load libSceSystemService.sprx: %d", mod);
+    }
+    
+    // METHOD 2: Try sceSystemServiceLaunchApp (simpler)
+    log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
+    ret = sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
+    if (ret == 0) {
+        log_debug("Launch successful! Exiting...");
+        sceKernelSleep(1);
+        exit(0);
+    }
+    
+    // METHOD 3: Try with empty args string
+    log_debug("METHOD 3: Trying sceSystemServiceLaunchApp with empty args");
+    ret = sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
+    if (ret == 0) {
+        log_debug("Launch successful! Exiting...");
+        sceKernelSleep(1);
+        exit(0);
+    }
+    
+    // METHOD 4: Try with user ID
+    log_debug("METHOD 4: Trying sceSystemServiceLaunchAppWithUser");
+    mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    if (mod > 0) {
+        void *launch_user_func = NULL;
+        ret = sceKernelDlsym(mod, "sceSystemServiceLaunchAppWithUser", &launch_user_func);
+        if (ret == 0 && launch_user_func) {
+            typedef int (*LaunchAppWithUser_t)(const char *titleId, const char *args, int userId, void *param);
+            LaunchAppWithUser_t sceSystemServiceLaunchAppWithUser = (LaunchAppWithUser_t)launch_user_func;
+            
+            log_debug("Calling sceSystemServiceLaunchAppWithUser with user: %d", userId);
+            ret = sceSystemServiceLaunchAppWithUser(EMULATOR_TID, "", userId, NULL);
+            log_debug("sceSystemServiceLaunchAppWithUser returned: 0x%08X", ret);
+            if (ret == 0) {
+                log_debug("Launch successful! Exiting...");
+                sceKernelSleep(1);
+                exit(0);
+            }
+        }
+    }
+    
+    // METHOD 5: Try calling the emulator directly via exec
+    log_debug("METHOD 5: Trying sceKernelExec");
+    ret = sceKernelExec("/system/sys/external/sysmodule_loader", 0, NULL);
+    log_debug("sceKernelExec returned: 0x%08X", ret);
+    
+    // If all methods fail, show error on screen
+    log_debug("ALL LAUNCH METHODS FAILED!");
+    log_debug("Please check if emulator TID '%s' is correct", EMULATOR_TID);
+    
+    // Show error on screen
+    draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
+    char error_msg[256];
+    snprintf(error_msg, sizeof(error_msg), "TID: %s", EMULATOR_TID);
+    draw_text_scaled(80, 550, error_msg, COLOR_WHITE, 2);
+    draw_text_scaled(80, 600, "Check launcher_log.txt for details", COLOR_GRAY, 2);
+    flip();
+    sceKernelSleep(5);
     exit(0);
 }
 
