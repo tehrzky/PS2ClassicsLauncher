@@ -595,6 +595,7 @@ draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
 draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
 flip();
 sceKernelSleep(5);
+}
 
 // ============ MAIN ============
 int main(void) {
