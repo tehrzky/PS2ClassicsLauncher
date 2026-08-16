@@ -441,6 +441,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
     write(fd, line_buf, n);
     close(fd);
+    log_debug("WROTE MASTER CONFIG: %s", MASTER_CONFIG);
     return 1;
 }
 
