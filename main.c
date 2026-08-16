@@ -550,6 +550,7 @@ static void flip(void) {
     current_buf ^= 1;
 }
 
+
 // ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
@@ -566,10 +567,11 @@ typedef struct {
 static void launch_emulator(void) {
     int userId = 0;
     int ret;
-
+    
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
-
+    
+    // Get current user
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
@@ -580,16 +582,31 @@ static void launch_emulator(void) {
         }
     }
     log_debug("User ID: %d", userId);
-
-    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    log_debug("libSceSystemService.sprx load result: %d", mod);
-
+    
+    // Try loading the system service module with different paths
+    const char *module_paths[] = {
+        "/system/common/lib/libSceSystemService.sprx",
+        "/system/common/lib/libSceSystemService.sprx",
+        NULL
+    };
+    
+    int mod = -1;
+    for (int i = 0; module_paths[i] != NULL; i++) {
+        mod = sceKernelLoadStartModule(module_paths[i], 0, NULL, 0, 0, 0);
+        log_debug("Load %s: %d", module_paths[i], mod);
+        if (mod >= 0) break;
+    }
+    
+    // METHOD 1: Try sceLncUtilLaunchApp (more reliable)
     void *launch_func = NULL;
-    ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-
+    if (mod >= 0) {
+        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+        log_debug("sceLncUtilLaunchApp dlsym: 0x%08X", ret);
+    }
+    
     if (ret == 0 && launch_func) {
         log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
-
+        
         LncAppParam param;
         memset(&param, 0, sizeof(param));
         param.sz = sizeof(LncAppParam);
@@ -597,29 +614,49 @@ static void launch_emulator(void) {
         param.app_opt = 0;
         param.crash_report = 0;
         param.check_flag = SkipSystemUpdateCheck;
-
+        
         typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
         LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-
+        
         log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
         ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
         log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-
+        
         if (ret == 0 || ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
             log_debug("Launch successful (or already running)!");
             sceKernelSleep(1);
-            exit(0);
+            return;  // Don't exit, just return to let the app close naturally
         }
-    } else {
-        log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
     }
-
-    log_debug("Falling back to sceSystemServiceLaunchApp (less reliable in this context)");
+    
+    // METHOD 2: Try sceSystemServiceLaunchApp (simpler, works for known TIDs)
+    log_debug("METHOD 2: Trying sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    sceKernelSleep(2);
-
-    log_debug("LAUNCH FAILED! Still running after both methods.");
-
+    log_debug("sceSystemServiceLaunchApp called - if it worked, we won't be here");
+    sceKernelSleep(1);
+    
+    // METHOD 3: Try with the user ID
+    log_debug("METHOD 3: Trying sceSystemServiceLaunchAppWithUser");
+    // Try to get the function dynamically
+    if (mod >= 0) {
+        void *launch_user_func = NULL;
+        ret = sceKernelDlsym(mod, "sceSystemServiceLaunchAppWithUser", &launch_user_func);
+        if (ret == 0 && launch_user_func) {
+            typedef int (*LaunchWithUser_t)(const char *titleId, const char *args, int userId, void *param);
+            LaunchWithUser_t sceSystemServiceLaunchAppWithUser = (LaunchWithUser_t)launch_user_func;
+            ret = sceSystemServiceLaunchAppWithUser(EMULATOR_TID, "", userId, NULL);
+            log_debug("sceSystemServiceLaunchAppWithUser returned: 0x%08X", ret);
+            if (ret == 0) {
+                log_debug("Launch successful!");
+                sceKernelSleep(1);
+                return;
+            }
+        }
+    }
+    
+    // If all methods failed, show error
+    log_debug("ALL LAUNCH METHODS FAILED!");
+    
     draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
     draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
     flip();
