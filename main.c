@@ -447,8 +447,8 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
 
 // ============ LAUNCH ============
 static void launch_emulator(void) {
-    int r = sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
-    log_debug("LAUNCH RESULT: %d", r);
+    sceSystemServiceLaunchApp(EMULATOR_TID, "", NULL);
+    log_debug("LAUNCH RESULT: launched");
 }
 
 // ============ VIDEO INIT ============
