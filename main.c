@@ -561,10 +561,11 @@ typedef struct {
 } LncAppParam;
 
 #define SkipSystemUpdateCheck 0x20000
+#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
 
 static void launch_emulator(void) {
-    int ret;
     int userId = 0;
+    int ret;
 
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
@@ -580,21 +581,49 @@ static void launch_emulator(void) {
     }
     log_debug("User ID: %d", userId);
 
-    log_debug("Calling sceSystemServiceLaunchApp with TID: %s", EMULATOR_TID);
-sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-log_debug("sceSystemServiceLaunchApp called (no return value on this SDK)");
+    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    log_debug("libSceSystemService.sprx load result: %d", mod);
 
-// Give the system a moment to actually switch apps. If we're still here
-// after this, the launch didn't happen — exit(0) below never gets skipped
-// on success because a successful launch tears this process down for us.
-sceKernelSleep(2);
+    void *launch_func = NULL;
+    ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
 
-log_debug("LAUNCH FAILED! Still running after sceSystemServiceLaunchApp — check launcher_log.txt above this line.");
+    if (ret == 0 && launch_func) {
+        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
 
-draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
-draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
-flip();
-sceKernelSleep(5);
+        LncAppParam param;
+        memset(&param, 0, sizeof(param));
+        param.sz = sizeof(LncAppParam);
+        param.user_id = userId;
+        param.app_opt = 0;
+        param.crash_report = 0;
+        param.check_flag = SkipSystemUpdateCheck;
+
+        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+
+        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
+        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+
+        if (ret == 0 || ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+            log_debug("Launch successful (or already running)!");
+            sceKernelSleep(1);
+            exit(0);
+        }
+    } else {
+        log_debug("sceLncUtilLaunchApp not found: 0x%08X", ret);
+    }
+
+    log_debug("Falling back to sceSystemServiceLaunchApp (less reliable in this context)");
+    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    sceKernelSleep(2);
+
+    log_debug("LAUNCH FAILED! Still running after both methods.");
+
+    draw_text_scaled(80, 500, "LAUNCH FAILED!", COLOR_RED, 3);
+    draw_text_scaled(80, 550, "Check launcher_log.txt for details", COLOR_WHITE, 2);
+    flip();
+    sceKernelSleep(5);
 }
 
 // ============ MAIN ============
