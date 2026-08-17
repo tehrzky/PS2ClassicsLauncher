@@ -552,6 +552,14 @@ static void flip(void) {
 
 
 // ============ LAUNCH ============
+
+static int ps4_load_prx(const char *path, int *mod_id) {
+    return (int)syscall(594, path, 0, mod_id, 0);
+}
+
+static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
+    return (int)syscall(591, (long)mod_id, symbol, addr);
+}
 static void launch_emulator(void) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
