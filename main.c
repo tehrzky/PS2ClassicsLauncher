@@ -564,19 +564,18 @@ static void launch_emulator(void) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
 
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp called — waiting for system to suspend us");
+    char eboot_path[128];
+    snprintf(eboot_path, sizeof(eboot_path), "/user/app/%s/eboot.bin", EMULATOR_TID);
+    log_debug("sceSystemServiceLoadExec: %s", eboot_path);
 
-    // The system suspends this process when the new app takes over.
-    // We just sleep here and let that happen naturally.
-    // If we're still running after 5 seconds, the launch genuinely failed.
-    sceKernelSleep(5);
+    sceSystemServiceLoadExec(eboot_path, NULL);
 
-    log_debug("LAUNCH FAILED — still running after 5 seconds");
+    // Only reached if LoadExec failed
+    log_debug("LAUNCH FAILED — sceSystemServiceLoadExec returned");
     draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
-    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
+    draw_text_scaled(80, 530, eboot_path, COLOR_WHITE, 2);
     flip();
-    sceKernelSleep(3);
+    sceKernelSleep(5);
 }
 
 // ============ MAIN ============
