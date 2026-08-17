@@ -556,16 +556,59 @@ static void launch_emulator(void) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
 
-    char eboot_path[128];
-    snprintf(eboot_path, sizeof(eboot_path), "/user/app/%s/eboot.bin", EMULATOR_TID);
-    log_debug("sceSystemServiceLoadExec: %s", eboot_path);
+    int mod = -1;
+    const char *sprx_paths[] = {
+        "/system/common/lib/libSceSystemService.sprx",
+        "/system/priv/lib/libSceSystemService.sprx",
+        "/system/lib/libSceSystemService.sprx",
+        NULL
+    };
+    for (int i = 0; sprx_paths[i] != NULL; i++) {
+        mod = ps4_load_prx(sprx_paths[i], &mod);
+        log_debug("ps4_load_prx(%s) = %d", sprx_paths[i], mod);
+        if (mod >= 0) break;
+    }
 
-    sceSystemServiceLoadExec(eboot_path, NULL);
+    if (mod < 0) {
+        log_debug("Could not load libSceSystemService.sprx");
+        goto fail;
+    }
 
-    // Only reached if LoadExec failed
-    log_debug("LAUNCH FAILED — sceSystemServiceLoadExec returned");
+    // Try sceSystemServiceLaunchApp first
+    void *launch_func = NULL;
+    int ret = ps4_dlsym(mod, "sceSystemServiceLaunchApp", &launch_func);
+    log_debug("dlsym(sceSystemServiceLaunchApp) = %d, ptr = %p", ret, launch_func);
+
+    if (ret == 0 && launch_func) {
+        typedef void (*LaunchApp_t)(const char *, const char *, void *);
+        LaunchApp_t fn = (LaunchApp_t)launch_func;
+        log_debug("Calling dynamic sceSystemServiceLaunchApp...");
+        fn(EMULATOR_TID, NULL, NULL);
+        log_debug("sceSystemServiceLaunchApp returned (waiting for suspend)");
+        sceKernelSleep(5);
+        log_debug("Still alive after 5s — trying LoadExec fallback");
+    }
+
+    // Fallback: sceSystemServiceLoadExec
+    void *exec_func = NULL;
+    ret = ps4_dlsym(mod, "sceSystemServiceLoadExec", &exec_func);
+    log_debug("dlsym(sceSystemServiceLoadExec) = %d, ptr = %p", ret, exec_func);
+
+    if (ret == 0 && exec_func) {
+        typedef void (*LoadExec_t)(const char *, void *);
+        LoadExec_t fn2 = (LoadExec_t)exec_func;
+        char path[128];
+        snprintf(path, sizeof(path), "/user/app/%s/eboot.bin", EMULATOR_TID);
+        log_debug("Calling dynamic sceSystemServiceLoadExec(%s)...", path);
+        fn2(path, NULL);
+        log_debug("LoadExec returned");
+        sceKernelSleep(5);
+    }
+
+fail:
+    log_debug("ALL LAUNCH METHODS FAILED");
     draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
-    draw_text_scaled(80, 530, eboot_path, COLOR_WHITE, 2);
+    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
     flip();
     sceKernelSleep(5);
 }
