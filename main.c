@@ -550,14 +550,6 @@ static void flip(void) {
     current_buf ^= 1;
 }
 
-// ====== RAW SYSCALL HELPERS =====
-static int ps4_load_prx(const char *path, int *mod_id) {
-    return (int)syscall(594, path, 0, mod_id, 0);
-}
-
-static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
-    return (int)syscall(591, (long)mod_id, symbol, addr);
-}
 
 // ============ LAUNCH ============
 static void launch_emulator(void) {
