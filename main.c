@@ -552,86 +552,65 @@ static void flip(void) {
 
 
 // ============ LAUNCH ============
-// ============ LAUNCH ============
-typedef struct {
-    uint32_t sz;
-    uint32_t user_id;
-    uint32_t app_opt;
-    uint32_t crash_report;
-    uint32_t check_flag;
-    uint32_t unk[2];
-} LncAppParam;
+static int ps4_load_prx(const char *path, int *mod_id) {
+    return (int)syscall(594, path, 0, mod_id, 0);
+}
+static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
+    return (int)syscall(591, (long)mod_id, symbol, addr);
+}
+static int ps4_get_module_list(int *handles, size_t max, size_t *count) {
+    return (int)syscall(592, handles, max, count);
+}
 
-#define SkipSystemUpdateCheck 0x20000
-#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
+static void *find_symbol(const char *symbol) {
+    int handles[256];
+    size_t count = 0;
+    void *addr = NULL;
+
+    if (ps4_get_module_list(handles, 256, &count) != 0) {
+        log_debug("ps4_get_module_list failed");
+        return NULL;
+    }
+    log_debug("Scanning %zu loaded modules for %s", count, symbol);
+    for (size_t i = 0; i < count; i++) {
+        if (ps4_dlsym(handles[i], symbol, &addr) == 0 && addr != NULL) {
+            log_debug("Found %s in handle %d at %p", symbol, handles[i], addr);
+            return addr;
+        }
+    }
+    log_debug("Symbol %s not found in any loaded module", symbol);
+    return NULL;
+}
 
 static void launch_emulator(void) {
-    int userId = 0;
-    int ret;
-    
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
-    
-    // 1. Load required modules (exactly as Itemzflow does)
-    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
-    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
-    
-    // 2. Get the foreground user
-    ret = sceUserServiceGetForegroundUser(&userId);
-    if (ret < 0) {
-        log_debug("Failed to get foreground user: 0x%08X, trying fallback", ret);
-        ret = sceUserServiceGetInitialUser(&userId);
-        if (ret < 0) {
-            log_debug("Failed to get initial user: 0x%08X, using 0", ret);
-            userId = 0;
-        }
-    }
-    log_debug("User ID: %d", userId);
-    
-    // 3. Load the system service module (ignore errors – it may already be loaded)
-    int mod = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    log_debug("libSceSystemService.sprx load result: %d", mod);
-    
-    // 4. Try sceLncUtilLaunchApp (preferred method)
-    void *launch_func = NULL;
-    if (mod >= 0) {
-        ret = sceKernelDlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-        log_debug("sceLncUtilLaunchApp dlsym: 0x%08X", ret);
-    }
-    
-    if (ret == 0 && launch_func) {
-        log_debug("Found sceLncUtilLaunchApp at %p", launch_func);
-        
-        LncAppParam param;
-        memset(&param, 0, sizeof(param));
-        param.sz = sizeof(LncAppParam);
-        param.user_id = userId;
-        param.app_opt = 0;
-        param.crash_report = 0;
-        param.check_flag = SkipSystemUpdateCheck;
-        
-        typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-        LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-        
-        log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
-        ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+
+    // Method 1: sceLncUtilLaunchApp — designed exactly for launching other apps
+    void *lnc_fn = find_symbol("sceLncUtilLaunchApp");
+    if (lnc_fn) {
+        typedef int (*LncLaunch_t)(const char *, const char *, void *);
+        int ret = ((LncLaunch_t)lnc_fn)(EMULATOR_TID, NULL, NULL);
         log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-        
-        if (ret == 0 || ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
-            log_debug("Launch successful (or already running)!");
-            sceKernelSleep(1);
-            // DO NOT exit – just return; the system will suspend this app
-            return;
-        }
+        sceKernelSleep(5);
+        log_debug("Still alive after sceLncUtilLaunchApp");
     }
-    
-    // 5. Fallback: sceSystemServiceLaunchApp (simpler, works without module)
-    log_debug("Falling back to sceSystemServiceLaunchApp");
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
-    log_debug("sceSystemServiceLaunchApp called");
-    sceKernelSleep(1);
-    // Again, do not exit – return and let the launcher be suspended
-    return;
+
+    // Method 2: sceSystemServiceLoadExec with title ID
+    void *exec_fn = find_symbol("sceSystemServiceLoadExec");
+    if (exec_fn) {
+        typedef void (*LoadExec_t)(const char *, void *);
+        log_debug("Calling sceSystemServiceLoadExec(%s)...", EMULATOR_TID);
+        ((LoadExec_t)exec_fn)(EMULATOR_TID, NULL);
+        log_debug("sceSystemServiceLoadExec returned");
+        sceKernelSleep(5);
+    }
+
+    log_debug("ALL METHODS FAILED");
+    draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
+    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
+    flip();
+    sceKernelSleep(5);
 }
 
 // ============ MAIN ============
