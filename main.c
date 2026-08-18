@@ -17,6 +17,7 @@ void _fini(void) {}
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <stdint.h>
 
 // ============ ERROR CODES ============
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
