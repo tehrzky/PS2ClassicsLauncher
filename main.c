@@ -18,9 +18,11 @@ void _fini(void) {}
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <time.h>
 
 // ============ ERROR CODES ============
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
+
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
@@ -28,6 +30,7 @@ void _fini(void) {}
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
 #define EMULATOR_TID    "PCSX20042"
+#define EMULATORS_DIR   "/data/PS4ROMS/PS2ISO/emulators/"
 
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
@@ -215,7 +218,6 @@ static void load_good_names(void) {
             
             p = name_end;
         } else {
-            // Invalid ID, skip to next line
             while (*p && *p != '\n') p++;
         }
         while (*p && *p != '\n') p++;
@@ -334,31 +336,22 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
     }
 }
 
-static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
-static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
-
 // ============ helper: little-endian 32-bit read ============
 static uint32_t read_le32(const unsigned char *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 // ============ ISO9660-BASED DISC ID EXTRACTION ============
-// Properly parses the ISO filesystem (Primary Volume Descriptor -> root
-// directory -> SYSTEM.CNF's real on-disc location) instead of blindly
-// byte-scanning the first N bytes of the file, which is unreliable because
-// SYSTEM.CNF's actual data can be located anywhere in the image.
 static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
 
     unsigned char sector[2048];
 
-    // Primary Volume Descriptor is always at LBA 16 for ISO9660
     if (lseek(fd, (off_t)16 * 2048, SEEK_SET) < 0) { close(fd); return 0; }
     if (read(fd, sector, 2048) != 2048) { close(fd); return 0; }
     if (sector[0] != 1 || memcmp(sector + 1, "CD001", 5) != 0) { close(fd); return 0; }
 
-    // Root directory record starts at offset 156 within the PVD
     const unsigned char *root = sector + 156;
     uint32_t root_lba  = read_le32(root + 2);
     uint32_t root_size = read_le32(root + 10);
@@ -376,7 +369,6 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     while (pos + 33 < root_size) {
         unsigned char len = dir[pos];
         if (len == 0) {
-            // zero-length record means padding to the next 2048-byte sector
             uint32_t next = ((pos / 2048) + 1) * 2048;
             if (next <= pos) break;
             pos = next;
@@ -405,7 +397,6 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     if (n <= 0) return 0;
     cnf_buf[n] = '\0';
 
-    // SYSTEM.CNF contains a line like: BOOT2 = cdrom0:\SLUS_213.85;1
     char *p = strstr(cnf_buf, "cdrom0:");
     if (!p) return 0;
     p += 7;
@@ -421,7 +412,7 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
     int fi = 0;
     for (int r = 0; raw[r] && fi < (int)out_len - 1; r++) {
         if (raw[r] == '_') out_id[fi++] = '-';
-        else if (raw[r] == '.') { /* skip the dot, e.g. SLUS_213.85 -> SLUS-21385 */ }
+        else if (raw[r] == '.') { }
         else out_id[fi++] = raw[r];
     }
     out_id[fi] = '\0';
@@ -464,7 +455,7 @@ static void scan_games(void) {
     qsort(games, game_count, sizeof(Game), name_compare);
 }
 
-// ============ CHECK IF APP IS INSTALLED (informational only, not a launch gate) ============
+// ============ CHECK IF APP IS INSTALLED ============
 static int check_app_installed(const char *title_id) {
     const char *search_paths[] = {
         "/user/app/%s/sce_sys/param.sfo",
@@ -484,14 +475,11 @@ static int check_app_installed(const char *title_id) {
         }
     }
 
-    log_debug("App %s check inconclusive (sandbox may not expose these paths)", title_id);
+    log_debug("App %s check inconclusive", title_id);
     return 0;
 }
 
 // ============ CONFIG DISCOVERY ============
-// Scans gameconfig/ for any .txt containing "#  Disc ID: <id>" (or similar).
-// If multiple files match, the most recently modified one wins (handy for
-// backups). Returns 1 if a matching file was found.
 static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t out_size) {
     if (!disc_id || disc_id[0] == '\0' || strcasecmp(disc_id, "UNKNOWN") == 0)
         return 0;
@@ -546,7 +534,6 @@ static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t ou
     return 0;
 }
 
-// ============ FALLBACK: case-insensitive basename match ============
 static int find_config_by_filename(const char *game_name, char *out_path, size_t out_size) {
     DIR *dir = opendir(GAMECONFIG_DIR);
     if (!dir) return 0;
@@ -572,14 +559,6 @@ static int find_config_by_filename(const char *game_name, char *out_path, size_t
 }
 
 // ============ PER-GAME CONFIG ============
-// 1. Finds existing config by Disc ID inside the file contents.
-// 2. Falls back to case-insensitive ISO basename match.
-// 3. Creates a new formal config from template if nothing found.
-// 4. Writes .launcher_temp.txt: copies gameconfig verbatim except
-//    stripping --image= (single-disc), then appends fresh --image=.
-//    --image-discN= lines are NEVER touched. --ps2-title-id= is
-//    preserved from the gameconfig (so multi-disc shared IDs stick).
-// 5. Parses # Emulator: line and returns the TID via out_emulator_tid.
 static int set_active_game(const char *iso_path, const char *disc_id,
                            const char *game_name, char *out_emulator_tid, size_t tid_size) {
     char line_buf[2048];
@@ -806,7 +785,6 @@ static int ps4_load_prx(const char *path, int *mod_id) {
 static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
     return (int)syscall(591, (long)mod_id, symbol, addr);
 }
-// =============================================
 
 // ============ LAUNCH ============
 typedef struct {
@@ -823,13 +801,44 @@ typedef struct {
 static void launch_emulator(const char *override_tid) {
     int userId = 0;
     int ret;
-    int mod = -1;
     const char *tid = (override_tid && override_tid[0]) ? override_tid : EMULATOR_TID;
 
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", tid);
 
-    // 1. Get the foreground user
+    // METHOD 1: Try launching as ELF using sceSystemServiceLoadExec
+    log_debug("METHOD 1: Trying sceSystemServiceLoadExec (ELF method)");
+    
+    // Try different possible paths for eboot.bin
+    const char *elf_paths[] = {
+        "/data/PS4ROMS/PS2ISO/emulators/eboot.bin",
+        "/data/PS4ROMS/PS2ISO/emulators/PCSX20042/eboot.bin",
+        "/data/PS4ROMS/PS2ISO/emulators/ps2_emu.elf",
+        "/data/PS4ROMS/PS2ISO/emulator.elf",
+        NULL
+    };
+
+    for (int i = 0; elf_paths[i] != NULL; i++) {
+        int fd = open(elf_paths[i], O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            log_debug("Found ELF at: %s", elf_paths[i]);
+            
+            ret = sceSystemServiceLoadExec(elf_paths[i], NULL);
+            log_debug("sceSystemServiceLoadExec(%s) returned: 0x%08X", elf_paths[i], ret);
+            
+            if (ret == 0) {
+                log_debug("Launch OK (ELF method)");
+                sceKernelSleep(1);
+                return;
+            }
+        }
+    }
+    log_debug("No valid ELF found in standard paths");
+
+    // METHOD 2: Try launching as PKG using sceLncUtilLaunchApp
+    log_debug("METHOD 2: Trying PKG launch with TID: %s", tid);
+
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         ret = sceUserServiceGetInitialUser(&userId);
@@ -837,7 +846,6 @@ static void launch_emulator(const char *override_tid) {
     }
     log_debug("User ID: %d", userId);
 
-    // 2. Load libSceLncUtil.sprx using raw syscall (more reliable than sceKernelLoadStartModule)
     const char *sprx_paths[] = {
         "/system/common/lib/libSceLncUtil.sprx",
         "/system/priv/lib/libSceLncUtil.sprx",
@@ -845,64 +853,52 @@ static void launch_emulator(const char *override_tid) {
         NULL
     };
 
+    int mod = -1;
     for (int i = 0; sprx_paths[i] != NULL; i++) {
         mod = ps4_load_prx(sprx_paths[i], &mod);
         log_debug("ps4_load_prx(%s) = %d", sprx_paths[i], mod);
         if (mod >= 0) break;
     }
 
-    if (mod < 0) {
-        log_debug("LAUNCH FAILED: could not load libSceLncUtil.sprx");
-        draw_text_scaled(80, 480, "LAUNCH FAILED: sprx not found", COLOR_RED, 2);
-        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
-        flip();
-        sceKernelSleep(5);
-        return;
+    if (mod >= 0) {
+        void *launch_func = NULL;
+        ret = ps4_dlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+        log_debug("ps4_dlsym(sceLncUtilLaunchApp) = 0x%08X, ptr = %p", ret, launch_func);
+
+        if (ret == 0 && launch_func) {
+            LncAppParam param;
+            memset(&param, 0, sizeof(param));
+            param.sz = sizeof(LncAppParam);
+            param.user_id = userId;
+            param.app_opt = 0;
+            param.crash_report = 0;
+            param.check_flag = SkipSystemUpdateCheck;
+
+            typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+            LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+
+            log_debug("Calling sceLncUtilLaunchApp with TID: %s", tid);
+            ret = sceLncUtilLaunchApp(tid, NULL, &param);
+            log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+
+            if (ret == 0 || (unsigned int)ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+                log_debug("Launch OK (PKG method)");
+                sceKernelSleep(1);
+                return;
+            }
+        }
     }
 
-    // 3. Resolve sceLncUtilLaunchApp symbol using raw syscall
-    void *launch_func = NULL;
-    ret = ps4_dlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-    log_debug("ps4_dlsym(sceLncUtilLaunchApp) = 0x%08X, ptr = %p", ret, launch_func);
-
-    if (ret != 0 || launch_func == NULL) {
-        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp symbol not found");
-        draw_text_scaled(80, 480, "LAUNCH FAILED: symbol not found", COLOR_RED, 2);
-        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
-        flip();
-        sceKernelSleep(5);
-        return;
-    }
-
-    // 4. Prepare launch parameters (matching Itemzflow)
-    LncAppParam param;
-    memset(&param, 0, sizeof(param));
-    param.sz = sizeof(LncAppParam);
-    param.user_id = userId;
-    param.app_opt = 0;
-    param.crash_report = 0;
-    param.check_flag = SkipSystemUpdateCheck;   // 0x20000
-
-    typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-    LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-
-    // 5. Launch the emulator
-    log_debug("Calling sceLncUtilLaunchApp with TID: %s", tid);
-    ret = sceLncUtilLaunchApp(tid, NULL, &param);
-    log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-
-    // 6. Check result
-    if (ret == 0 || (unsigned int)ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
-        log_debug("Launch OK, returning (launcher will be suspended)");
-        sceKernelSleep(1);
-        return;   // ← Do NOT call exit(0) – let the system suspend this app
-    }
-
-    // 7. Fallback: try sceSystemServiceLaunchApp (works without the sprx)
-    log_debug("Falling back to sceSystemServiceLaunchApp");
+    // METHOD 3: Fallback
+    log_debug("METHOD 3: Trying sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(tid, NULL, NULL);
     sceKernelSleep(1);
-    return;   // ← Again, no exit
+
+    log_debug("ALL LAUNCH METHODS FAILED");
+    draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
+    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
+    flip();
+    sceKernelSleep(5);
 }
 
 // ============ MAIN ============
@@ -936,10 +932,13 @@ int main(void) {
     load_good_names();
     log_debug("GOOD NAMES: %d loaded", good_name_count);
 
+    // Create emulators directory
+    mkdir(EMULATORS_DIR, 0777);
+
     scan_games();
     log_debug("GAMES: %d", game_count);
 
-    check_app_installed(EMULATOR_TID); // informational log only, does not block launch
+    check_app_installed(EMULATOR_TID);
 
     if (game_count == 0) {
         draw_text_scaled(100, 100, "NO ISO FILES FOUND", COLOR_WHITE, 3);
