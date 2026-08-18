@@ -808,15 +808,15 @@ static void *find_symbol(const char *symbol) {
     return NULL;
 }
 
-static void launch_emulator(void) {
+static void launch_emulator(const char *emu_tid) {
     log_debug("=== LAUNCHING EMULATOR ===");
-    log_debug("EMULATOR_TID: %s", EMULATOR_TID);
+    log_debug("EMULATOR_TID: %s", emu_tid);
 
     // Method 1: sceLncUtilLaunchApp — designed exactly for launching other apps
     void *lnc_fn = find_symbol("sceLncUtilLaunchApp");
     if (lnc_fn) {
         typedef int (*LncLaunch_t)(const char *, const char *, void *);
-        int ret = ((LncLaunch_t)lnc_fn)(EMULATOR_TID, NULL, NULL);
+        int ret = ((LncLaunch_t)lnc_fn)(emu_tid, NULL, NULL);
         log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
         sceKernelSleep(5);
         log_debug("Still alive after sceLncUtilLaunchApp");
@@ -826,8 +826,8 @@ static void launch_emulator(void) {
     void *exec_fn = find_symbol("sceSystemServiceLoadExec");
     if (exec_fn) {
         typedef void (*LoadExec_t)(const char *, void *);
-        log_debug("Calling sceSystemServiceLoadExec(%s)...", EMULATOR_TID);
-        ((LoadExec_t)exec_fn)(EMULATOR_TID, NULL);
+        log_debug("Calling sceSystemServiceLoadExec(%s)...", emu_tid);
+        ((LoadExec_t)exec_fn)(emu_tid, NULL);
         log_debug("sceSystemServiceLoadExec returned");
         sceKernelSleep(5);
     }
