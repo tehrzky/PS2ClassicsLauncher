@@ -555,30 +555,31 @@ static void flip(void) {
 static int ps4_load_prx(const char *path, int *mod_id) {
     return (int)syscall(594, path, 0, mod_id, 0);
 }
+
 static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
     return (int)syscall(591, (long)mod_id, symbol, addr);
 }
-static int ps4_get_module_list(int *handles, size_t max, size_t *count) {
-    return (int)syscall(592, handles, max, count);
+
+static int ps4_get_module_list(int *handles, int max, uint64_t *count) {
+    return (int)syscall(592, handles, (int)max, count);
 }
 
 static void *find_symbol(const char *symbol) {
     int handles[256];
-    size_t count = 0;
+    uint64_t count = 0;
     void *addr = NULL;
 
-    if (ps4_get_module_list(handles, 256, &count) != 0) {
-        log_debug("ps4_get_module_list failed");
-        return NULL;
-    }
-    log_debug("Scanning %zu loaded modules for %s", count, symbol);
-    for (size_t i = 0; i < count; i++) {
+    int r = ps4_get_module_list(handles, 256, &count);
+    log_debug("ps4_get_module_list: ret=%d count=%llu", r, (unsigned long long)count);
+    if (r != 0) return NULL;
+
+    for (uint64_t i = 0; i < count; i++) {
         if (ps4_dlsym(handles[i], symbol, &addr) == 0 && addr != NULL) {
-            log_debug("Found %s in handle %d at %p", symbol, handles[i], addr);
+            log_debug("Found %s in handle 0x%x at %p", symbol, handles[i], addr);
             return addr;
         }
     }
-    log_debug("Symbol %s not found in any loaded module", symbol);
+    log_debug("Symbol %s not found in any of %llu modules", symbol, (unsigned long long)count);
     return NULL;
 }
 
