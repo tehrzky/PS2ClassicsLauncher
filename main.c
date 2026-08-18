@@ -212,9 +212,14 @@ static void load_good_names(void) {
             strncpy(good_names[good_name_count].name, name_start, name_len);
             good_names[good_name_count].name[name_len] = '\0';
             good_name_count++;
+            
+            p = name_end;
+        } else {
+            // Invalid ID, skip to next line
+            while (*p && *p != '\n') p++;
         }
-        p = name_end;
         while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
     }
 }
 
