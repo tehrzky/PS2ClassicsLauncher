@@ -17,12 +17,10 @@ void _fini(void) {}
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <stdint.h>
 #include <time.h>
 
 // ============ ERROR CODES ============
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
-
 // ============ CONFIG ============
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
@@ -30,7 +28,6 @@ void _fini(void) {}
 #define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
 #define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
 #define EMULATOR_TID    "PCSX20042"
-#define EMULATORS_DIR   "/data/PS4ROMS/PS2ISO/emulators/"
 
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
@@ -215,13 +212,9 @@ static void load_good_names(void) {
             strncpy(good_names[good_name_count].name, name_start, name_len);
             good_names[good_name_count].name[name_len] = '\0';
             good_name_count++;
-            
-            p = name_end;
-        } else {
-            while (*p && *p != '\n') p++;
         }
+        p = name_end;
         while (*p && *p != '\n') p++;
-        if (*p == '\n') p++;
     }
 }
 
@@ -335,6 +328,9 @@ static void draw_text_scaled(int x, int y, const char *s, uint32_t color, int sc
         x += 8 * scale;
     }
 }
+
+static void draw_char(int x, int y, char c, uint32_t color) { draw_char_scaled(x, y, c, color, 1); }
+static void draw_text(int x, int y, const char *s, uint32_t color) { draw_text_scaled(x, y, s, color, 1); }
 
 // ============ helper: little-endian 32-bit read ============
 static uint32_t read_le32(const unsigned char *p) {
@@ -592,11 +588,12 @@ static int set_active_game(const char *iso_path, const char *disc_id,
                 "#  Disc ID:     %s\n"
                 "#  Emulator:    %s\n"
                 "#  Emulator Title: %s\n"
+                "#  ISO Path:    %s\n"
                 "#\n"
                 "#  Note: \n"
                 "# ============================================================\n"
                 "\n",
-                game_name, disc_id, EMULATOR_TID, "Default"
+                game_name, disc_id, EMULATOR_TID, "Default", iso_path
             );
             write(gfd, header, hlen);
 
@@ -622,7 +619,6 @@ static int set_active_game(const char *iso_path, const char *disc_id,
         }
     }
 
-    // Parse # Emulator: and write temp
     out_emulator_tid[0] = '\0';
     int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
@@ -643,7 +639,6 @@ static int set_active_game(const char *iso_path, const char *disc_id,
                 while (*line_end && *line_end != '\n') line_end++;
                 int line_len = line_end - p;
 
-                // Strip bare --image=, but keep --image-discN=
                 int skip = 0;
                 if (line_len > 0 && strncmp(p, "--image=", 8) == 0) {
                     if (line_len < 14 || strncmp(p, "--image-disc", 12) != 0) {
@@ -655,7 +650,6 @@ static int set_active_game(const char *iso_path, const char *disc_id,
                     write(fd, p, line_len);
                     write(fd, "\n", 1);
 
-                    // Parse # Emulator: line
                     if (line_len > 12 && strncmp(p, "#  Emulator:", 12) == 0) {
                         char *tid_start = p + 12;
                         while (tid_start < line_end &&
@@ -679,7 +673,6 @@ static int set_active_game(const char *iso_path, const char *disc_id,
     write(fd, line_buf, n);
     close(fd);
 
-    // Rewrite MASTER to point at TEMP
     fd = open(MASTER_CONFIG, O_RDONLY);
     if (fd < 0) {
         log_debug("set_active_game: failed to open %s", MASTER_CONFIG);
@@ -707,7 +700,6 @@ static int set_active_game(const char *iso_path, const char *disc_id,
         int line_len = line_end - p;
 
         if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
-            // strip old --config=
         } else {
             write(fd, p, line_len);
             write(fd, "\n", 1);
@@ -778,10 +770,11 @@ static void flip(void) {
     current_buf ^= 1;
 }
 
-// ============ RAW SYSCALL HELPERS ============
+// ====== RAW SYSCALL HELPERS =====
 static int ps4_load_prx(const char *path, int *mod_id) {
     return (int)syscall(594, path, 0, mod_id, 0);
 }
+
 static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
     return (int)syscall(591, (long)mod_id, symbol, addr);
 }
@@ -801,43 +794,11 @@ typedef struct {
 static void launch_emulator(const char *override_tid) {
     int userId = 0;
     int ret;
+    int mod = -1;
     const char *tid = (override_tid && override_tid[0]) ? override_tid : EMULATOR_TID;
 
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", tid);
-
-    // METHOD 1: Try launching as ELF using sceSystemServiceLoadExec
-    log_debug("METHOD 1: Trying sceSystemServiceLoadExec (ELF method)");
-    
-    // Try different possible paths for eboot.bin
-    const char *elf_paths[] = {
-        "/data/PS4ROMS/PS2ISO/emulators/eboot.bin",
-        "/data/PS4ROMS/PS2ISO/emulators/PCSX20042/eboot.bin",
-        "/data/PS4ROMS/PS2ISO/emulators/ps2_emu.elf",
-        "/data/PS4ROMS/PS2ISO/emulator.elf",
-        NULL
-    };
-
-    for (int i = 0; elf_paths[i] != NULL; i++) {
-        int fd = open(elf_paths[i], O_RDONLY);
-        if (fd >= 0) {
-            close(fd);
-            log_debug("Found ELF at: %s", elf_paths[i]);
-            
-            ret = sceSystemServiceLoadExec(elf_paths[i], NULL);
-            log_debug("sceSystemServiceLoadExec(%s) returned: 0x%08X", elf_paths[i], ret);
-            
-            if (ret == 0) {
-                log_debug("Launch OK (ELF method)");
-                sceKernelSleep(1);
-                return;
-            }
-        }
-    }
-    log_debug("No valid ELF found in standard paths");
-
-    // METHOD 2: Try launching as PKG using sceLncUtilLaunchApp
-    log_debug("METHOD 2: Trying PKG launch with TID: %s", tid);
 
     ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
@@ -853,52 +814,59 @@ static void launch_emulator(const char *override_tid) {
         NULL
     };
 
-    int mod = -1;
     for (int i = 0; sprx_paths[i] != NULL; i++) {
         mod = ps4_load_prx(sprx_paths[i], &mod);
         log_debug("ps4_load_prx(%s) = %d", sprx_paths[i], mod);
         if (mod >= 0) break;
     }
 
-    if (mod >= 0) {
-        void *launch_func = NULL;
-        ret = ps4_dlsym(mod, "sceLncUtilLaunchApp", &launch_func);
-        log_debug("ps4_dlsym(sceLncUtilLaunchApp) = 0x%08X, ptr = %p", ret, launch_func);
-
-        if (ret == 0 && launch_func) {
-            LncAppParam param;
-            memset(&param, 0, sizeof(param));
-            param.sz = sizeof(LncAppParam);
-            param.user_id = userId;
-            param.app_opt = 0;
-            param.crash_report = 0;
-            param.check_flag = SkipSystemUpdateCheck;
-
-            typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
-            LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
-
-            log_debug("Calling sceLncUtilLaunchApp with TID: %s", tid);
-            ret = sceLncUtilLaunchApp(tid, NULL, &param);
-            log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-
-            if (ret == 0 || (unsigned int)ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
-                log_debug("Launch OK (PKG method)");
-                sceKernelSleep(1);
-                return;
-            }
-        }
+    if (mod < 0) {
+        log_debug("LAUNCH FAILED: could not load libSceLncUtil.sprx");
+        draw_text_scaled(80, 480, "LAUNCH FAILED: sprx not found", COLOR_RED, 2);
+        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
+        flip();
+        sceKernelSleep(5);
+        return;
     }
 
-    // METHOD 3: Fallback
-    log_debug("METHOD 3: Trying sceSystemServiceLaunchApp");
+    void *launch_func = NULL;
+    ret = ps4_dlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+    log_debug("ps4_dlsym(sceLncUtilLaunchApp) = 0x%08X, ptr = %p", ret, launch_func);
+
+    if (ret != 0 || launch_func == NULL) {
+        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp symbol not found");
+        draw_text_scaled(80, 480, "LAUNCH FAILED: symbol not found", COLOR_RED, 2);
+        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
+        flip();
+        sceKernelSleep(5);
+        return;
+    }
+
+    LncAppParam param;
+    memset(&param, 0, sizeof(param));
+    param.sz = sizeof(LncAppParam);
+    param.user_id = userId;
+    param.app_opt = 0;
+    param.crash_report = 0;
+    param.check_flag = SkipSystemUpdateCheck;
+
+    typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+    LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+
+    log_debug("Calling sceLncUtilLaunchApp with TID: %s", tid);
+    ret = sceLncUtilLaunchApp(tid, NULL, &param);
+    log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+
+    if (ret == 0 || (unsigned int)ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+        log_debug("Launch OK, returning");
+        sceKernelSleep(1);
+        return;
+    }
+
+    log_debug("Falling back to sceSystemServiceLaunchApp");
     sceSystemServiceLaunchApp(tid, NULL, NULL);
     sceKernelSleep(1);
-
-    log_debug("ALL LAUNCH METHODS FAILED");
-    draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
-    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
-    flip();
-    sceKernelSleep(5);
+    return;
 }
 
 // ============ MAIN ============
@@ -931,9 +899,6 @@ int main(void) {
 
     load_good_names();
     log_debug("GOOD NAMES: %d loaded", good_name_count);
-
-    // Create emulators directory
-    mkdir(EMULATORS_DIR, 0777);
 
     scan_games();
     log_debug("GAMES: %d", game_count);
