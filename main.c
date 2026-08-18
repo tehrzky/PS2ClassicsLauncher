@@ -552,67 +552,109 @@ static void flip(void) {
 }
 
 
-// ============ LAUNCH ============
+// ============ RAW SYSCALL HELPERS ============
 static int ps4_load_prx(const char *path, int *mod_id) {
     return (int)syscall(594, path, 0, mod_id, 0);
 }
-
 static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
     return (int)syscall(591, (long)mod_id, symbol, addr);
 }
+// =============================================
+// ============ LAUNCH ============
+typedef struct {
+    uint32_t sz;
+    uint32_t user_id;
+    uint32_t app_opt;
+    uint32_t crash_report;
+    uint32_t check_flag;
+    uint32_t unk[2];
+} LncAppParam;
 
-static int ps4_get_module_list(int *handles, int max, uint64_t *count) {
-    return (int)syscall(592, handles, (int)max, count);
-}
-
-static void *find_symbol(const char *symbol) {
-    int handles[256];
-    uint64_t count = 0;
-    void *addr = NULL;
-
-    int r = ps4_get_module_list(handles, 256, &count);
-    log_debug("ps4_get_module_list: ret=%d count=%llu", r, (unsigned long long)count);
-    if (r != 0) return NULL;
-
-    for (uint64_t i = 0; i < count; i++) {
-        if (ps4_dlsym(handles[i], symbol, &addr) == 0 && addr != NULL) {
-            log_debug("Found %s in handle 0x%x at %p", symbol, handles[i], addr);
-            return addr;
-        }
-    }
-    log_debug("Symbol %s not found in any of %llu modules", symbol, (unsigned long long)count);
-    return NULL;
-}
+#define SkipSystemUpdateCheck 0x20000
+#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
 
 static void launch_emulator(void) {
+    int userId = 0;
+    int ret;
+    int mod = -1;
+
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", EMULATOR_TID);
 
-    // Method 1: sceLncUtilLaunchApp — designed exactly for launching other apps
-    void *lnc_fn = find_symbol("sceLncUtilLaunchApp");
-    if (lnc_fn) {
-        typedef int (*LncLaunch_t)(const char *, const char *, void *);
-        int ret = ((LncLaunch_t)lnc_fn)(EMULATOR_TID, NULL, NULL);
-        log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-        sceKernelSleep(5);
-        log_debug("Still alive after sceLncUtilLaunchApp");
+    // 1. Get the foreground user
+    ret = sceUserServiceGetForegroundUser(&userId);
+    if (ret < 0) {
+        ret = sceUserServiceGetInitialUser(&userId);
+        if (ret < 0) userId = 0;
+    }
+    log_debug("User ID: %d", userId);
+
+    // 2. Load libSceLncUtil.sprx using raw syscall (more reliable than sceKernelLoadStartModule)
+    const char *sprx_paths[] = {
+        "/system/common/lib/libSceLncUtil.sprx",
+        "/system/priv/lib/libSceLncUtil.sprx",
+        "/system/lib/libSceLncUtil.sprx",
+        NULL
+    };
+
+    for (int i = 0; sprx_paths[i] != NULL; i++) {
+        mod = ps4_load_prx(sprx_paths[i], &mod);
+        log_debug("ps4_load_prx(%s) = %d", sprx_paths[i], mod);
+        if (mod >= 0) break;
     }
 
-    // Method 2: sceSystemServiceLoadExec with title ID
-    void *exec_fn = find_symbol("sceSystemServiceLoadExec");
-    if (exec_fn) {
-        typedef void (*LoadExec_t)(const char *, void *);
-        log_debug("Calling sceSystemServiceLoadExec(%s)...", EMULATOR_TID);
-        ((LoadExec_t)exec_fn)(EMULATOR_TID, NULL);
-        log_debug("sceSystemServiceLoadExec returned");
+    if (mod < 0) {
+        log_debug("LAUNCH FAILED: could not load libSceLncUtil.sprx");
+        draw_text_scaled(80, 480, "LAUNCH FAILED: sprx not found", COLOR_RED, 2);
+        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
+        flip();
         sceKernelSleep(5);
+        return;
     }
 
-    log_debug("ALL METHODS FAILED");
-    draw_text_scaled(80, 480, "LAUNCH FAILED!", COLOR_RED, 3);
-    draw_text_scaled(80, 530, "Check launcher_log.txt", COLOR_WHITE, 2);
-    flip();
-    sceKernelSleep(5);
+    // 3. Resolve sceLncUtilLaunchApp symbol using raw syscall
+    void *launch_func = NULL;
+    ret = ps4_dlsym(mod, "sceLncUtilLaunchApp", &launch_func);
+    log_debug("ps4_dlsym(sceLncUtilLaunchApp) = 0x%08X, ptr = %p", ret, launch_func);
+
+    if (ret != 0 || launch_func == NULL) {
+        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp symbol not found");
+        draw_text_scaled(80, 480, "LAUNCH FAILED: symbol not found", COLOR_RED, 2);
+        draw_text_scaled(80, 520, "Check launcher_log.txt", COLOR_WHITE, 2);
+        flip();
+        sceKernelSleep(5);
+        return;
+    }
+
+    // 4. Prepare launch parameters (matching Itemzflow)
+    LncAppParam param;
+    memset(&param, 0, sizeof(param));
+    param.sz = sizeof(LncAppParam);
+    param.user_id = userId;
+    param.app_opt = 0;
+    param.crash_report = 0;
+    param.check_flag = SkipSystemUpdateCheck;   // 0x20000
+
+    typedef int (*LaunchApp_t)(const char *titleId, const char *args, void *param);
+    LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
+
+    // 5. Launch the emulator
+    log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
+    ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+    log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+
+    // 6. Check result
+    if (ret == 0 || (unsigned int)ret == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
+        log_debug("Launch OK, returning (launcher will be suspended)");
+        sceKernelSleep(1);
+        return;   // ← Do NOT call exit(0) – let the system suspend this app
+    }
+
+    // 7. Fallback: try sceSystemServiceLaunchApp (works without the sprx)
+    log_debug("Falling back to sceSystemServiceLaunchApp");
+    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    sceKernelSleep(1);
+    return;   // ← Again, no exit
 }
 
 // ============ MAIN ============
