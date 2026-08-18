@@ -162,6 +162,7 @@ static unsigned char font8x8[96][8] = {
 typedef struct {
     char path[512];
     char name[256];
+    char display_name[256];
     char id[32];
 } Game;
 
@@ -171,6 +172,107 @@ static int selected = 0;
 static uint32_t *framebuffer[2];
 static int video;
 static int current_buf = 0;
+
+typedef struct {
+    char id[32];
+    char name[256];
+} GoodName;
+
+static GoodName good_names[2048];
+static int good_name_count = 0;
+
+static void load_good_names(void) {
+    int fd = open("/data/PS4ROMS/PS2ISO/goodnames.txt", O_RDONLY);
+    if (fd < 0) return;
+    char buf[65536];
+    int n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    char *p = buf;
+    while (*p && good_name_count < 2048) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        if (*p == '#' || *p == '\0') {
+            while (*p && *p != '\n') p++;
+            continue;
+        }
+        char *eq = strchr(p, '=');
+        if (!eq) break;
+        int id_len = eq - p;
+        if (id_len > 0 && id_len < 32) {
+            strncpy(good_names[good_name_count].id, p, id_len);
+            good_names[good_name_count].id[id_len] = '\0';
+
+            char *name_start = eq + 1;
+            char *name_end = name_start;
+            while (*name_end && *name_end != '\n' && *name_end != '\r') name_end++;
+            int name_len = name_end - name_start;
+            if (name_len > 255) name_len = 255;
+            strncpy(good_names[good_name_count].name, name_start, name_len);
+            good_names[good_name_count].name[name_len] = '\0';
+            good_name_count++;
+        }
+        p = name_end;
+        while (*p && *p != '\n') p++;
+    }
+}
+
+static const char* lookup_good_name(const char *disc_id) {
+    for (int i = 0; i < good_name_count; i++) {
+        if (strcasecmp(good_names[i].id, disc_id) == 0)
+            return good_names[i].name;
+    }
+    return NULL;
+}
+
+static char* stristr(const char *haystack, const char *needle) {
+    if (!needle || !needle[0]) return (char*)haystack;
+    char *h = (char*)haystack;
+    while (*h) {
+        if (tolower((unsigned char)*h) == tolower((unsigned char)*needle)) {
+            char *h2 = h + 1;
+            const char *n2 = needle + 1;
+            while (*n2 && tolower((unsigned char)*h2) == tolower((unsigned char)*n2)) {
+                h2++; n2++;
+            }
+            if (!*n2) return h;
+        }
+        h++;
+    }
+    return NULL;
+}
+
+static void build_display_name(const char *iso_name, const char *disc_id, char *out, size_t out_len) {
+    const char *good = lookup_good_name(disc_id);
+    if (good) {
+        const char *markers[] = {
+            "(Disc 1)", "(Disc 2)", "(Disc 3)", "(Disc 4)",
+            "[Disc 1]", "[Disc 2]", "[Disc 3]", "[Disc 4]",
+            "Disc 1", "Disc 2", "Disc 3", "Disc 4", NULL
+        };
+        const char *found = NULL;
+        for (int i = 0; markers[i]; i++) {
+            if (stristr(iso_name, markers[i])) {
+                found = markers[i];
+                break;
+            }
+        }
+        if (found) {
+            snprintf(out, out_len, "%s %s", good, found);
+        } else {
+            strncpy(out, good, out_len - 1);
+            out[out_len - 1] = '\0';
+        }
+    } else {
+        strncpy(out, iso_name, out_len - 1);
+        out[out_len - 1] = '\0';
+        size_t len = strlen(out);
+        if (len > 4 && (strcasecmp(out + len - 4, ".iso") == 0 || strcasecmp(out + len - 4, ".bin") == 0)) {
+            out[len - 4] = '\0';
+        }
+    }
+}
 
 // ============ DEBUG LOG ============
 static void log_debug(const char *fmt, ...) {
@@ -323,7 +425,7 @@ static int extract_disc_id(const char *path, char *out_id, size_t out_len) {
 
 // ============ GAME SCANNING ============
 static int name_compare(const void *a, const void *b) {
-    return strcasecmp(((const Game*)a)->name, ((const Game*)b)->name);
+    return strcasecmp(((const Game*)a)->display_name, ((const Game*)b)->display_name);
 }
 
 static void scan_games(void) {
@@ -346,6 +448,10 @@ static void scan_games(void) {
             strncpy(games[game_count].id, "UNKNOWN", sizeof(games[game_count].id) - 1);
             log_debug("DISC ID extraction FAILED for: %s", games[game_count].name);
         }
+
+        build_display_name(entry->d_name, games[game_count].id,
+                           games[game_count].display_name,
+                           sizeof(games[game_count].display_name));
 
         game_count++;
     }
@@ -377,12 +483,100 @@ static int check_app_installed(const char *title_id) {
     return 0;
 }
 
-// ============ PER-GAME CONFIG: save/reuse by exact game name in gameconfig/ ============
-// If /data/PS4ROMS/PS2ISO/gameconfig/<game name>.txt already exists, it is
-// left untouched (so manual per-game tweaks persist). If it doesn't exist,
-// it's created from the default template. Either way, the live --image=
-// and --ps2-title-id= lines are written fresh into TEMP_CONFIG each launch.
-static int set_active_game(const char *iso_path, const char *disc_id, const char *game_name) {
+// ============ CONFIG DISCOVERY ============
+// Scans gameconfig/ for any .txt containing "#  Disc ID: <id>" (or similar).
+// If multiple files match, the most recently modified one wins (handy for
+// backups). Returns 1 if a matching file was found.
+static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t out_size) {
+    if (!disc_id || disc_id[0] == '\0' || strcasecmp(disc_id, "UNKNOWN") == 0)
+        return 0;
+
+    DIR *dir = opendir(GAMECONFIG_DIR);
+    if (!dir) return 0;
+
+    struct dirent *entry;
+    char best_path[700] = {0};
+    time_t best_mtime = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        int len = strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
+
+        char path[700];
+        snprintf(path, sizeof(path), "%s%s", GAMECONFIG_DIR, entry->d_name);
+
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) continue;
+
+        struct stat st;
+        fstat(fd, &st);
+
+        char buf[65536];
+        int n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        char search[64];
+        snprintf(search, sizeof(search), "#  Disc ID:     %s", disc_id);
+        char search2[64];
+        snprintf(search2, sizeof(search2), "# Disc ID: %s", disc_id);
+
+        if (strstr(buf, search) != NULL || strstr(buf, search2) != NULL) {
+            if (st.st_mtime > best_mtime) {
+                strncpy(best_path, path, sizeof(best_path) - 1);
+                best_path[sizeof(best_path) - 1] = '\0';
+                best_mtime = st.st_mtime;
+            }
+        }
+    }
+    closedir(dir);
+
+    if (best_path[0]) {
+        strncpy(out_path, best_path, out_size - 1);
+        out_path[out_size - 1] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+// ============ FALLBACK: case-insensitive basename match ============
+static int find_config_by_filename(const char *game_name, char *out_path, size_t out_size) {
+    DIR *dir = opendir(GAMECONFIG_DIR);
+    if (!dir) return 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        int len = strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
+
+        char basename[256];
+        strncpy(basename, entry->d_name, len - 4);
+        basename[len - 4] = '\0';
+
+        if (strcasecmp(basename, game_name) == 0) {
+            snprintf(out_path, out_size, "%s%s", GAMECONFIG_DIR, entry->d_name);
+            closedir(dir);
+            return 1;
+        }
+    }
+    closedir(dir);
+    return 0;
+}
+
+// ============ PER-GAME CONFIG ============
+// 1. Finds existing config by Disc ID inside the file contents.
+// 2. Falls back to case-insensitive ISO basename match.
+// 3. Creates a new formal config from template if nothing found.
+// 4. Writes .launcher_temp.txt: copies gameconfig verbatim except
+//    stripping --image= (single-disc), then appends fresh --image=.
+//    --image-discN= lines are NEVER touched. --ps2-title-id= is
+//    preserved from the gameconfig (so multi-disc shared IDs stick).
+// 5. Parses # Emulator: line and returns the TID via out_emulator_tid.
+static int set_active_game(const char *iso_path, const char *disc_id,
+                           const char *game_name, char *out_emulator_tid, size_t tid_size) {
     char line_buf[2048];
     int n;
 
@@ -390,18 +584,41 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     mkdir(GAMECONFIG_DIR, 0777);
 
     char game_config_path[700];
-    snprintf(game_config_path, sizeof(game_config_path), "%s%s.txt", GAMECONFIG_DIR, game_name);
+    int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
 
-    int has_existing = (access(game_config_path, F_OK) == 0);
+    if (!found) {
+        found = find_config_by_filename(game_name, game_config_path, sizeof(game_config_path));
+    }
 
-    if (!has_existing) {
+    if (!found) {
+        snprintf(game_config_path, sizeof(game_config_path), "%s%s.txt", GAMECONFIG_DIR, game_name);
+    } else {
+        log_debug("Using existing config: %s", game_config_path);
+    }
+
+    if (!found) {
         int gfd = open(game_config_path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
         if (gfd < 0) {
             log_debug("set_active_game: failed to create %s", game_config_path);
         } else {
-            int dlen = 0;
+            char header[1024];
+            int hlen = snprintf(header, sizeof(header),
+                "# ============================================================\n"
+                "#  Game:        %s\n"
+                "#  Disc ID:     %s\n"
+                "#  Emulator:    %s\n"
+                "#  Emulator Title: %s\n"
+                "#\n"
+                "#  Note: \n"
+                "# ============================================================\n"
+                "\n",
+                game_name, disc_id, EMULATOR_TID, "Default"
+            );
+            write(gfd, header, hlen);
+
             int dsrc = open(DEFAULT_CONFIG, O_RDONLY);
             char default_buf[65536];
+            int dlen = 0;
             if (dsrc >= 0) {
                 dlen = read(dsrc, default_buf, sizeof(default_buf) - 1);
                 close(dsrc);
@@ -410,14 +627,19 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
             if (dlen <= 0) {
                 dlen = strlen(embedded_default);
                 memcpy(default_buf, embedded_default, dlen);
-                default_buf[dlen] = '\0';
             }
             write(gfd, default_buf, dlen);
+
+            n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
+            write(gfd, line_buf, n);
+
             close(gfd);
             log_debug("Created new gameconfig: %s", game_config_path);
         }
     }
 
+    // Parse # Emulator: and write temp
+    out_emulator_tid[0] = '\0';
     int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
         log_debug("set_active_game: failed to open %s", TEMP_CONFIG);
@@ -437,11 +659,29 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
                 while (*line_end && *line_end != '\n') line_end++;
                 int line_len = line_end - p;
 
-                if (line_len > 0 && strncmp(p, "--image=", 8) == 0) { }
-                else if (line_len > 0 && strncmp(p, "--ps2-title-id=", 15) == 0) { }
-                else {
+                // Strip bare --image=, but keep --image-discN=
+                int skip = 0;
+                if (line_len > 0 && strncmp(p, "--image=", 8) == 0) {
+                    if (line_len < 14 || strncmp(p, "--image-disc", 12) != 0) {
+                        skip = 1;
+                    }
+                }
+
+                if (!skip) {
                     write(fd, p, line_len);
                     write(fd, "\n", 1);
+
+                    // Parse # Emulator: line
+                    if (line_len > 12 && strncmp(p, "#  Emulator:", 12) == 0) {
+                        char *tid_start = p + 12;
+                        while (tid_start < line_end &&
+                               (*tid_start == ' ' || *tid_start == '\t')) tid_start++;
+                        int tid_len = line_end - tid_start;
+                        if (tid_len > 0 && (size_t)tid_len < tid_size) {
+                            strncpy(out_emulator_tid, tid_start, tid_len);
+                            out_emulator_tid[tid_len] = '\0';
+                        }
+                    }
                 }
                 p = line_end;
                 if (*p == '\n') p++;
@@ -453,10 +693,9 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
 
     n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
     write(fd, line_buf, n);
-    n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
-    write(fd, line_buf, n);
     close(fd);
 
+    // Rewrite MASTER to point at TEMP
     fd = open(MASTER_CONFIG, O_RDONLY);
     if (fd < 0) {
         log_debug("set_active_game: failed to open %s", MASTER_CONFIG);
@@ -484,6 +723,7 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
         int line_len = line_end - p;
 
         if (line_len > 0 && strncmp(p, "--config=", 9) == 0 && p[0] != '#') {
+            // strip old --config=
         } else {
             write(fd, p, line_len);
             write(fd, "\n", 1);
@@ -495,7 +735,10 @@ static int set_active_game(const char *iso_path, const char *disc_id, const char
     n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
     write(fd, line_buf, n);
     close(fd);
-    log_debug("WROTE MASTER CONFIG: %s (game config: %s)", MASTER_CONFIG, game_config_path);
+
+    log_debug("WROTE MASTER CONFIG: %s (game config: %s, emulator: %s)",
+              MASTER_CONFIG, game_config_path,
+              out_emulator_tid[0] ? out_emulator_tid : EMULATOR_TID);
     return 1;
 }
 
@@ -551,7 +794,6 @@ static void flip(void) {
     current_buf ^= 1;
 }
 
-
 // ============ RAW SYSCALL HELPERS ============
 static int ps4_load_prx(const char *path, int *mod_id) {
     return (int)syscall(594, path, 0, mod_id, 0);
@@ -560,6 +802,7 @@ static int ps4_dlsym(int mod_id, const char *symbol, void **addr) {
     return (int)syscall(591, (long)mod_id, symbol, addr);
 }
 // =============================================
+
 // ============ LAUNCH ============
 typedef struct {
     uint32_t sz;
@@ -571,15 +814,15 @@ typedef struct {
 } LncAppParam;
 
 #define SkipSystemUpdateCheck 0x20000
-#define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING 0x80D00504
 
-static void launch_emulator(void) {
+static void launch_emulator(const char *override_tid) {
     int userId = 0;
     int ret;
     int mod = -1;
+    const char *tid = (override_tid && override_tid[0]) ? override_tid : EMULATOR_TID;
 
     log_debug("=== LAUNCHING EMULATOR ===");
-    log_debug("EMULATOR_TID: %s", EMULATOR_TID);
+    log_debug("EMULATOR_TID: %s", tid);
 
     // 1. Get the foreground user
     ret = sceUserServiceGetForegroundUser(&userId);
@@ -639,8 +882,8 @@ static void launch_emulator(void) {
     LaunchApp_t sceLncUtilLaunchApp = (LaunchApp_t)launch_func;
 
     // 5. Launch the emulator
-    log_debug("Calling sceLncUtilLaunchApp with TID: %s", EMULATOR_TID);
-    ret = sceLncUtilLaunchApp(EMULATOR_TID, NULL, &param);
+    log_debug("Calling sceLncUtilLaunchApp with TID: %s", tid);
+    ret = sceLncUtilLaunchApp(tid, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
 
     // 6. Check result
@@ -652,7 +895,7 @@ static void launch_emulator(void) {
 
     // 7. Fallback: try sceSystemServiceLaunchApp (works without the sprx)
     log_debug("Falling back to sceSystemServiceLaunchApp");
-    sceSystemServiceLaunchApp(EMULATOR_TID, NULL, NULL);
+    sceSystemServiceLaunchApp(tid, NULL, NULL);
     sceKernelSleep(1);
     return;   // ← Again, no exit
 }
@@ -685,6 +928,9 @@ int main(void) {
     int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
     log_debug("PAD OPEN: %d (uid=%d)", pad, userId);
 
+    load_good_names();
+    log_debug("GOOD NAMES: %d loaded", good_name_count);
+
     scan_games();
     log_debug("GAMES: %d", game_count);
 
@@ -714,9 +960,11 @@ int main(void) {
                 selected = (selected + 1) % game_count;
             }
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-                log_debug("LAUNCH: %s", games[selected].name);
-                if (set_active_game(games[selected].path, games[selected].id, games[selected].name)) {
-                    launch_emulator();
+                log_debug("LAUNCH: %s", games[selected].display_name);
+                char emu_tid[32] = {0};
+                if (set_active_game(games[selected].path, games[selected].id,
+                                    games[selected].name, emu_tid, sizeof(emu_tid))) {
+                    launch_emulator(emu_tid);
                 } else {
                     log_debug("set_active_game FAILED for %s", games[selected].name);
                 }
@@ -740,7 +988,7 @@ int main(void) {
             if (i == selected) {
                 draw_rect(60, y - 4, SCREEN_WIDTH - 120, row_height, COLOR_SELECT_BG);
             }
-            draw_text_scaled(80, y, games[i].name, color, 3);
+            draw_text_scaled(80, y, games[i].display_name, color, 3);
         }
 
         draw_text_scaled(80, SCREEN_HEIGHT - 40, "[X] LAUNCH   [UP/DOWN] SELECT", COLOR_GRAY, 2);
