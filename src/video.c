@@ -74,3 +74,19 @@ void draw_rect(int x, int y, int w, int h, uint32_t color) {
         for (int xx = x; xx < x + w; xx++)
             draw_pixel(xx, yy, color);
 }
+
+void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
+    if (w <= 0 || h <= 0) return;
+    draw_rect(x + radius, y, w - radius * 2, h, color);
+    draw_rect(x, y + radius, w, h - radius * 2, color);
+    for (int yy = 0; yy < radius; yy++) {
+        for (int xx = 0; xx < radius; xx++) {
+            if ((xx * xx + yy * yy) <= (radius * radius)) {
+                draw_pixel(x + radius - xx, y + radius - yy, color);
+                draw_pixel(x + w - radius + xx, y + radius - yy, color);
+                draw_pixel(x + radius - xx, y + h - radius + yy, color);
+                draw_pixel(x + w - radius + xx, y + h - radius + yy, color);
+            }
+        }
+    }
+}
