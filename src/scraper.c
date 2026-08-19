@@ -1,6 +1,7 @@
 #include "scraper.h"
 #include "debug.h"
 #include <orbis/libkernel.h>
+#include <orbis/Sysmodule.h>
 #include <orbis/Net.h>
 #include <orbis/NetCtl.h>
 #include <stdio.h>
