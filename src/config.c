@@ -7,8 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <stdio.h>     // <-- ADD THIS for snprintf
-
+#include <stdio.h>
 
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define GAMECONFIG_DIR  "/data/PS4ROMS/PS2ISO/gameconfig/"
@@ -189,6 +188,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
                     write(fd, p, line_len);
                     write(fd, "\n", 1);
 
+                    // Parse # Emulator: line (Emulator ID)
                     if (line_len > 12 && strncmp(p, "#  Emulator:", 12) == 0) {
                         char *tid_start = p + 12;
                         while (tid_start < line_end &&
@@ -197,6 +197,21 @@ int set_active_game(const char *iso_path, const char *disc_id,
                         if (tid_len > 0 && (size_t)tid_len < tid_size) {
                             strncpy(out_emulator_tid, tid_start, tid_len);
                             out_emulator_tid[tid_len] = '\0';
+                        }
+                    }
+
+                    // Parse # Emulator Title: line (Emulator Name)
+                    if (line_len > 17 && strncmp(p, "#  Emulator Title:", 17) == 0) {
+                        char *name_start = p + 17;
+                        while (name_start < line_end &&
+                               (*name_start == ' ' || *name_start == '\t')) name_start++;
+                        int name_len = line_end - name_start;
+                        if (name_len > 0) {
+                            char temp_name[64];
+                            if (name_len > 63) name_len = 63;
+                            strncpy(temp_name, name_start, name_len);
+                            temp_name[name_len] = '\0';
+                            log_debug("Emulator Title: %s", temp_name);
                         }
                     }
                 }
