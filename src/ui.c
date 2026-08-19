@@ -4,7 +4,6 @@
 #include "game.h"
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 // ============ UI CONSTANTS ============
 #define SCREEN_WIDTH    1920
@@ -20,21 +19,21 @@
 #define COLOR_CARD         0xFF2A3A4A
 #define COLOR_CARD_BORDER  0xFF3A4A5A
 #define COLOR_TEXT_PRIMARY 0xFFFFFFFF
-#define COLOR_TEXT_SECONDARY 0xFFCCCCCC   // Brighter gray
-#define COLOR_TEXT_MUTED   0xFF999999     // Lighter muted
-#define COLOR_HIGHLIGHT    0xFF336699     // Darker blue highlight (less bright)
+#define COLOR_TEXT_SECONDARY 0xFFAABBCC
+#define COLOR_TEXT_MUTED   0xFF8899AA
 #define COLOR_SUCCESS      0xFF00FF00
 #define COLOR_ERROR        0xFFFF0000
+#define COLOR_HIGHLIGHT    0xFF2A4A5A
+#define COLOR_SELECTED_BG  0xFF2A3A5A
+#define COLOR_DIVIDER      0xFF3A4A5A
 
-static int scroll_timer = 0;
-static int scroll_delay = 6;  // Frames per scroll step (slow)
-static int fast_scroll = 0;   // Fast scroll active
+// ============ EXTERNAL VARIABLES ============
+extern Game games[256];
+extern int game_count;
+extern int selected;
 
-void set_fast_scroll(int active) {
-    fast_scroll = active;
-}
-
-void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
+// ============ DRAWING HELPERS ============
+static void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
     draw_rect(x + radius, y, w - radius * 2, h, color);
     draw_rect(x, y + radius, w, h - radius * 2, color);
     
@@ -50,15 +49,18 @@ void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
     }
 }
 
-// Draw cover placeholder (scaled up)
-void draw_cover_placeholder(int x, int y, int w, int h, const char *text) {
-    draw_rounded_rect(x, y, w, h, 8, COLOR_CARD_BORDER);
-    draw_rounded_rect(x + 2, y + 2, w - 4, h - 4, 6, COLOR_SECONDARY);
+static void draw_cover_placeholder(int x, int y, int w, int h) {
+    // Border
+    draw_rounded_rect(x, y, w, h, 12, COLOR_DIVIDER);
+    draw_rounded_rect(x + 3, y + 3, w - 6, h - 6, 10, COLOR_SECONDARY);
     
+    // CD/DVD icon
     int cx = x + w / 2;
-    int cy = y + h / 2 - 10;
-    int radius = 60;  // Larger CD icon
+    int cy = y + h / 2;
+    int radius = (w < h ? w : h) / 4;
+    if (radius > 80) radius = 80;
     
+    // Outer circle
     for (int yy = -radius; yy <= radius; yy++) {
         for (int xx = -radius; xx <= radius; xx++) {
             if ((xx * xx + yy * yy) <= (radius * radius)) {
@@ -66,160 +68,181 @@ void draw_cover_placeholder(int x, int y, int w, int h, const char *text) {
             }
         }
     }
-    for (int yy = -15; yy <= 15; yy++) {
-        for (int xx = -15; xx <= 15; xx++) {
-            if ((xx * xx + yy * yy) <= (15 * 15)) {
+    // Inner circle
+    int inner = radius / 3;
+    for (int yy = -inner; yy <= inner; yy++) {
+        for (int xx = -inner; xx <= inner; xx++) {
+            if ((xx * xx + yy * yy) <= (inner * inner)) {
                 draw_pixel(cx + xx, cy + yy, COLOR_PRIMARY);
             }
         }
     }
-    
-    // Game name on the cover
-    draw_text_scaled(x + 10, y + h - 35, text, COLOR_TEXT_SECONDARY, 2);
+    // Center hole
+    int hole = inner / 3;
+    for (int yy = -hole; yy <= hole; yy++) {
+        for (int xx = -hole; xx <= hole; xx++) {
+            if ((xx * xx + yy * yy) <= (hole * hole)) {
+                draw_pixel(cx + xx, cy + yy, COLOR_SECONDARY);
+            }
+        }
+    }
 }
 
-// Draw game list on left side
-void draw_game_list(int x, int y, int w, int h, int game_count, int scroll_pos) {
-    // Background
-    draw_rect(x, y, w, h, COLOR_SECONDARY);
+static void draw_header(int x, int y, int w) {
+    draw_rect(x, y, w, 70, COLOR_PRIMARY);
+    draw_rect(x, y + 68, w, 2, COLOR_ACCENT);
     
-    int row_height = 50;  // Taller rows
-    int visible = h / row_height;
-    int total = game_count;
+    draw_text_scaled(x + 40, y + 15, "PS2 ISO LAUNCHER", COLOR_GOLD, 3);
+    draw_text_scaled(x + 40, y + 48, "Select a game and press X to launch", COLOR_TEXT_SECONDARY, 1);
     
-    // Draw list items
-    for (int i = scroll_pos; i < total && i < scroll_pos + visible; i++) {
-        int y_pos = y + (i - scroll_pos) * row_height;
+    char status[64];
+    snprintf(status, sizeof(status), "%d games loaded", game_count);
+    draw_text_scaled(x + w - 200, y + 20, status, COLOR_TEXT_MUTED, 1);
+}
+
+static void draw_footer(int x, int y, int w) {
+    draw_rect(x, y, w, 2, COLOR_ACCENT);
+    
+    int y_pos = y + 15;
+    draw_text_scaled(x + 40, y_pos, "[X] LAUNCH", COLOR_GOLD, 1);
+    draw_text_scaled(x + 160, y_pos, "[UP/DOWN] SELECT", COLOR_TEXT_SECONDARY, 1);
+    draw_text_scaled(x + 340, y_pos, "[L2+UP/DOWN] FAST", COLOR_TEXT_SECONDARY, 1);
+    draw_text_scaled(x + 500, y_pos, "[O] BACK", COLOR_TEXT_SECONDARY, 1);
+}
+
+// ============ GAME LIST (LEFT PANEL) ============
+static void draw_game_list(int x, int y, int w, int h) {
+    // List background
+    draw_rect(x, y, w, h, COLOR_PRIMARY);
+    draw_rect(x + w - 1, y, 1, h, COLOR_DIVIDER);
+    
+    int item_height = 32;
+    int padding = 10;
+    int start_y = y + padding;
+    int visible = (h - padding * 2) / item_height;
+    int scroll = 0;
+    
+    if (selected >= visible) scroll = selected - visible + 1;
+    if (scroll < 0) scroll = 0;
+    
+    for (int i = scroll; i < game_count && i < scroll + visible; i++) {
+        int item_y = start_y + (i - scroll) * item_height;
         int is_selected = (i == selected);
         
-        // Highlight
+        // Highlight selected
         if (is_selected) {
-            draw_rect(x + 4, y_pos + 2, w - 8, row_height - 4, COLOR_HIGHLIGHT);
+            draw_rect(x + 5, item_y - 2, w - 10, item_height, COLOR_SELECTED_BG);
+            draw_rect(x + 5, item_y - 2, 4, item_height, COLOR_ACCENT);
         }
         
-        // Game name (larger font)
-        draw_text_scaled(x + 15, y_pos + 12, games[i].display_name, 
-                         is_selected ? COLOR_GOLD : COLOR_TEXT_PRIMARY, 2);
-        
-        // Show disc ID in smaller text
-        if (games[i].id[0] != '\0') {
-            char id_text[64];
-            snprintf(id_text, sizeof(id_text), "[%s]", games[i].id);
-            draw_text_scaled(x + w - 200, y_pos + 15, id_text, COLOR_TEXT_MUTED, 1);
-        }
-        
-        // Small separator line
-        if (i < total - 1) {
-            draw_rect(x + 10, y_pos + row_height - 1, w - 20, 1, COLOR_CARD_BORDER);
-        }
-    }
-    
-    // Scroll indicator
-    if (total > visible) {
-        float ratio = (float)scroll_pos / (total - visible);
-        int bar_y = y + 10 + ratio * (h - 20);
-        draw_rect(x + w - 6, bar_y, 4, 20, COLOR_ACCENT);
+        // Game name
+        uint32_t color = is_selected ? COLOR_GOLD : COLOR_TEXT_PRIMARY;
+        draw_text_scaled(x + 20, item_y, games[i].display_name, color, 1);
     }
 }
 
-// Draw right panel with game details
-void draw_game_details(int x, int y, int w, int h, Game *game) {
+// ============ GAME DETAILS (RIGHT PANEL) ============
+static void draw_game_details(int x, int y, int w, int h) {
     // Background
-    draw_rounded_rect(x, y, w, h, 10, COLOR_CARD_BORDER);
-    draw_rounded_rect(x + 2, y + 2, w - 4, h - 4, 8, COLOR_CARD);
+    draw_rect(x, y, w, h, COLOR_PRIMARY);
     
-    int padding = 20;
-    int current_y = y + padding;
-    
-    // Cover placeholder (larger)
-    int cover_size = w - padding * 2;
-    draw_cover_placeholder(x + padding, current_y, cover_size, cover_size, "DVD");
-    current_y += cover_size + padding;
-    
-    // Game name (large)
-    draw_text_scaled(x + padding, current_y, game->display_name, COLOR_GOLD, 3);
-    current_y += 50;
-    
-    // Disc ID
-    if (game->id[0] != '\0') {
-        char id_text[128];
-        snprintf(id_text, sizeof(id_text), "ID: %s", game->id);
-        draw_text_scaled(x + padding, current_y, id_text, COLOR_TEXT_SECONDARY, 2);
-        current_y += 35;
+    if (game_count == 0 || selected < 0 || selected >= game_count) {
+        draw_text_scaled(x + 30, y + 50, "No game selected", COLOR_TEXT_MUTED, 2);
+        return;
     }
     
-    // Region
+    Game *game = &games[selected];
+    int cover_size = w - 60;
+    if (cover_size > 350) cover_size = 350;
+    int cover_x = x + (w - cover_size) / 2;
+    int cover_y = y + 20;
+    
+    // Cover art
+    draw_cover_placeholder(cover_x, cover_y, cover_size, cover_size);
+    
+    // Divider
+    int divider_y = cover_y + cover_size + 25;
+    draw_rect(x + 20, divider_y, w - 40, 1, COLOR_DIVIDER);
+    
+    // Game info
+    int info_x = x + 30;
+    int info_y = divider_y + 20;
+    
+    // Title (large)
+    draw_text_scaled(info_x, info_y, game->display_name, COLOR_GOLD, 2);
+    info_y += 35;
+    
+    // ID
+    char id_text[128];
+    snprintf(id_text, sizeof(id_text), "ID: %s", game->id);
+    draw_text_scaled(info_x, info_y, id_text, COLOR_TEXT_SECONDARY, 1);
+    info_y += 25;
+    
+    // Region (from disc ID)
+    char region_text[128] = "Region: Unknown";
     if (game->id[0] != '\0' && strlen(game->id) >= 4) {
         char region[4];
         strncpy(region, game->id + 2, 2);
         region[2] = '\0';
-        char region_name[16];
-        if (strcmp(region, "US") == 0) snprintf(region_name, sizeof(region_name), "Region: USA");
-        else if (strcmp(region, "EU") == 0) snprintf(region_name, sizeof(region_name), "Region: Europe");
-        else if (strcmp(region, "JP") == 0) snprintf(region_name, sizeof(region_name), "Region: Japan");
-        else snprintf(region_name, sizeof(region_name), "Region: Unknown");
-        draw_text_scaled(x + padding, current_y, region_name, COLOR_TEXT_MUTED, 2);
-        current_y += 35;
+        
+        if (strcmp(region, "US") == 0) snprintf(region_text, sizeof(region_text), "Region: USA");
+        else if (strcmp(region, "EU") == 0) snprintf(region_text, sizeof(region_text), "Region: Europe");
+        else if (strcmp(region, "JP") == 0) snprintf(region_text, sizeof(region_text), "Region: Japan");
+        else snprintf(region_text, sizeof(region_text), "Region: %s", region);
     }
+    draw_text_scaled(info_x, info_y, region_text, COLOR_TEXT_SECONDARY, 1);
+    info_y += 25;
     
-    // ISO filename (smaller)
-    char file_text[256];
-    snprintf(file_text, sizeof(file_text), "File: %s", game->name);
-    draw_text_scaled(x + padding, current_y, file_text, COLOR_TEXT_MUTED, 1);
+    // Disc
+    char disc_text[128];
+    snprintf(disc_text, sizeof(disc_text), "Disc: 1/1");
+    draw_text_scaled(info_x, info_y, disc_text, COLOR_TEXT_SECONDARY, 1);
+    info_y += 25;
+    
+    // Size
+    char size_text[128];
+    snprintf(size_text, sizeof(size_text), "Size: --");
+    draw_text_scaled(info_x, info_y, size_text, COLOR_TEXT_SECONDARY, 1);
+    info_y += 25;
+    
+    // Status
+    char status_text[128];
+    snprintf(status_text, sizeof(status_text), "Status: ✓ Configured");
+    draw_text_scaled(info_x, info_y, status_text, COLOR_SUCCESS, 1);
+    info_y += 25;
+    
+    // Emulator
+    draw_text_scaled(info_x, info_y, "Emulator:", COLOR_TEXT_MUTED, 1);
+    info_y += 25;
+    
+    char emu_text[128];
+    snprintf(emu_text, sizeof(emu_text), "Emulator ID: %s", EMULATOR_TID);
+    draw_text_scaled(info_x, info_y, emu_text, COLOR_TEXT_SECONDARY, 1);
 }
 
-void draw_header(int x, int y, int w, int game_count) {
-    draw_rect(x, y, w, 70, COLOR_PRIMARY);
-    draw_rect(x, y + 68, w, 2, COLOR_ACCENT);
-    
-    draw_text_scaled(x + 30, y + 18, "PS2 ISO LAUNCHER", COLOR_GOLD, 4);
-    
-    char status[64];
-    snprintf(status, sizeof(status), "%d games loaded", game_count);
-    draw_text_scaled(x + w - 180, y + 24, status, COLOR_TEXT_SECONDARY, 2);
-}
-
-void draw_footer(int x, int y, int w) {
-    draw_rect(x, y, w, 2, COLOR_ACCENT);
-    
-    int y_pos = y + 15;
-    draw_text_scaled(x + 30, y_pos, "[X] Launch", COLOR_GOLD, 2);
-    draw_text_scaled(x + 150, y_pos, "[UP/DOWN] Select", COLOR_TEXT_SECONDARY, 2);
-    draw_text_scaled(x + 340, y_pos, "[L2+UP/DOWN] Fast", COLOR_TEXT_SECONDARY, 2);
-    draw_text_scaled(x + 530, y_pos, "[O] Exit", COLOR_TEXT_SECONDARY, 2);
-}
-
+// ============ MAIN UI ============
 void draw_launcher_ui(int game_count, int selected) {
+    // Clear screen
     memset(framebuffer[current_buf], 0, FB_SIZE);
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_PRIMARY);
     
-    // Subtle grid
-    for (int y = 0; y < SCREEN_HEIGHT; y += 60) {
-        for (int x = 0; x < SCREEN_WIDTH; x += 60) {
-            draw_pixel(x, y, COLOR_SECONDARY);
-        }
-    }
+    // Header
+    draw_header(0, 0, SCREEN_WIDTH);
     
-    draw_header(0, 0, SCREEN_WIDTH, game_count);
+    // Calculate panels
+    int header_height = 70;
+    int footer_height = 50;
+    int content_y = header_height;
+    int content_height = SCREEN_HEIGHT - header_height - footer_height;
+    int left_width = SCREEN_WIDTH * 60 / 100;  // 60% for game list
+    int right_width = SCREEN_WIDTH - left_width;
     
-    int header_h = 70;
-    int footer_h = 60;
-    int left_panel_w = SCREEN_WIDTH * 0.55;  // 55% for game list
-    int right_panel_w = SCREEN_WIDTH - left_panel_w;
-    int panel_y = header_h;
-    int panel_h = SCREEN_HEIGHT - header_h - footer_h;
+    // Game list (left panel)
+    draw_game_list(0, content_y, left_width, content_height);
     
-    // Game list (left)
-    draw_game_list(0, panel_y, left_panel_w, panel_h, game_count, 
-                   selected < (panel_h / 50) ? 0 : selected - (panel_h / 50) + 1);
+    // Game details (right panel)
+    draw_game_details(left_width, content_y, right_width, content_height);
     
-    // Right panel (game details)
-    if (game_count > 0) {
-        draw_game_details(left_panel_w, panel_y, right_panel_w, panel_h, &games[selected]);
-    } else {
-        draw_text_scaled(left_panel_w + 50, panel_y + 200, "No games found", COLOR_TEXT_MUTED, 3);
-        draw_text_scaled(left_panel_w + 50, panel_y + 250, "Place ISOs in /data/PS4ROMS/PS2ISO/", COLOR_TEXT_MUTED, 2);
-    }
-    
-    draw_footer(0, SCREEN_HEIGHT - footer_h, SCREEN_WIDTH);
+    // Footer
+    draw_footer(0, SCREEN_HEIGHT - footer_height, SCREEN_WIDTH);
 }
