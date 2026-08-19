@@ -1,0 +1,2 @@
+SRCS = main.c video.c font.c game.c goodnames.c config.c launcher.c ui.c syscalls.c debug.c
+OBJS = $(SRCS:.c=.o)
