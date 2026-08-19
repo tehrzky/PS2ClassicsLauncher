@@ -21,6 +21,13 @@ void _fini(void) {}
 // ============ CONFIG ============
 #define EMULATOR_TID "PCSX20042"
 
+// ============ UI COLORS (for main.c) ============
+#define COLOR_GOLD         0xFFFFD700
+#define COLOR_SUCCESS      0xFF00FF00
+#define COLOR_ERROR        0xFFFF0000
+#define COLOR_TEXT_PRIMARY 0xFFFFFFFF
+#define COLOR_TEXT_SECONDARY 0xFFAAAAAA
+
 // ============ EMBEDDED DEFAULT CONFIG ============
 const char *embedded_default =
 "--max-disc-num=1\n"
@@ -104,6 +111,10 @@ int main(void) {
                     launch_emulator(emu_tid);
                 } else {
                     log_debug("set_active_game FAILED for %s", games[selected].name);
+                    draw_launcher_ui(game_count);
+                    draw_text_scaled(80, 500, "CONFIG WRITE FAILED!", COLOR_ERROR, 3);
+                    flip();
+                    sceKernelSleep(2);
                 }
             }
             if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
