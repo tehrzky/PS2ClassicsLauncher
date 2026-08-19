@@ -1,8 +1,8 @@
 # Package metadata
-TITLE       := PS2 Classic Launcher
+TITLE       := PS2 ISO Launcher
 VERSION     := 01.01
-TITLE_ID    := PS2L00001
-CONTENT_ID  := IV0000-PS2L00001_00-PS2CLAUNCHER0000
+TITLE_ID    := ITEM00001
+CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER00000
 
 # Libraries - REMOVED lSceGpuAddress and lpng for now
 LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule
