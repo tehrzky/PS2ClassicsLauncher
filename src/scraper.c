@@ -2,8 +2,6 @@
 #include "debug.h"
 #include <orbis/libkernel.h>
 #include <orbis/Sysmodule.h>
-#include <orbis/Net.h>
-#include <orbis/NetCtl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,13 +19,8 @@ static int download_file(const char *url, const char *path) {
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NETCTL);
     
-    // Initialize network
-    SceNetInitParam netparam;
-    static char net_memory[1024 * 1024];
-    netparam.memory = net_memory;
-    netparam.size = sizeof(net_memory);
-    netparam.flags = 0;
-    sceNetInit(&netparam);
+    // Simple network init
+    sceNetInit();
     sceNetCtlInit();
 
     // Create directory if it doesn't exist
