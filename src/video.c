@@ -1,6 +1,7 @@
 #include "video.h"
 #include "debug.h"
 #include <orbis/VideoOut.h>
+#include <orbis/libkernel.h>   // <-- ADD THIS for sceKernel functions
 #include <sys/mman.h>
 #include <string.h>
 
