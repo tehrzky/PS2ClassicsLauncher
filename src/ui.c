@@ -2,6 +2,7 @@
 #include "video.h"
 #include "font.h"
 #include "game.h"
+#include "config.h"     // <-- ADD THIS for EMULATOR_TID
 #include <string.h>
 #include <stdio.h>
 
