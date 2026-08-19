@@ -8,6 +8,9 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdint.h>   // <-- ADD THIS for uint32_t
+#include <stdio.h>    // <-- ADD THIS for snprintf
+
 
 #define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
 
