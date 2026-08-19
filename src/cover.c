@@ -14,23 +14,6 @@
 static int cover_loaded = 0;
 static char current_serial[32] = {0};
 
-// ============ ROUNDED RECTANGLE HELPER ============
-static void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
-    if (w <= 0 || h <= 0) return;
-    draw_rect(x + radius, y, w - radius * 2, h, color);
-    draw_rect(x, y + radius, w, h - radius * 2, color);
-    for (int yy = 0; yy < radius; yy++) {
-        for (int xx = 0; xx < radius; xx++) {
-            if ((xx * xx + yy * yy) <= (radius * radius)) {
-                draw_pixel(x + radius - xx, y + radius - yy, color);
-                draw_pixel(x + w - radius + xx, y + radius - yy, color);
-                draw_pixel(x + radius - xx, y + h - radius + yy, color);
-                draw_pixel(x + w - radius + xx, y + h - radius + yy, color);
-            }
-        }
-    }
-}
-
 // ============ COVER LOADING ============
 void cover_load(const char *serial) {
     if (cover_loaded && strcmp(current_serial, serial) == 0) {
