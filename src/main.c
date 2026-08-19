@@ -18,21 +18,12 @@ void _fini(void) {}
 #include "goodnames.h"
 #include "ui.h"
 
-// ============ SCROLLING ============
-static int scroll_hold_counter = 0;
-static int scroll_direction = 0;
-static const int SCROLL_DELAY = 12;      // Frames between scrolls (slow)
-static const int FAST_SCROLL_DELAY = 3;  // Frames between scrolls (fast with L2)
-
 // ============ CONFIG ============
 #define EMULATOR_TID "PCSX20042"
 
-// ============ UI COLORS (for main.c) ============
-#define COLOR_GOLD         0xFFFFD700
-#define COLOR_SUCCESS      0xFF00FF00
-#define COLOR_ERROR        0xFFFF0000
-#define COLOR_TEXT_PRIMARY 0xFFFFFFFF
-#define COLOR_TEXT_SECONDARY 0xFFAAAAAA
+// ============ SCREEN CONSTANTS ============
+#define SCREEN_WIDTH    1920
+#define SCREEN_HEIGHT   1080
 
 // ============ EMBEDDED DEFAULT CONFIG ============
 const char *embedded_default =
@@ -47,6 +38,10 @@ const char *embedded_default =
 "--path-featuredata=\"/data/PS4ROMS/PS2ISO/feature_data/\"\n"
 "--load-feature-lua=0\n"
 "--trophy-support=0\n";
+
+// ============ BUTTON REPEAT CONSTANTS ============
+#define REPEAT_DELAY_FAST    5
+#define REPEAT_DELAY_L2_FAST 2
 
 // ============ MAIN ============
 int main(void) {
@@ -83,25 +78,22 @@ int main(void) {
     log_debug("GAMES: %d", game_count);
 
     if (game_count == 0) {
-        draw_launcher_ui(game_count, selected);
+        draw_launcher_ui(game_count, 0, 0);
         flip();
         sceKernelSleep(5);
         return 0;
     }
 
-        OrbisPadData pad_data;
+    OrbisPadData pad_data;
     unsigned int old_buttons = 0;
     unsigned int repeat_counter = 0;
-    unsigned int repeat_delay = 20; // initial delay before repeat starts (frames)
-    #define REPEAT_DELAY_FAST    5   // frames between repeats when held
-    #define REPEAT_DELAY_L2_FAST 2   // even faster with L2
+    unsigned int repeat_delay = 20;
 
     while (1) {
         if (pad >= 0) {
             scePadReadState(pad, &pad_data);
             unsigned int buttons = pad_data.buttons;
             unsigned int pressed = buttons & ~old_buttons;
-            unsigned int released = old_buttons & ~buttons;
             old_buttons = buttons;
 
             // --- Single press actions ---
@@ -125,7 +117,7 @@ int main(void) {
             }
             if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
                 log_debug("EXIT requested");
-                return 0; // exit cleanly
+                return 0;
             }
 
             // --- Immediate movement on press ---
@@ -158,7 +150,6 @@ int main(void) {
             else if (buttons & ORBIS_PAD_BUTTON_DOWN) move = 1;
 
             if (move != 0) {
-                // If L2 is held, speed up
                 if (buttons & ORBIS_PAD_BUTTON_L2) {
                     repeat_delay = REPEAT_DELAY_L2_FAST;
                 } else {
@@ -173,7 +164,6 @@ int main(void) {
                     repeat_counter = 0;
                 }
             } else {
-                // Reset repeat when no direction is held
                 repeat_counter = 0;
                 repeat_delay = 20;
             }
@@ -181,7 +171,7 @@ int main(void) {
 
         draw_launcher_ui(game_count, selected, game_count);
         flip();
-        sceKernelUsleep(16666); // ~60fps
+        sceKernelUsleep(16666);
     }
 
     return 0;
