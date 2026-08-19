@@ -5,6 +5,12 @@
 #include <string.h>
 #include <stdio.h>
 
+// ============ UI CONSTANTS ============
+#define SCREEN_WIDTH    1920
+#define SCREEN_HEIGHT   1080
+#define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
+
+// ============ UI COLORS ============
 #define COLOR_PRIMARY      0xFF1A2A3A
 #define COLOR_SECONDARY    0xFF2A3A4A
 #define COLOR_ACCENT       0xFF00BFFF
@@ -17,9 +23,6 @@
 #define COLOR_TEXT_MUTED   0xFF666666
 #define COLOR_SUCCESS      0xFF00FF00
 #define COLOR_ERROR        0xFFFF0000
-
-#define SCREEN_WIDTH    1920
-#define SCREEN_HEIGHT   1080
 
 static void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
     draw_rect(x + radius, y, w - radius * 2, h, color);
@@ -144,7 +147,8 @@ void draw_launcher_ui(int game_count) {
         int y_pos = list_y + (i - scroll) * (card_height + card_spacing);
         
         char subtitle[128] = {0};
-        if (games[i].id && games[i].id[0] != '\0') {
+        // Check if disc_id exists and has content properly
+        if (games[i].id[0] != '\0') {
             if (strlen(games[i].id) >= 4) {
                 char region[4];
                 strncpy(region, games[i].id + 2, 2);
