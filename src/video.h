@@ -10,5 +10,6 @@ int init_video(void);
 void flip(void);
 void draw_pixel(int x, int y, uint32_t color);
 void draw_rect(int x, int y, int w, int h, uint32_t color);
+void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color);
 
 #endif
