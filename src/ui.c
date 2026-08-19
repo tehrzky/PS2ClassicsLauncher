@@ -11,38 +11,33 @@
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
 // ============ TV-SAFE AREA ============
-// Consumer 1080p TVs (this launcher targets a 32" 1080p set) commonly still
-// overscan/crop the outer edge of the picture. Backgrounds are allowed to
-// bleed to the physical screen edge, but any text or UI element the user
-// needs to read/hit always stays inside this safe rectangle.
 #define SAFE_X          56
 #define SAFE_Y          32
 #define SAFE_X1         (SCREEN_WIDTH - SAFE_X)
 #define SAFE_Y1         (SCREEN_HEIGHT - SAFE_Y)
 
 // ============ COLORS ============
-// Slightly desaturated, higher-contrast palette so text stays legible from a
-// couch-viewing distance instead of glowing/bleeding on an LCD TV panel.
-#define COLOR_BG            0xFF0B141F   // deep charcoal navy
-#define COLOR_PANEL         0xFF141F2B   // detail panel background
-#define COLOR_CARD          0xFF1B2836   // list row (unselected)
-#define COLOR_CARD_SELECTED 0xFF213145   // list row (selected)
-#define COLOR_BORDER        0xFF2E4256   // subtle card/panel border
-#define COLOR_ACCENT        0xFF3FA9F5   // primary accent (selection, links)
-#define COLOR_GOLD          0xFFF5C542   // selected title / emphasis
-#define COLOR_TEXT          0xFFF2F5F8   // primary text (soft white, not pure white)
-#define COLOR_TEXT_DIM      0xFFA6B4C4   // secondary text
-#define COLOR_TEXT_MUTED    0xFF6C7C8E   // tertiary / meta text
+#define COLOR_BG            0xFF0B141F
+#define COLOR_PANEL         0xFF141F2B
+#define COLOR_CARD          0xFF1B2836
+#define COLOR_CARD_SELECTED 0xFF213145
+#define COLOR_BORDER        0xFF2E4256
+#define COLOR_ACCENT        0xFF3FA9F5
+#define COLOR_GOLD          0xFFF5C542
+#define COLOR_TEXT          0xFFF2F5F8
+#define COLOR_TEXT_DIM      0xFFA6B4C4
+#define COLOR_TEXT_MUTED    0xFF6C7C8E
 #define COLOR_SUCCESS       0xFF3ED598
 #define COLOR_ERROR         0xFFFF5C5C
 
-// ============ LAYOUT ============
+// ============ LAYOUT (WIDER LEFT PANEL) ============
 #define HEADER_HEIGHT     100
 #define FOOTER_HEIGHT     76
 
+// LEFT PANEL - now wider (60% of screen)
 #define LIST_X            SAFE_X
 #define LIST_Y            (HEADER_HEIGHT + 24)
-#define LIST_WIDTH        660
+#define LIST_WIDTH        820                     // widened from 660
 #define LIST_BOTTOM       (SCREEN_HEIGHT - FOOTER_HEIGHT - 24)
 
 #define SCROLLBAR_X       (LIST_X + LIST_WIDTH + 8)
@@ -50,21 +45,18 @@
 
 #define DIVIDER_X         (SCROLLBAR_X + 24)
 #define RIGHT_PANE_X      (DIVIDER_X + 24)
-#define RIGHT_PANE_WIDTH  (SAFE_X1 - RIGHT_PANE_X)
+#define RIGHT_PANE_WIDTH  (SAFE_X1 - RIGHT_PANE_X) // narrower right panel
 
-#define ITEM_HEIGHT       58
-#define ITEM_GAP          8
+#define ITEM_HEIGHT       56
+#define ITEM_GAP          6
 
-#define COVER_SIZE        300
+// COVER - slightly smaller since right panel is narrower
+#define COVER_SIZE        240
 #define COVER_X           (RIGHT_PANE_X + (RIGHT_PANE_WIDTH - COVER_SIZE) / 2)
-#define COVER_Y            (LIST_Y + 6)
+#define COVER_Y           (LIST_Y + 6)
 
 // ============ SMALL HELPERS ============
 
-// Right-pointing selection triangle, drawn as pixels rather than a font
-// glyph -- the bitmap font only covers ASCII 32-127, so a Unicode arrow
-// (e.g. "\xE2\x96\xB6") silently fails to render. A drawn triangle always
-// renders correctly and looks cleaner at small sizes.
 static void draw_triangle_right(int x, int y, int size, uint32_t color) {
     for (int row = 0; row < size; row++) {
         int half = size / 2;
@@ -75,8 +67,6 @@ static void draw_triangle_right(int x, int y, int size, uint32_t color) {
     }
 }
 
-// Truncates s to fit max_width_px at the given font scale, appending "..."
-// if it had to cut. Writes into out (caller-provided buffer).
 static void truncate_to_width(const char *s, char *out, size_t out_len, int max_width_px, int scale) {
     int max_chars = max_width_px / (FONT_WIDTH * scale);
     if (max_chars < 1) max_chars = 1;
@@ -107,8 +97,6 @@ static void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t c
     }
 }
 
-// A pill-shaped button hint, e.g. ( X ) Launch -- matches the look of
-// official PS4 UI button prompts instead of a wall of plain text.
 static void draw_button_hint(int x, int y, const char *button, const char *label, uint32_t button_color) {
     int pill_w = 8 * 2 * (int)strlen(button) + 20;
     int pill_h = 32;
@@ -140,12 +128,12 @@ static void draw_cover_placeholder(int x, int y, int w, int h) {
             }
         }
     }
-    const char *label = "NO COVER ART";
+    const char *label = "NO COVER";
     int label_w = (int)strlen(label) * FONT_WIDTH * 2;
     draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, COLOR_TEXT_MUTED, 2);
 }
 
-// ============ GAME LIST (left pane) ============
+// ============ GAME LIST (left pane - wider) ============
 static void draw_game_list(int selected_idx, int count) {
     int visible = (LIST_BOTTOM - LIST_Y) / (ITEM_HEIGHT + ITEM_GAP);
     if (visible < 1) visible = 1;
@@ -165,7 +153,6 @@ static void draw_game_list(int selected_idx, int count) {
 
         int text_x = LIST_X + 24;
         if (is_sel) {
-            // left accent stripe + selection triangle
             draw_rect(LIST_X, y_pos + 6, 5, ITEM_HEIGHT - 12, COLOR_ACCENT);
             draw_triangle_right(LIST_X + 16, y_pos + ITEM_HEIGHT / 2 - 7, 14, COLOR_GOLD);
             text_x = LIST_X + 42;
@@ -176,10 +163,16 @@ static void draw_game_list(int selected_idx, int count) {
                            LIST_WIDTH - (text_x - LIST_X) - 16, 2);
         draw_text_scaled(text_x, y_pos + (ITEM_HEIGHT - 16) / 2,
                           title_buf, is_sel ? COLOR_GOLD : COLOR_TEXT, 2);
+
+        // Show Disc ID on the right side of the list item (compact)
+        char id_buf[16];
+        snprintf(id_buf, sizeof(id_buf), "%s", games[i].id);
+        int id_w = (int)strlen(id_buf) * FONT_WIDTH * 1;
+        draw_text_scaled(LIST_X + LIST_WIDTH - id_w - 16, y_pos + (ITEM_HEIGHT - 8) / 2,
+                          id_buf, is_sel ? COLOR_TEXT_DIM : COLOR_TEXT_MUTED, 1);
     }
 
-    // Scrollbar -- only shown when the list doesn't fit on one screen, so the
-    // user knows there's more below without having to scroll blindly.
+    // Scrollbar
     if (count > visible) {
         int track_h = LIST_BOTTOM - LIST_Y;
         draw_rect(SCROLLBAR_X, LIST_Y, SCROLLBAR_WIDTH, track_h, COLOR_BORDER);
@@ -190,28 +183,36 @@ static void draw_game_list(int selected_idx, int count) {
     }
 }
 
-// ============ DETAILS (right pane) ============
+// ============ DETAILS (right pane - narrower) ============
 static void draw_game_details(int selected_idx) {
     if (selected_idx < 0 || selected_idx >= game_count) return;
     Game *g = &games[selected_idx];
 
-    // Panel backdrop so the info block reads as one card, not floating text.
+    // Panel backdrop
     int panel_y = COVER_Y - 20;
     int panel_h = LIST_BOTTOM - panel_y;
     draw_rounded_rect(RIGHT_PANE_X - 20, panel_y, RIGHT_PANE_WIDTH + 40, panel_h, 14, COLOR_PANEL);
 
+    // Cover Art
     draw_cover_placeholder(COVER_X, COVER_Y, COVER_SIZE, COVER_SIZE);
 
-    int info_y = COVER_Y + COVER_SIZE + 34;
+    int info_y = COVER_Y + COVER_SIZE + 30;
+
+    // Game Title (big)
     char title_buf[48];
     truncate_to_width(g->display_name, title_buf, sizeof(title_buf), RIGHT_PANE_WIDTH - 20, 3);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, title_buf, COLOR_GOLD, 3);
 
     info_y += 46;
+
+    // Disc ID
     char id_label[64];
     snprintf(id_label, sizeof(id_label), "Disc ID:  %s", g->id);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, id_label, COLOR_TEXT, 2);
 
+    info_y += 34;
+
+    // Region
     if (strlen(g->id) >= 4) {
         char region_code[3];
         strncpy(region_code, g->id + 2, 2);
@@ -221,14 +222,29 @@ static void draw_game_details(int selected_idx) {
         else if (strcmp(region_code, "EU") == 0) snprintf(region, sizeof(region), "Region:   Europe");
         else if (strcmp(region_code, "JP") == 0) snprintf(region, sizeof(region), "Region:   Japan");
         else snprintf(region, sizeof(region), "Region:   %s", region_code);
-        info_y += 34;
         draw_text_scaled(RIGHT_PANE_X + 10, info_y, region, COLOR_TEXT_DIM, 2);
     }
 
-    info_y += 40;
+    info_y += 34;
+
+    // Serial
+    char serial_label[64];
+    snprintf(serial_label, sizeof(serial_label), "Serial:   %s", g->id);
+    draw_text_scaled(RIGHT_PANE_X + 10, info_y, serial_label, COLOR_TEXT_DIM, 2);
+
+    info_y += 34;
+
+    // ISO Filename (small, at the bottom)
     char file_buf[80];
     truncate_to_width(g->name, file_buf, sizeof(file_buf), RIGHT_PANE_WIDTH - 20, 1);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, file_buf, COLOR_TEXT_MUTED, 1);
+
+    // Game index (e.g., "Game 5 of 44")
+    info_y = panel_y + panel_h - 30;
+    char index_str[32];
+    snprintf(index_str, sizeof(index_str), "Game %d of %d", selected_idx + 1, game_count);
+    int index_w = (int)strlen(index_str) * FONT_WIDTH * 1;
+    draw_text_scaled(RIGHT_PANE_X + RIGHT_PANE_WIDTH - index_w - 10, info_y, index_str, COLOR_TEXT_MUTED, 1);
 }
 
 // ============ HEADER ============
@@ -243,6 +259,9 @@ static void draw_header(int total_games) {
     snprintf(count_str, sizeof(count_str), "%d GAMES", total_games);
     int w = (int)strlen(count_str) * FONT_WIDTH * 2;
     draw_text_scaled(SAFE_X1 - w, SAFE_Y + 6, count_str, COLOR_TEXT_DIM, 2);
+
+    // Subtitle
+    draw_text_scaled(SAFE_X, SAFE_Y + 48, "Select a game and press X to launch", COLOR_TEXT_DIM, 1);
 }
 
 // ============ FOOTER ============
