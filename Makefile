@@ -5,7 +5,7 @@ TITLE_ID    := ITEM00001
 CONTENT_ID  := IV0000-ITEM00001_00-PS2LAUNCHER00000
 
 # Libraries
-LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule
+LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule -lSceGpuAddress -lpng
 
 # Toolchain
 TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
@@ -22,9 +22,11 @@ CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS
 # Linker flags (with crt1.o for proper PS4 startup)
 LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
 
-# Source
-CFILES      := main.c
-OBJS        := $(patsubst %.c,$(INTDIR)/%.o,$(notdir $(CFILES)))
+# Source files - ALL .c files in the project
+CFILES      := main.c video.c font.c game.c goodnames.c config.c launcher.c ui.c syscalls.c debug.c
+
+# Object files
+OBJS        := $(patsubst %.c,$(INTDIR)/%.o,$(CFILES))
 
 all: $(CONTENT_ID).pkg
 
@@ -48,11 +50,11 @@ sce_sys/param.sfo: Makefile
 	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
 
 eboot.bin: $(INTDIR) $(OBJS)
-	$(LD) $(INTDIR)/*.o -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
+	$(LD) $(OBJS) -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
 	$(TOOLCHAIN)/bin/$(CDIR)/create-fself -in=$(INTDIR)/ps2launcher.elf -out=$(INTDIR)/ps2launcher.oelf --eboot "eboot.bin" --paid 0x3800000000000011 --authinfo 000000000000000000000000001C004000FF000000000080000000000000000000000000000000000000008000400040000000000000008000000000000000080040FFFF000000F000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
 $(INTDIR)/%.o: %.c | $(INTDIR)
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -I. -o $@ $<
 
 $(INTDIR):
 	mkdir -p $(INTDIR)
