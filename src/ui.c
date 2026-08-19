@@ -6,16 +6,18 @@
 #include <string.h>
 #include <stdio.h>
 
-// ============ CONSTANTS ============
+// ============ SCREEN ============
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
+// ============ TV-SAFE AREA ============
 #define SAFE_X          56
 #define SAFE_Y          32
 #define SAFE_X1         (SCREEN_WIDTH - SAFE_X)
 #define SAFE_Y1         (SCREEN_HEIGHT - SAFE_Y)
 
+// ============ COLORS ============
 #define COLOR_BG            0xFF0B141F
 #define COLOR_PANEL         0xFF141F2B
 #define COLOR_CARD          0xFF1B2836
@@ -26,8 +28,10 @@
 #define COLOR_TEXT          0xFFF2F5F8
 #define COLOR_TEXT_DIM      0xFFA6B4C4
 #define COLOR_TEXT_MUTED    0xFF6C7C8E
+#define COLOR_SUCCESS       0xFF3ED598
 #define COLOR_ERROR         0xFFFF5C5C
 
+// ============ LAYOUT ============
 #define HEADER_HEIGHT     100
 #define FOOTER_HEIGHT     76
 
@@ -73,22 +77,6 @@ static void truncate_to_width(const char *s, char *out, size_t out_len, int max_
     if (keep < 1) keep = 1;
     if (keep > (int)out_len - 4) keep = (int)out_len - 4;
     snprintf(out, out_len, "%.*s...", keep, s);
-}
-
-static void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
-    if (w <= 0 || h <= 0) return;
-    draw_rect(x + radius, y, w - radius * 2, h, color);
-    draw_rect(x, y + radius, w, h - radius * 2, color);
-    for (int yy = 0; yy < radius; yy++) {
-        for (int xx = 0; xx < radius; xx++) {
-            if ((xx * xx + yy * yy) <= (radius * radius)) {
-                draw_pixel(x + radius - xx, y + radius - yy, color);
-                draw_pixel(x + w - radius + xx, y + radius - yy, color);
-                draw_pixel(x + radius - xx, y + h - radius + yy, color);
-                draw_pixel(x + w - radius + xx, y + h - radius + yy, color);
-            }
-        }
-    }
 }
 
 static void draw_button_hint(int x, int y, const char *button, const char *label, uint32_t button_color) {
@@ -231,16 +219,13 @@ static void draw_footer(void) {
 
     int hint_y = SAFE_Y1 - 32;
     int x = SAFE_X;
-    draw_button_hint(x, hint_y, "X", "Launch", COLOR_ACCENT);
-    x += 190;
-    draw_button_hint(x, hint_y, "^v", "Select", COLOR_TEXT_DIM);
-    x += 220;
-    draw_button_hint(x, hint_y, "L2", "Fast Scroll", COLOR_TEXT_DIM);
-    x += 300;
+    draw_button_hint(x, hint_y, "X", "Launch", COLOR_ACCENT);          x += 190;
+    draw_button_hint(x, hint_y, "^v", "Select", COLOR_TEXT_DIM);       x += 220;
+    draw_button_hint(x, hint_y, "L2", "Fast Scroll", COLOR_TEXT_DIM);  x += 300;
     draw_button_hint(x, hint_y, "O", "Exit", COLOR_ERROR);
 }
 
-// ============ MAIN DRAW ============
+// ============ MAIN DRAW FUNCTION ============
 void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games) {
     memset(framebuffer[current_buf], 0, FB_SIZE);
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
