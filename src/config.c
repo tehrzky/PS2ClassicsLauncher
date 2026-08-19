@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <stdio.h>     // <-- ADD THIS for snprintf
+
 
 #define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
 #define GAMECONFIG_DIR  "/data/PS4ROMS/PS2ISO/gameconfig/"
