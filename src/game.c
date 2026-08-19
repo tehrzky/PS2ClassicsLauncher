@@ -128,6 +128,9 @@ void scan_games(void) {
                            games[game_count].display_name,
                            sizeof(games[game_count].display_name));
 
+        games[game_count].emulator_name[0] = '\0';
+        games[game_count].emulator_id[0] = '\0';
+
         game_count++;
     }
     closedir(dir);
