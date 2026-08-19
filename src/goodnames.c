@@ -5,6 +5,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <stdio.h>      // <-- ADD THIS for snprintf
 
 typedef struct {
     char id[32];
@@ -28,6 +29,7 @@ void load_good_names(void) {
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
         if (*p == '#' || *p == '\0') {
             while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
             continue;
         }
         char *eq = strchr(p, '=');
@@ -45,9 +47,14 @@ void load_good_names(void) {
             strncpy(good_names[good_name_count].name, name_start, name_len);
             good_names[good_name_count].name[name_len] = '\0';
             good_name_count++;
+            
+            p = name_end;  // Now inside the if block where name_end is declared
+        } else {
+            // Invalid ID, skip to next line
+            while (*p && *p != '\n') p++;
         }
-        p = name_end;
         while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
     }
 }
 
