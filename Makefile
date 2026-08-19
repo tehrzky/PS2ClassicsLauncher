@@ -1,6 +1,6 @@
 # Package metadata
-TITLE       := PS2 ISO Launcher
-VERSION     := 01.00
+TITLE       := PS2 Classic Launcher
+VERSION     := 01.01
 TITLE_ID    := PS2L00001
 CONTENT_ID  := IV0000-PS2L00001_00-PS2LAUNCHER00000
 
