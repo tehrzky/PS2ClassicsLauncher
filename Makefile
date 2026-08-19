@@ -10,6 +10,7 @@ LIBS        := -lc -lkernel -lSceSystemService -lSceUserService -lScePad -lSceVi
 # Toolchain
 TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
 INTDIR      := build
+SRCDIR      := src
 CDIR        := linux
 
 # Compiler
@@ -17,16 +18,14 @@ CC          := clang
 LD          := ld.lld
 
 # Compiler flags
-CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
+CFLAGS      := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -DORBIS -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include -I$(SRCDIR)
 
 # Linker flags (with crt1.o for proper PS4 startup)
 LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
 
-# Source files - ALL .c files in the project
-CFILES      := main.c video.c font.c game.c goodnames.c config.c launcher.c ui.c syscalls.c debug.c
-
-# Object files
-OBJS        := $(patsubst %.c,$(INTDIR)/%.o,$(CFILES))
+# Source files - ALL .c files in the src directory
+CFILES      := $(wildcard $(SRCDIR)/*.c)
+OBJS        := $(patsubst $(SRCDIR)/%.c,$(INTDIR)/%.o,$(CFILES))
 
 all: $(CONTENT_ID).pkg
 
@@ -53,8 +52,8 @@ eboot.bin: $(INTDIR) $(OBJS)
 	$(LD) $(OBJS) -o $(INTDIR)/ps2launcher.elf $(LDFLAGS)
 	$(TOOLCHAIN)/bin/$(CDIR)/create-fself -in=$(INTDIR)/ps2launcher.elf -out=$(INTDIR)/ps2launcher.oelf --eboot "eboot.bin" --paid 0x3800000000000011 --authinfo 000000000000000000000000001C004000FF000000000080000000000000000000000000000000000000008000400040000000000000008000000000000000080040FFFF000000F000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
-$(INTDIR)/%.o: %.c | $(INTDIR)
-	$(CC) $(CFLAGS) -I. -o $@ $<
+$(INTDIR)/%.o: $(SRCDIR)/%.c | $(INTDIR)
+	$(CC) $(CFLAGS) -o $@ $<
 
 $(INTDIR):
 	mkdir -p $(INTDIR)
