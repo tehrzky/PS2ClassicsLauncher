@@ -2,21 +2,20 @@
 #include "video.h"
 #include "font.h"
 #include "game.h"
+#include "cover.h"
 #include <string.h>
 #include <stdio.h>
 
-// ============ SCREEN ============
+// ============ CONSTANTS ============
 #define SCREEN_WIDTH    1920
 #define SCREEN_HEIGHT   1080
 #define FB_SIZE         (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
-// ============ TV-SAFE AREA ============
 #define SAFE_X          56
 #define SAFE_Y          32
 #define SAFE_X1         (SCREEN_WIDTH - SAFE_X)
 #define SAFE_Y1         (SCREEN_HEIGHT - SAFE_Y)
 
-// ============ COLORS ============
 #define COLOR_BG            0xFF0B141F
 #define COLOR_PANEL         0xFF141F2B
 #define COLOR_CARD          0xFF1B2836
@@ -27,17 +26,14 @@
 #define COLOR_TEXT          0xFFF2F5F8
 #define COLOR_TEXT_DIM      0xFFA6B4C4
 #define COLOR_TEXT_MUTED    0xFF6C7C8E
-#define COLOR_SUCCESS       0xFF3ED598
 #define COLOR_ERROR         0xFFFF5C5C
 
-// ============ LAYOUT (WIDER LEFT PANEL) ============
 #define HEADER_HEIGHT     100
 #define FOOTER_HEIGHT     76
 
-// LEFT PANEL - now wider (60% of screen)
 #define LIST_X            SAFE_X
 #define LIST_Y            (HEADER_HEIGHT + 24)
-#define LIST_WIDTH        820                     // widened from 660
+#define LIST_WIDTH        1050
 #define LIST_BOTTOM       (SCREEN_HEIGHT - FOOTER_HEIGHT - 24)
 
 #define SCROLLBAR_X       (LIST_X + LIST_WIDTH + 8)
@@ -45,18 +41,16 @@
 
 #define DIVIDER_X         (SCROLLBAR_X + 24)
 #define RIGHT_PANE_X      (DIVIDER_X + 24)
-#define RIGHT_PANE_WIDTH  (SAFE_X1 - RIGHT_PANE_X) // narrower right panel
+#define RIGHT_PANE_WIDTH  (SAFE_X1 - RIGHT_PANE_X)
 
 #define ITEM_HEIGHT       56
 #define ITEM_GAP          6
 
-// COVER - slightly smaller since right panel is narrower
-#define COVER_SIZE        240
+#define COVER_SIZE        350
 #define COVER_X           (RIGHT_PANE_X + (RIGHT_PANE_WIDTH - COVER_SIZE) / 2)
 #define COVER_Y           (LIST_Y + 6)
 
-// ============ SMALL HELPERS ============
-
+// ============ HELPERS ============
 static void draw_triangle_right(int x, int y, int size, uint32_t color) {
     for (int row = 0; row < size; row++) {
         int half = size / 2;
@@ -105,35 +99,7 @@ static void draw_button_hint(int x, int y, const char *button, const char *label
     draw_text_scaled(x + pill_w + 14, y + 8, label, COLOR_TEXT_DIM, 2);
 }
 
-// ============ COVER PLACEHOLDER ============
-static void draw_cover_placeholder(int x, int y, int w, int h) {
-    draw_rounded_rect(x, y, w, h, 14, COLOR_BORDER);
-    draw_rounded_rect(x + 3, y + 3, w - 6, h - 6, 11, COLOR_PANEL);
-
-    int cx = x + w / 2;
-    int cy = y + h / 2 - 12;
-    int radius = w / 4;
-    for (int yy = -radius; yy <= radius; yy++) {
-        for (int xx = -radius; xx <= radius; xx++) {
-            if ((xx * xx + yy * yy) <= (radius * radius)) {
-                draw_pixel(cx + xx, cy + yy, COLOR_TEXT_MUTED);
-            }
-        }
-    }
-    int hole = radius / 4;
-    for (int yy = -hole; yy <= hole; yy++) {
-        for (int xx = -hole; xx <= hole; xx++) {
-            if ((xx * xx + yy * yy) <= (hole * hole)) {
-                draw_pixel(cx + xx, cy + yy, COLOR_PANEL);
-            }
-        }
-    }
-    const char *label = "NO COVER";
-    int label_w = (int)strlen(label) * FONT_WIDTH * 2;
-    draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, COLOR_TEXT_MUTED, 2);
-}
-
-// ============ GAME LIST (left pane - wider) ============
+// ============ GAME LIST ============
 static void draw_game_list(int selected_idx, int count) {
     int visible = (LIST_BOTTOM - LIST_Y) / (ITEM_HEIGHT + ITEM_GAP);
     if (visible < 1) visible = 1;
@@ -163,16 +129,8 @@ static void draw_game_list(int selected_idx, int count) {
                            LIST_WIDTH - (text_x - LIST_X) - 16, 2);
         draw_text_scaled(text_x, y_pos + (ITEM_HEIGHT - 16) / 2,
                           title_buf, is_sel ? COLOR_GOLD : COLOR_TEXT, 2);
-
-        // Show Disc ID on the right side of the list item (compact)
-        char id_buf[16];
-        snprintf(id_buf, sizeof(id_buf), "%s", games[i].id);
-        int id_w = (int)strlen(id_buf) * FONT_WIDTH * 1;
-        draw_text_scaled(LIST_X + LIST_WIDTH - id_w - 16, y_pos + (ITEM_HEIGHT - 8) / 2,
-                          id_buf, is_sel ? COLOR_TEXT_DIM : COLOR_TEXT_MUTED, 1);
     }
 
-    // Scrollbar
     if (count > visible) {
         int track_h = LIST_BOTTOM - LIST_Y;
         draw_rect(SCROLLBAR_X, LIST_Y, SCROLLBAR_WIDTH, track_h, COLOR_BORDER);
@@ -183,36 +141,30 @@ static void draw_game_list(int selected_idx, int count) {
     }
 }
 
-// ============ DETAILS (right pane - narrower) ============
+// ============ DETAILS ============
 static void draw_game_details(int selected_idx) {
     if (selected_idx < 0 || selected_idx >= game_count) return;
     Game *g = &games[selected_idx];
 
-    // Panel backdrop
     int panel_y = COVER_Y - 20;
     int panel_h = LIST_BOTTOM - panel_y;
     draw_rounded_rect(RIGHT_PANE_X - 20, panel_y, RIGHT_PANE_WIDTH + 40, panel_h, 14, COLOR_PANEL);
 
-    // Cover Art
-    draw_cover_placeholder(COVER_X, COVER_Y, COVER_SIZE, COVER_SIZE);
+    // Draw cover
+    cover_draw(COVER_X, COVER_Y, COVER_SIZE, COVER_SIZE, g->id);
 
     int info_y = COVER_Y + COVER_SIZE + 30;
 
-    // Game Title (big)
     char title_buf[48];
     truncate_to_width(g->display_name, title_buf, sizeof(title_buf), RIGHT_PANE_WIDTH - 20, 3);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, title_buf, COLOR_GOLD, 3);
 
     info_y += 46;
-
-    // Disc ID
     char id_label[64];
     snprintf(id_label, sizeof(id_label), "Disc ID:  %s", g->id);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, id_label, COLOR_TEXT, 2);
 
     info_y += 34;
-
-    // Region
     if (strlen(g->id) >= 4) {
         char region_code[3];
         strncpy(region_code, g->id + 2, 2);
@@ -226,20 +178,28 @@ static void draw_game_details(int selected_idx) {
     }
 
     info_y += 34;
-
-    // Serial
-    char serial_label[64];
-    snprintf(serial_label, sizeof(serial_label), "Serial:   %s", g->id);
-    draw_text_scaled(RIGHT_PANE_X + 10, info_y, serial_label, COLOR_TEXT_DIM, 2);
+    char emu_name[64] = "Unknown";
+    if (g->emulator_name[0] != '\0') {
+        strncpy(emu_name, g->emulator_name, sizeof(emu_name) - 1);
+    }
+    char emu_label[80];
+    snprintf(emu_label, sizeof(emu_label), "Emulator: %s", emu_name);
+    draw_text_scaled(RIGHT_PANE_X + 10, info_y, emu_label, COLOR_TEXT_DIM, 2);
 
     info_y += 34;
+    char emu_id[32] = "N/A";
+    if (g->emulator_id[0] != '\0') {
+        strncpy(emu_id, g->emulator_id, sizeof(emu_id) - 1);
+    }
+    char emu_id_label[64];
+    snprintf(emu_id_label, sizeof(emu_id_label), "Emulator ID: %s", emu_id);
+    draw_text_scaled(RIGHT_PANE_X + 10, info_y, emu_id_label, COLOR_TEXT_DIM, 2);
 
-    // ISO Filename (small, at the bottom)
+    info_y += 34;
     char file_buf[80];
     truncate_to_width(g->name, file_buf, sizeof(file_buf), RIGHT_PANE_WIDTH - 20, 1);
     draw_text_scaled(RIGHT_PANE_X + 10, info_y, file_buf, COLOR_TEXT_MUTED, 1);
 
-    // Game index (e.g., "Game 5 of 44")
     info_y = panel_y + panel_h - 30;
     char index_str[32];
     snprintf(index_str, sizeof(index_str), "Game %d of %d", selected_idx + 1, game_count);
@@ -260,7 +220,6 @@ static void draw_header(int total_games) {
     int w = (int)strlen(count_str) * FONT_WIDTH * 2;
     draw_text_scaled(SAFE_X1 - w, SAFE_Y + 6, count_str, COLOR_TEXT_DIM, 2);
 
-    // Subtitle
     draw_text_scaled(SAFE_X, SAFE_Y + 48, "Select a game and press X to launch", COLOR_TEXT_DIM, 1);
 }
 
@@ -272,13 +231,16 @@ static void draw_footer(void) {
 
     int hint_y = SAFE_Y1 - 32;
     int x = SAFE_X;
-    draw_button_hint(x, hint_y, "X", "Launch", COLOR_ACCENT);          x += 190;
-    draw_button_hint(x, hint_y, "^v", "Select", COLOR_TEXT_DIM);       x += 220;
-    draw_button_hint(x, hint_y, "L2", "Fast Scroll", COLOR_TEXT_DIM);  x += 300;
+    draw_button_hint(x, hint_y, "X", "Launch", COLOR_ACCENT);
+    x += 190;
+    draw_button_hint(x, hint_y, "^v", "Select", COLOR_TEXT_DIM);
+    x += 220;
+    draw_button_hint(x, hint_y, "L2", "Fast Scroll", COLOR_TEXT_DIM);
+    x += 300;
     draw_button_hint(x, hint_y, "O", "Exit", COLOR_ERROR);
 }
 
-// ============ MAIN DRAW FUNCTION ============
+// ============ MAIN DRAW ============
 void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games) {
     memset(framebuffer[current_buf], 0, FB_SIZE);
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
