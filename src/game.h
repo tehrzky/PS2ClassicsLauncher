@@ -8,6 +8,8 @@ typedef struct {
     char name[256];
     char display_name[256];
     char id[32];
+    char emulator_name[64];
+    char emulator_id[32];
 } Game;
 
 extern Game games[256];
