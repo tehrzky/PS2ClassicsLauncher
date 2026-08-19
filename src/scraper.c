@@ -133,7 +133,7 @@ void scraper_download_cover(const char *serial) {
     mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
     mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
 
-    // Check if default cover exists
+    // Download default cover (JPG)
     snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
     if (access(cover_path, F_OK) != 0) {
         snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/default/%s.jpg", serial);
@@ -141,7 +141,7 @@ void scraper_download_cover(const char *serial) {
         download_file(url, cover_path);
     }
 
-    // Check if 3D cover exists
+    // Download 3D cover (PNG)
     snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
     if (access(cover_path, F_OK) != 0) {
         snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/3d/%s.png", serial);
