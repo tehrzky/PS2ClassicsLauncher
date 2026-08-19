@@ -189,7 +189,7 @@ void draw_footer(int x, int y, int w) {
     draw_text_scaled(x + 530, y_pos, "[O] Exit", COLOR_TEXT_SECONDARY, 2);
 }
 
-void draw_launcher_ui(int game_count) {
+void draw_launcher_ui(int game_count, int selected) {
     memset(framebuffer[current_buf], 0, FB_SIZE);
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_PRIMARY);
     
