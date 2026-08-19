@@ -89,87 +89,99 @@ int main(void) {
         return 0;
     }
 
-    OrbisPadData pad_data;
+        OrbisPadData pad_data;
     unsigned int old_buttons = 0;
+    unsigned int repeat_counter = 0;
+    unsigned int repeat_delay = 20; // initial delay before repeat starts (frames)
+    #define REPEAT_DELAY_FAST    5   // frames between repeats when held
+    #define REPEAT_DELAY_L2_FAST 2   // even faster with L2
 
     while (1) {
         if (pad >= 0) {
             scePadReadState(pad, &pad_data);
             unsigned int buttons = pad_data.buttons;
             unsigned int pressed = buttons & ~old_buttons;
+            unsigned int released = old_buttons & ~buttons;
             old_buttons = buttons;
 
-            // L2 held for fast scroll
-            int fast = (buttons & ORBIS_PAD_BUTTON_L2) != 0;
-
-            // --- Single step (press) ---
-            if (pressed & ORBIS_PAD_BUTTON_UP) {
-                selected = (selected - 1 + game_count) % game_count;
-                scroll_hold_counter = 0;
-                scroll_direction = -1;
-            } else if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-                selected = (selected + 1) % game_count;
-                scroll_hold_counter = 0;
-                scroll_direction = 1;
-            }
-
-            // --- Holding D-pad (auto-scroll) ---
-            // Only auto-scroll if we're not in the first frame after a press
-            if ((buttons & ORBIS_PAD_BUTTON_UP) && !(pressed & ORBIS_PAD_BUTTON_UP)) {
-                scroll_hold_counter++;
-                int delay = fast ? FAST_SCROLL_DELAY : SCROLL_DELAY;
-                if (scroll_hold_counter >= delay) {
-                    selected = (selected - 1 + game_count) % game_count;
-                    scroll_hold_counter = 0;
-                    scroll_direction = -1;
-                }
-            } else if ((buttons & ORBIS_PAD_BUTTON_DOWN) && !(pressed & ORBIS_PAD_BUTTON_DOWN)) {
-                scroll_hold_counter++;
-                int delay = fast ? FAST_SCROLL_DELAY : SCROLL_DELAY;
-                if (scroll_hold_counter >= delay) {
-                    selected = (selected + 1) % game_count;
-                    scroll_hold_counter = 0;
-                    scroll_direction = 1;
-                }
-            } else {
-                // Reset counter when no D-pad is held
-                if (!(buttons & ORBIS_PAD_BUTTON_UP) && !(buttons & ORBIS_PAD_BUTTON_DOWN)) {
-                    scroll_hold_counter = 0;
-                    scroll_direction = 0;
-                }
-            }
-
-            // --- X button: Launch ---
+            // --- Single press actions ---
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                 log_debug("LAUNCH: %s", games[selected].display_name);
                 char emu_tid[32] = {0};
                 if (set_active_game(games[selected].path, games[selected].id,
                                     games[selected].name, emu_tid, sizeof(emu_tid))) {
-                    // Draw launch screen
-                    draw_launcher_ui(game_count, selected);
-                    draw_text_scaled(80, 500, "LAUNCHING...", COLOR_GOLD, 3);
+                    draw_launcher_ui(game_count, selected, game_count);
+                    draw_text_scaled(SCREEN_WIDTH/2 - 80, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 3);
                     flip();
                     sceKernelSleep(1);
                     launch_emulator(emu_tid);
                 } else {
                     log_debug("set_active_game FAILED for %s", games[selected].name);
-                    draw_launcher_ui(game_count, selected);
-                    draw_text_scaled(80, 500, "CONFIG WRITE FAILED!", COLOR_ERROR, 3);
+                    draw_launcher_ui(game_count, selected, game_count);
+                    draw_text_scaled(SCREEN_WIDTH/2 - 120, SCREEN_HEIGHT/2, "CONFIG WRITE FAILED!", 0xFFFF0000, 3);
                     flip();
                     sceKernelSleep(2);
                 }
             }
-
-            // --- Circle button: Exit ---
             if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
                 log_debug("EXIT requested");
-                break;
+                return 0; // exit cleanly
+            }
+
+            // --- Immediate movement on press ---
+            if (pressed & ORBIS_PAD_BUTTON_UP) {
+                selected = (selected - 1 + game_count) % game_count;
+                repeat_counter = 0;
+                repeat_delay = 20;
+            }
+            if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+                selected = (selected + 1) % game_count;
+                repeat_counter = 0;
+                repeat_delay = 20;
+            }
+
+            // --- L2+UP/DOWN fast jump on press ---
+            if (pressed & ORBIS_PAD_BUTTON_L2) {
+                if (pressed & ORBIS_PAD_BUTTON_UP) {
+                    selected = (selected - 5 + game_count) % game_count;
+                    if (selected < 0) selected = 0;
+                }
+                if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+                    selected = (selected + 5) % game_count;
+                    if (selected >= game_count) selected = game_count - 1;
+                }
+            }
+
+            // --- Held repeat for continuous scrolling ---
+            int move = 0;
+            if (buttons & ORBIS_PAD_BUTTON_UP) move = -1;
+            else if (buttons & ORBIS_PAD_BUTTON_DOWN) move = 1;
+
+            if (move != 0) {
+                // If L2 is held, speed up
+                if (buttons & ORBIS_PAD_BUTTON_L2) {
+                    repeat_delay = REPEAT_DELAY_L2_FAST;
+                } else {
+                    repeat_delay = REPEAT_DELAY_FAST;
+                }
+                repeat_counter++;
+                if (repeat_counter >= repeat_delay) {
+                    int new_sel = selected + move;
+                    if (new_sel < 0) new_sel = 0;
+                    if (new_sel >= game_count) new_sel = game_count - 1;
+                    selected = new_sel;
+                    repeat_counter = 0;
+                }
+            } else {
+                // Reset repeat when no direction is held
+                repeat_counter = 0;
+                repeat_delay = 20;
             }
         }
 
-        draw_launcher_ui(game_count, selected);
+        draw_launcher_ui(game_count, selected, game_count);
         flip();
-        sceKernelUsleep(16666);
+        sceKernelUsleep(16666); // ~60fps
     }
 
     return 0;
