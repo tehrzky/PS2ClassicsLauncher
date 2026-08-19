@@ -1,5 +1,8 @@
 #include "scraper.h"
 #include "debug.h"
+#include <orbis/libkernel.h>
+#include <orbis/Net.h>
+#include <orbis/NetCtl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +16,19 @@
 
 // ============ HTTP HELPER ============
 static int download_file(const char *url, const char *path) {
+    // Load network modules
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET);
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NETCTL);
+    
+    // Initialize network
+    SceNetInitParam netparam;
+    static char net_memory[1024 * 1024];
+    netparam.memory = net_memory;
+    netparam.size = sizeof(net_memory);
+    netparam.flags = 0;
+    sceNetInit(&netparam);
+    sceNetCtlInit();
+
     // Create directory if it doesn't exist
     char dir_path[512];
     strncpy(dir_path, path, sizeof(dir_path));
