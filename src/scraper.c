@@ -159,3 +159,16 @@ void scraper_download_cover(const char *serial) {
         download_file(url, cover_path);
     }
 }
+
+void scraper_download_gameindex(void) {
+    char path[512];
+    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
+    if (access(path, F_OK) == 0) {
+        log_debug("GameIndex.yaml already exists");
+        return;
+    }
+    char url[512];
+    snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/tools/GameIndex.yaml");
+    log_debug("Downloading GameIndex.yaml...");
+    download_file(url, path);
+}
