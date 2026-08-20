@@ -4,15 +4,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <stdbool.h>
 #include <orbis/Http.h>
+#include <orbis/_types/http.h>
 #include <orbis/Ssl.h>
 #include <orbis/Net.h>
 #include <orbis/NetCtl.h>
 #include <orbis/Sysmodule.h>
-
-// Suppress C99 warnings if headers omit these declarations
-extern int sceNetInit(void *mem, int memSize);
-extern int sceNetCtlInit(void);
 
 static int net_initialized = 0;
 
@@ -33,19 +31,21 @@ static int ensure_net_init(void)
     return 0;
 }
 
-// Accept any cert (homebrew convenience; avoids CA store issues)
-static int ssl_callback(int a, int b, void *c)
+// Must match OrbisHttpsCallback signature exactly
+static int32_t ssl_callback(int32_t libsslCtxId, uint32_t verifyErr,
+                            void * const sslCert[], int32_t certNum, void *userArg)
 {
-    (void)a; (void)b; (void)c;
-    return 1;
+    (void)libsslCtxId; (void)verifyErr; (void)sslCert; (void)certNum; (void)userArg;
+    return 1;  // Accept any certificate
 }
 
 static int download_file(const char *url, const char *path)
 {
     int ret;
-    int httpCtx = -1, tmplId = -1, connId = -1, reqId = -1;
+    int32_t sslId = -1, httpCtx = -1;
+    int32_t tmplId = -1, connId = -1, reqId = -1;
     FILE *fp = NULL;
-    int statusCode = 0;
+    int32_t statusCode = 0;
 
     if (ensure_net_init() < 0) {
         log_debug("Network init failed");
@@ -62,20 +62,22 @@ static int download_file(const char *url, const char *path)
         mkdir(dir_path, 0777);
     }
 
-    ret = sceSslInit(1024 * 1024);
-    if (ret < 0) {
-        log_debug("sceSslInit failed: 0x%08X", ret);
+    // Init SSL + HTTP with proper 3-arg signature
+    sslId = sceSslInit(SSL_POOLSIZE);
+    if (sslId < 0) {
+        log_debug("sceSslInit failed: 0x%08X", sslId);
         return -1;
     }
 
-    httpCtx = sceHttpInit(1024 * 1024);
+    httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
     if (httpCtx < 0) {
         log_debug("sceHttpInit failed: 0x%08X", httpCtx);
         sceSslTerm();
         return -1;
     }
 
-    tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0", 1, 0);
+    tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0",
+                                   ORBIS_HTTP_VERSION_1_1, 0);
     if (tmplId < 0) {
         log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
         goto cleanup;
@@ -83,13 +85,13 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    connId = sceHttpCreateConnectionWithURL(tmplId, url, 0);
+    connId = sceHttpCreateConnectionWithURL(tmplId, url, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
         goto cleanup;
     }
 
-    reqId = sceHttpCreateRequestWithURL(connId, SCE_HTTP_METHOD_GET, url, 0);
+    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
     if (reqId < 0) {
         log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
         goto cleanup;
@@ -157,16 +159,22 @@ void scraper_download_cover(const char *serial)
     mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
     mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
 
-    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+    snprintf(cover_path, sizeof(cover_path),
+             "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
     if (access(cover_path, F_OK) != 0) {
-        snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/default/%s.jpg", serial);
+        snprintf(url, sizeof(url),
+                 "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/default/%s.jpg",
+                 serial);
         log_debug("Downloading default cover: %s", url);
         download_file(url, cover_path);
     }
 
-    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+    snprintf(cover_path, sizeof(cover_path),
+             "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
     if (access(cover_path, F_OK) != 0) {
-        snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/3d/%s.png", serial);
+        snprintf(url, sizeof(url),
+                 "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/3d/%s.png",
+                 serial);
         log_debug("Downloading 3D cover: %s", url);
         download_file(url, cover_path);
     }
@@ -181,7 +189,8 @@ void scraper_download_gameindex(void)
         return;
     }
     char url[512];
-    snprintf(url, sizeof(url), "https://raw.githubusercontent.com/xlenore/ps2-covers/main/tools/GameIndex.yaml");
+    snprintf(url, sizeof(url),
+             "https://raw.githubusercontent.com/xlenore/ps2-covers/main/tools/GameIndex.yaml");
     log_debug("Downloading GameIndex.yaml...");
     download_file(url, path);
 }
