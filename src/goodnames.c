@@ -53,37 +53,47 @@ static void load_gameindex_yaml(void) {
             linelen--;
         }
 
-        if (linelen >= 11 &&
-            isupper((unsigned char)line[0]) &&
-            isupper((unsigned char)line[1]) &&
-            isupper((unsigned char)line[2]) &&
-            isupper((unsigned char)line[3]) &&
-            line[4] == '-' &&
-            isdigit((unsigned char)line[5]) &&
-            isdigit((unsigned char)line[6]) &&
-            isdigit((unsigned char)line[7]) &&
-            isdigit((unsigned char)line[8]) &&
-            isdigit((unsigned char)line[9]) &&
-            line[10] == ':') {
-            strncpy(pending_id, line, 11);
-            pending_id[11] = '\0';
+        // ID line: XXXX-YYYYY:  (4 alphanum, dash, 5 digits, colon)
+        if (linelen >= 11 && line[4] == '-' && line[10] == ':') {
+            int valid = 1;
+            for (int i = 0; i < 4; i++) {
+                if (!isalnum((unsigned char)line[i])) { valid = 0; break; }
+            }
+            for (int i = 5; i < 10; i++) {
+                if (!isdigit((unsigned char)line[i])) { valid = 0; break; }
+            }
+            if (valid) {
+                strncpy(pending_id, line, 10);
+                pending_id[10] = '\0';
+            }
             continue;
         }
 
-        if (pending_id[0] && strncmp(line, "  name:", 7) == 0) {
-            char *start = strchr(line, '"');
-            if (start) {
-                start++;
-                char *end = strchr(start, '"');
-                if (end) {
-                    int len = end - start;
-                    if (len > 255) len = 255;
+        // Name field: flexible whitespace before "name:"
+        if (pending_id[0]) {
+            char *name_ptr = strstr(line, "name:");
+            if (name_ptr) {
+                // Ensure "name:" is its own field, not part of another word
+                if (name_ptr == line || isspace((unsigned char)*(name_ptr - 1))) {
+                    name_ptr += 5; // skip "name:"
+                    while (*name_ptr == ' ' || *name_ptr == '\t' || *name_ptr == ':')
+                        name_ptr++;
+
+                    char *start = name_ptr;
+                    if (*start == '"') start++;
+
+                    int len = (int)strlen(start);
+                    while (len > 0 && (start[len - 1] == '"' ||
+                                       isspace((unsigned char)start[len - 1]))) {
+                        len--;
+                    }
                     if (len > 0) {
+                        start[len] = '\0';
                         add_or_override_good_name(pending_id, start);
                     }
                 }
+                pending_id[0] = '\0';
             }
-            pending_id[0] = '\0';
         }
     }
     fclose(fp);
