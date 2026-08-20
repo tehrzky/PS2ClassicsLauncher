@@ -334,3 +334,54 @@ int set_active_game(const char *iso_path, const char *disc_id,
               out_emulator_tid[0] ? out_emulator_tid : EMULATOR_TID);
     return 1;
 }
+
+int config_get_game_emulator_info(const char *disc_id, const char *game_name,
+                                   char *out_emu_name, size_t name_size,
+                                   char *out_emu_id, size_t id_size) {
+    char path[700];
+    int found = find_config_by_disc_id(disc_id, path, sizeof(path));
+    if (!found) found = find_config_by_disc_id_filename(disc_id, path, sizeof(path));
+    if (!found) found = find_config_by_filename(game_name, path, sizeof(path));
+
+    out_emu_name[0] = '\0';
+    out_emu_id[0] = '\0';
+    if (!found) return 0;
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+
+    char buf[65536];
+    int n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    char *p = buf;
+    while (*p) {
+        char *line_end = p;
+        while (*line_end && *line_end != '\n') line_end++;
+        int line_len = line_end - p;
+
+        if (line_len > 11 && strncmp(p, "# Emulator:", 11) == 0) {
+            char *start = p + 11;
+            while (start < line_end && (*start == ' ' || *start == '\t')) start++;
+            int len = line_end - start;
+            if (len > 0 && (size_t)len < id_size) {
+                strncpy(out_emu_id, start, len);
+                out_emu_id[len] = '\0';
+            }
+        }
+        if (line_len > 17 && strncmp(p, "# Emulator Title:", 17) == 0) {
+            char *start = p + 17;
+            while (start < line_end && (*start == ' ' || *start == '\t')) start++;
+            int len = line_end - start;
+            if (len > 0 && (size_t)len < name_size) {
+                strncpy(out_emu_name, start, len);
+                out_emu_name[len] = '\0';
+            }
+        }
+        p = line_end;
+        if (*p == '\n') p++;
+    }
+    return 1;
+}
