@@ -1,13 +1,13 @@
 void _init(void) {}
 void _fini(void) {}
 
+#include <string.h>
+#include <unistd.h>
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 #include <orbis/Pad.h>
-#include <orbis/Sysmodule.h>
-#include <stdlib.h>
-#include <string.h>
+#include <orbis/VideoOut.h>
 
 #include "debug.h"
 #include "video.h"
@@ -18,15 +18,10 @@ void _fini(void) {}
 #include "launcher.h"
 #include "goodnames.h"
 #include "ui.h"
+#include "settings.h"
 
-// ============ CONFIG ============
 #define EMULATOR_TID "PCSX20042"
 
-// ============ SCREEN CONSTANTS ============
-#define SCREEN_WIDTH    1920
-#define SCREEN_HEIGHT   1080
-
-// ============ EMBEDDED DEFAULT CONFIG ============
 const char *embedded_default =
 "--max-disc-num=1\n"
 "--ps2-lang=system\n"
@@ -40,47 +35,37 @@ const char *embedded_default =
 "--load-feature-lua=0\n"
 "--trophy-support=0\n";
 
-// ============ BUTTON REPEAT CONSTANTS ============
-#define REPEAT_DELAY_FAST    5
-#define REPEAT_DELAY_L2_FAST 2
+#define REPEAT_DELAY_BASE 2
+#define REPEAT_DELAY_FAST 1
 
-// ============ MAIN ============
 int main(void) {
     log_debug("=== START ===");
 
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_VIDEO_OUT);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_PAD);
-    log_debug("MODULES LOADED");
 
     if (init_video() < 0) {
         log_debug("VIDEO FAIL");
         return -1;
     }
-    log_debug("VIDEO OK");
 
-    int userInitRc = sceUserServiceInitialize(NULL);
-    log_debug("USER SERVICE INIT: %d", userInitRc);
-
+    sceUserServiceInitialize(NULL);
     scePadInit();
-    log_debug("PAD INIT DONE");
 
     int userId = 1;
-    int ret = sceUserServiceGetInitialUser(&userId);
-    log_debug("GetInitialUser: %d (uid=%d)", ret, userId);
-
+    sceUserServiceGetInitialUser(&userId);
     int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
-    log_debug("PAD OPEN: %d (uid=%d)", pad, userId);
+
+    settings_load();
 
     scraper_download_gameindex();
     load_good_names();
-    log_debug("GOOD NAMES loaded");
 
     scan_games();
-    log_debug("GAMES: %d", game_count);
 
     if (game_count == 0) {
-        draw_launcher_ui(game_count, 0, 0);
+        draw_launcher_ui(0, 0, 0);
         flip();
         sceKernelSleep(5);
         return 0;
@@ -89,7 +74,10 @@ int main(void) {
     OrbisPadData pad_data;
     unsigned int old_buttons = 0;
     unsigned int repeat_counter = 0;
-    unsigned int repeat_delay = 20;
+    unsigned int repeat_delay = REPEAT_DELAY_BASE;
+
+    int ui_mode = 0;        // 0=launcher, 1=settings
+    int settings_sel = 0;
 
     while (1) {
         if (pad >= 0) {
@@ -98,80 +86,90 @@ int main(void) {
             unsigned int pressed = buttons & ~old_buttons;
             old_buttons = buttons;
 
-            // --- Single press actions ---
-            if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-                log_debug("LAUNCH: %s", games[selected].display_name);
-                char emu_tid[32] = {0};
-                if (set_active_game(games[selected].path, games[selected].id,
-                                    games[selected].name, emu_tid, sizeof(emu_tid))) {
-                    draw_launcher_ui(game_count, selected, game_count);
-                    draw_text_scaled(SCREEN_WIDTH/2 - 80, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 3);
-                    flip();
-                    sceKernelSleep(1);
-                    launch_emulator(emu_tid);
-                } else {
-                    log_debug("set_active_game FAILED for %s", games[selected].name);
-                    draw_launcher_ui(game_count, selected, game_count);
-                    draw_text_scaled(SCREEN_WIDTH/2 - 120, SCREEN_HEIGHT/2, "CONFIG WRITE FAILED!", 0xFFFF0000, 3);
-                    flip();
-                    sceKernelSleep(2);
+            if (ui_mode == 1) {
+                // ===== SETTINGS MODE =====
+                if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    settings_save();
+                    ui_mode = 0;
                 }
-            }
-            if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-                log_debug("EXIT requested");
-                return 0;
-            }
-
-            // --- Immediate movement on press ---
-            if (pressed & ORBIS_PAD_BUTTON_UP) {
-                selected = (selected - 1 + game_count) % game_count;
-                repeat_counter = 0;
-                repeat_delay = 20;
-            }
-            if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-                selected = (selected + 1) % game_count;
-                repeat_counter = 0;
-                repeat_delay = 20;
-            }
-
-            // --- L2+UP/DOWN fast jump on press ---
-            if (pressed & ORBIS_PAD_BUTTON_L2) {
                 if (pressed & ORBIS_PAD_BUTTON_UP) {
-                    selected = (selected - 5 + game_count) % game_count;
-                    if (selected < 0) selected = 0;
+                    settings_sel = (settings_sel - 1 + SETTINGS_ITEMS) % SETTINGS_ITEMS;
                 }
                 if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-                    selected = (selected + 5) % game_count;
-                    if (selected >= game_count) selected = game_count - 1;
+                    settings_sel = (settings_sel + 1) % SETTINGS_ITEMS;
                 }
-            }
-
-            // --- Held repeat for continuous scrolling ---
-            int move = 0;
-            if (buttons & ORBIS_PAD_BUTTON_UP) move = -1;
-            else if (buttons & ORBIS_PAD_BUTTON_DOWN) move = 1;
-
-            if (move != 0) {
-                if (buttons & ORBIS_PAD_BUTTON_L2) {
-                    repeat_delay = REPEAT_DELAY_L2_FAST;
-                } else {
-                    repeat_delay = REPEAT_DELAY_FAST;
+                if (pressed & ORBIS_PAD_BUTTON_LEFT || pressed & ORBIS_PAD_BUTTON_RIGHT) {
+                    if (settings_sel == 0) g_settings.auto_download_covers ^= 1;
+                    if (settings_sel == 1) g_settings.auto_download_gameindex ^= 1;
+                    if (settings_sel == 2) g_settings.cover_type ^= 1;
                 }
-                repeat_counter++;
-                if (repeat_counter >= repeat_delay) {
-                    int new_sel = selected + move;
-                    if (new_sel < 0) new_sel = 0;
-                    if (new_sel >= game_count) new_sel = game_count - 1;
-                    selected = new_sel;
-                    repeat_counter = 0;
+                if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                    if (settings_sel == 4) scraper_force_download_gameindex();
+                    if (settings_sel == 5) {
+                        for (int i = 0; i < game_count; i++) {
+                            scraper_force_download_cover(games[i].id);
+                        }
+                    }
                 }
             } else {
-                repeat_counter = 0;
-                repeat_delay = 20;
+                // ===== LAUNCHER MODE =====
+                if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                    char emu_tid[32] = {0};
+                    if (set_active_game(games[selected].path, games[selected].id,
+                                        games[selected].name, emu_tid, sizeof(emu_tid))) {
+                        draw_launcher_ui(game_count, selected, game_count);
+                        draw_text_scaled(SCREEN_WIDTH/2 - 80, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 3);
+                        flip();
+                        sceKernelSleep(1);
+                        launch_emulator(emu_tid);
+                    }
+                }
+                if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    return 0;
+                }
+                if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
+                    ui_mode = 1;
+                    settings_sel = 0;
+                }
+
+                // Single press movement
+                if (pressed & ORBIS_PAD_BUTTON_UP) {
+                    selected = (selected - 1 + game_count) % game_count;
+                    repeat_counter = 0;
+                }
+                if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+                    selected = (selected + 1) % game_count;
+                    repeat_counter = 0;
+                }
+
+                // Held repeat scrolling
+                int move = 0;
+                if (buttons & ORBIS_PAD_BUTTON_UP) move = -1;
+                else if (buttons & ORBIS_PAD_BUTTON_DOWN) move = 1;
+
+                if (move != 0) {
+                    int step = (buttons & ORBIS_PAD_BUTTON_L2) ? 5 : 1;
+                    repeat_delay = (buttons & ORBIS_PAD_BUTTON_L2) ? REPEAT_DELAY_FAST : REPEAT_DELAY_BASE;
+                    repeat_counter++;
+                    if (repeat_counter >= repeat_delay) {
+                        int new_sel = selected + move * step;
+                        if (new_sel < 0) new_sel = 0;
+                        if (new_sel >= game_count) new_sel = game_count - 1;
+                        selected = new_sel;
+                        repeat_counter = 0;
+                    }
+                } else {
+                    repeat_counter = 0;
+                }
             }
         }
 
-        draw_launcher_ui(game_count, selected, game_count);
+        if (ui_mode == 1) {
+            draw_launcher_ui(game_count, selected, game_count);
+            draw_settings_ui(settings_sel, 0);
+        } else {
+            draw_launcher_ui(game_count, selected, game_count);
+        }
         flip();
         sceKernelUsleep(16666);
     }
