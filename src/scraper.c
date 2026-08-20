@@ -1,4 +1,5 @@
 #include "scraper.h"
+#include "settings.h"
 #include "debug.h"
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +20,7 @@ static int net_initialized = 0;
 
 static int ensure_net_init(void)
 {
-    if (net_initialized)
-        return 0;
+    if (net_initialized) return 0;
 
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NETCTL);
@@ -28,16 +28,10 @@ static int ensure_net_init(void)
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SSL);
 
     int ret = sceNetInit(NULL, 1024 * 1024);
-    if (ret < 0) {
-        log_debug("sceNetInit failed: 0x%08X", ret);
-        return -1;
-    }
+    if (ret < 0) { log_debug("sceNetInit failed: 0x%08X", ret); return -1; }
 
     ret = sceNetCtlInit();
-    if (ret < 0) {
-        log_debug("sceNetCtlInit failed: 0x%08X", ret);
-        return -1;
-    }
+    if (ret < 0) { log_debug("sceNetCtlInit failed: 0x%08X", ret); return -1; }
 
     net_initialized = 1;
     log_debug("Network stack initialized");
@@ -118,13 +112,13 @@ static int download_file(const char *url, const char *path)
     char res_path[512] = {0};
     int port = 443;
 
-    if (parse_url(url, scheme, sizeof(scheme), host, sizeof(host), res_path, sizeof(res_path), &port) < 0) {
+    if (parse_url(url, scheme, sizeof(scheme), host, sizeof(host),
+                  res_path, sizeof(res_path), &port) < 0) {
         log_debug("Failed to parse URL: %s", url);
         return -1;
     }
     log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
 
-    // Bypass sceHttp's broken resolver: resolve manually with gethostbyname (proven working)
     struct hostent *server = gethostbyname(host);
     if (!server) {
         log_debug("gethostbyname failed for: %s", host);
@@ -162,7 +156,6 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // Connect by resolved IP — bypasses sceHttp DNS entirely
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
@@ -177,11 +170,8 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
-    // Force correct Host header (required for GitHub CDN / HTTPS virtual hosting)
     ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
-    }
+    if (ret < 0) log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
@@ -234,12 +224,41 @@ cleanup:
     return -1;
 }
 
+static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d)
+{
+    const char *base = g_settings.scraper_base_url;
+    if (is_3d) {
+        snprintf(out, out_len, "%s/covers/3d/%s.png", base, serial);
+    } else {
+        snprintf(out, out_len, "%s/covers/default/%s.jpg", base, serial);
+    }
+}
+
+static void build_gameindex_url(char *out, size_t out_len)
+{
+    snprintf(out, out_len, "%s/tools/GameIndex.yaml", g_settings.scraper_base_url);
+}
+
+static void mark_no_cover(const char *serial)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    FILE *fp = fopen(path, "w");
+    if (fp) fclose(fp);
+}
+
+static int has_no_cover_marker(const char *serial)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    return access(path, F_OK) == 0;
+}
+
 void scraper_download_cover(const char *serial)
 {
-    if (!serial || strlen(serial) == 0) {
-        log_debug("No serial provided for cover download");
-        return;
-    }
+    if (!serial || strlen(serial) == 0) return;
+    if (!g_settings.auto_download_covers) return;
+    if (has_no_cover_marker(serial)) return;
 
     char cover_path[512];
     char url[512];
@@ -248,29 +267,55 @@ void scraper_download_cover(const char *serial)
     mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
     mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
 
-    snprintf(cover_path, sizeof(cover_path),
-             "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
-    if (access(cover_path, F_OK) != 0) {
-        snprintf(url, sizeof(url),
-                 "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/default/%s.jpg",
-                 serial);
-        log_debug("Downloading default cover: %s", url);
-        download_file(url, cover_path);
-    }
+    int preferred_3d = g_settings.cover_type == 1;
 
-    snprintf(cover_path, sizeof(cover_path),
-             "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
-    if (access(cover_path, F_OK) != 0) {
-        snprintf(url, sizeof(url),
-                 "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/3d/%s.png",
-                 serial);
-        log_debug("Downloading 3D cover: %s", url);
-        download_file(url, cover_path);
+    if (preferred_3d) {
+        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+        if (access(cover_path, F_OK) != 0) {
+            build_cover_url(url, sizeof(url), serial, 1);
+            log_debug("Downloading 3D cover: %s", url);
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
+    } else {
+        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+        if (access(cover_path, F_OK) != 0) {
+            build_cover_url(url, sizeof(url), serial, 0);
+            log_debug("Downloading default cover: %s", url);
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
     }
+}
+
+void scraper_force_download_cover(const char *serial)
+{
+    if (!serial || strlen(serial) == 0) return;
+
+    char path[512];
+    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    unlink(path);
+
+    char cover_path[512];
+    char url[512];
+
+    mkdir("/data/PS4ROMS/PS2ISO/covers", 0777);
+    mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
+    mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
+
+    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+    build_cover_url(url, sizeof(url), serial, 0);
+    log_debug("Force downloading default cover: %s", url);
+    download_file(url, cover_path);
+
+    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+    build_cover_url(url, sizeof(url), serial, 1);
+    log_debug("Force downloading 3D cover: %s", url);
+    download_file(url, cover_path);
 }
 
 void scraper_download_gameindex(void)
 {
+    if (!g_settings.auto_download_gameindex) return;
+
     char path[512];
     snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
     if (access(path, F_OK) == 0) {
@@ -278,8 +323,17 @@ void scraper_download_gameindex(void)
         return;
     }
     char url[512];
-    snprintf(url, sizeof(url),
-             "https://raw.githubusercontent.com/xlenore/ps2-covers/main/tools/GameIndex.yaml");
+    build_gameindex_url(url, sizeof(url));
     log_debug("Downloading GameIndex.yaml...");
+    download_file(url, path);
+}
+
+void scraper_force_download_gameindex(void)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
+    char url[512];
+    build_gameindex_url(url, sizeof(url));
+    log_debug("Force downloading GameIndex.yaml...");
     download_file(url, path);
 }
