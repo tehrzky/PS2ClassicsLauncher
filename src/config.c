@@ -51,8 +51,10 @@ static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t ou
         snprintf(search, sizeof(search), "#  Disc ID:     %s", disc_id);
         char search2[64];
         snprintf(search2, sizeof(search2), "# Disc ID: %s", disc_id);
+        char search3[64];
+        snprintf(search3, sizeof(search3), "--ps2-title-id=%s", disc_id);
 
-        if (strstr(buf, search) != NULL || strstr(buf, search2) != NULL) {
+        if (strstr(buf, search) != NULL || strstr(buf, search2) != NULL || strstr(buf, search3) != NULL) {
             if (st.st_mtime > best_mtime) {
                 strncpy(best_path, path, sizeof(best_path) - 1);
                 best_path[sizeof(best_path) - 1] = '\0';
@@ -69,6 +71,62 @@ static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t ou
     }
     return 0;
 }
+
+static int find_config_by_disc_id_filename(const char *disc_id, char *out_path, size_t out_size) {
+    if (!disc_id || disc_id[0] == '\0' || strcasecmp(disc_id, "UNKNOWN") == 0)
+        return 0;
+
+    DIR *dir = opendir(GAMECONFIG_DIR);
+    if (!dir) return 0;
+
+    struct dirent *entry;
+    char best_path[700] = {0};
+    time_t best_mtime = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        int len = strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
+
+        char basename[256];
+        int base_len = len - 4;
+        if (base_len >= (int)sizeof(basename)) base_len = sizeof(basename) - 1;
+        strncpy(basename, entry->d_name, base_len);
+        basename[base_len] = '\0';
+
+        int match = 0;
+        if (strcasecmp(basename, disc_id) == 0) match = 1;
+        else {
+            int dlen = strlen(disc_id);
+            int blen = strlen(basename);
+            for (int i = 0; i <= blen - dlen; i++) {
+                if (strncasecmp(basename + i, disc_id, dlen) == 0) { match = 1; break; }
+            }
+        }
+
+        if (match) {
+            char path[700];
+            snprintf(path, sizeof(path), "%s%s", GAMECONFIG_DIR, entry->d_name);
+            struct stat st;
+            if (stat(path, &st) == 0) {
+                if (st.st_mtime > best_mtime) {
+                    strncpy(best_path, path, sizeof(best_path) - 1);
+                    best_mtime = st.st_mtime;
+                }
+            }
+        }
+    }
+    closedir(dir);
+
+    if (best_path[0]) {
+        strncpy(out_path, best_path, out_size - 1);
+        out_path[out_size - 1] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+
 
 static int find_config_by_filename(const char *game_name, char *out_path, size_t out_size) {
     DIR *dir = opendir(GAMECONFIG_DIR);
@@ -103,8 +161,10 @@ int set_active_game(const char *iso_path, const char *disc_id,
     mkdir(GAMECONFIG_DIR, 0777);
 
     char game_config_path[700];
-    int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
-
+        int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
+    if (!found) {
+        found = find_config_by_disc_id_filename(disc_id, game_config_path, sizeof(game_config_path));
+    }
     if (!found) {
         found = find_config_by_filename(game_name, game_config_path, sizeof(game_config_path));
     }
@@ -150,6 +210,9 @@ int set_active_game(const char *iso_path, const char *disc_id,
             write(gfd, default_buf, dlen);
 
             n = snprintf(line_buf, sizeof(line_buf), "--ps2-title-id=%s\n", disc_id);
+            write(gfd, line_buf, n);
+
+            n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
             write(gfd, line_buf, n);
 
             close(gfd);
