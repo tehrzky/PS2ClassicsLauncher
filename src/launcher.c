@@ -3,14 +3,15 @@
 #include "config.h"
 #include "syscalls.h"
 
-#include <orbis/UserService.h>
+#include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
+#include <orbis/UserService.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
 
-/* OpenOrbis does not ship orbis/Lnc.h, so we define LncAppParam here.
-   Layout matches the real PS4 struct (crash_report is uint64_t). */
+/* OpenOrbis doesn't ship orbis/Lnc.h, so we define the struct locally.
+   Layout must match the real PS4 struct exactly (crash_report is u64). */
 typedef struct LncAppParam {
     uint32_t size;
     uint32_t user_id;
@@ -43,9 +44,9 @@ int launch_emulator(const char *override_tid) {
     param.LaunchAppCheck_flag = LaunchApp_SkipSystemUpdate;
 
     log_debug("sizeof(LncAppParam) = %zu", sizeof(LncAppParam));
-    log_debug("Calling sceSystemServiceLaunchApp...");
-    sceSystemServiceLaunchApp(tid, NULL, &param);
-    log_debug("sceSystemServiceLaunchApp called");
+    log_debug("Calling sceLncUtilLaunchApp...");
+    ret = sceLncUtilLaunchApp(tid, NULL, &param);
+    log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
 
-    return 0;
+    return ret;
 }
