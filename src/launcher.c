@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 /* OpenOrbis does not ship orbis/Lnc.h, so we define LncAppParam here.
-   Layout matches the real PS4 struct (crash_report is uint64_t). */
+   Layout: size(4) + user_id(4) + app_opt(4) + pad(4) + crash_report(8) + flag(4) + pad(4) = 32 */
 typedef struct LncAppParam {
     uint32_t size;
     uint32_t user_id;
@@ -30,10 +30,18 @@ int launch_emulator(const char *override_tid) {
 
     int userId = 0;
     int ret = sceUserServiceGetForegroundUser(&userId);
-    if (ret < 0) {
-        sceUserServiceGetInitialUser(&userId);
+    log_debug("sceUserServiceGetForegroundUser ret=%d userId=%d", ret, userId);
+
+    if (ret < 0 || userId <= 0) {
+        ret = sceUserServiceGetInitialUser(&userId);
+        log_debug("sceUserServiceGetInitialUser ret=%d userId=%d", ret, userId);
     }
-    log_debug("User ID: %d", userId);
+
+    /* Sanity fallback: most PS4s have user 1 as the primary account */
+    if (userId <= 0) {
+        userId = 1;
+        log_debug("Falling back to default User ID: %d", userId);
+    }
 
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
@@ -46,7 +54,10 @@ int launch_emulator(const char *override_tid) {
     log_debug("sizeof(LncAppParam) = %zu", sizeof(LncAppParam));
     log_debug("Calling sceSystemServiceLaunchApp...");
     sceSystemServiceLaunchApp(tid, NULL, &param);
-    log_debug("sceSystemServiceLaunchApp called");
+    /* If we get here, the launch did NOT happen (PS4 would suspend us first).
+       Wait a bit so the log flushes before we return. */
+    sceKernelSleep(2);
+    log_debug("sceSystemServiceLaunchApp returned — launch likely failed");
 
-    return 0;
+    return -1;
 }
