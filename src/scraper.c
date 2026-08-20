@@ -28,6 +28,7 @@ static int ensure_net_init(void)
     sceNetCtlInit();
 
     net_initialized = 1;
+    log_debug("Network stack initialized");
     return 0;
 }
 
@@ -36,7 +37,7 @@ static int32_t ssl_callback(int32_t libsslCtxId, uint32_t verifyErr,
                             void * const sslCert[], int32_t certNum, void *userArg)
 {
     (void)libsslCtxId; (void)verifyErr; (void)sslCert; (void)certNum; (void)userArg;
-    return 1;  // Accept any certificate
+    return 1;
 }
 
 static int download_file(const char *url, const char *path)
@@ -47,8 +48,10 @@ static int download_file(const char *url, const char *path)
     FILE *fp = NULL;
     int32_t statusCode = 0;
 
+    log_debug("download_file: %s -> %s", url, path);
+
     if (ensure_net_init() < 0) {
-        log_debug("Network init failed");
+        log_debug("ensure_net_init failed");
         return -1;
     }
 
@@ -62,12 +65,12 @@ static int download_file(const char *url, const char *path)
         mkdir(dir_path, 0777);
     }
 
-    // Init SSL + HTTP with proper 3-arg signature
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
         log_debug("sceSslInit failed: 0x%08X", sslId);
         return -1;
     }
+    log_debug("sceSslInit ok: %d", sslId);
 
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
     if (httpCtx < 0) {
@@ -75,6 +78,7 @@ static int download_file(const char *url, const char *path)
         sceSslTerm();
         return -1;
     }
+    log_debug("sceHttpInit ok: %d", httpCtx);
 
     tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0",
                                    ORBIS_HTTP_VERSION_1_1, 0);
@@ -82,35 +86,41 @@ static int download_file(const char *url, const char *path)
         log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
-    sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
+    ret = sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
+    log_debug("sceHttpsSetSslCallback returned: 0x%08X", ret);
 
     connId = sceHttpCreateConnectionWithURL(tmplId, url, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateConnectionWithURL ok: %d", connId);
 
     reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
     if (reqId < 0) {
         log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
         log_debug("sceHttpSendRequest failed: 0x%08X", ret);
         goto cleanup;
     }
+    log_debug("sceHttpSendRequest ok");
 
     ret = sceHttpGetStatusCode(reqId, &statusCode);
     if (ret < 0) {
         log_debug("sceHttpGetStatusCode failed: 0x%08X", ret);
         goto cleanup;
     }
+    log_debug("HTTP status code: %d", statusCode);
 
     if (statusCode != 200) {
-        log_debug("HTTP error: %d", statusCode);
+        log_debug("HTTP error: status=%d", statusCode);
         goto cleanup;
     }
 
@@ -121,12 +131,13 @@ static int download_file(const char *url, const char *path)
     }
 
     char buf[4096];
+    size_t total = 0;
     while ((ret = sceHttpReadData(reqId, buf, sizeof(buf))) > 0) {
         fwrite(buf, 1, ret, fp);
+        total += ret;
     }
-
-    log_debug("Downloaded: %s", path);
     fclose(fp);
+    log_debug("Downloaded %zu bytes: %s", total, path);
 
     sceHttpDeleteRequest(reqId);
     sceHttpDeleteConnection(connId);
