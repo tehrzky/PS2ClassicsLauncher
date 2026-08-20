@@ -33,8 +33,8 @@ typedef struct {
 #define IS_ERROR(ret) ((unsigned int)ret & 0x80000000)
 
 // ============ FORWARD DECLARATIONS ============
-extern int sceUserServiceGetForegroundUser(uint32_t *userId);
-extern int sceKernelLoadStartModule(const char *path, size_t args, const void *argp, unsigned int flags, const void *opts, int *res);
+extern int sceUserServiceGetForegroundUser(int *userId);
+extern size_t sceKernelLoadStartModule(const char *path, size_t args, const void *argp, unsigned int flags, const void *opts, int *res);
 extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], LncAppParam *param);
 extern int sceLncUtilInitialize(void);
 
