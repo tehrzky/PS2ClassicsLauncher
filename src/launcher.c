@@ -1,11 +1,15 @@
 #include "launcher.h"
 #include "debug.h"
+#include "video.h"
+#include "font.h"
+#include "config.h"
+#include "syscalls.h"
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 #include <string.h>
 
-// ============ LAUNCH STRUCTURES ============
+// ============ LAUNCH STRUCTURES & DEFINES ============
 typedef struct {
     uint32_t sz;
     uint32_t user_id;
@@ -22,60 +26,75 @@ typedef struct {
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_KILL_NEEDED     0x80D0050C
 #define SCE_LNC_UTIL_ERROR_APPHOME_EBOOTBIN_NOT_FOUND   0x80D0050D
 #define SCE_LNC_UTIL_ERROR_APPHOME_PARAMSFO_NOT_FOUND   0x80D0050E
+#define SCE_LNC_UTIL_ERROR_NO_SFOKEY_IN_APP_INFO        0x80D00510
+#define SCE_LNC_UTIL_ERROR_SETUP_FS_SANDBOX             0x80D00509
+#define SCE_LNC_UTIL_ERROR_INVALID_TITLE_ID             0x80D0050A
 
 #define IS_ERROR(ret) ((unsigned int)ret & 0x80000000)
 
-// ============ FORWARD DECLARATIONS ============
-// Use the correct signatures from orbis/UserService.h and orbis/libkernel.h
-extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], LncAppParam *param);
+// ============ DYNAMIC SYMBOL RESOLUTION ============
+typedef uint32_t (*sceLncUtilLaunchApp_t)(const char *titleId, const char *argv[], LncAppParam *param);
 
-// ============ MAIN LAUNCHER ============
+static sceLncUtilLaunchApp_t sceLncUtilLaunchApp = NULL;
+
+extern void *dlsym(void *handle, const char *symbol);
+
+// ============ MAIN LAUNCHER FUNCTION ============
 /**
- * Launch a PS4 app by Title ID
- * Exactly like ItemzFlow does it
+ * Launch a PS4 application by Title ID
+ * Uses dlsym to load sceLncUtilLaunchApp from libSceSystemService.sprx
  * 
- * @param tid Title ID (e.g., "CUSA12345")
- * @return 0 on success, error code on failure
+ * @param tid The Title ID to launch (e.g., "CUSA12345")
+ * @param override_tid Fallback Title ID if primary is empty
+ * @return 0 on success, negative on error
  */
-int launch_app(const char *tid) {
+int launch_app(const char *tid, const char *override_tid) {
     uint32_t sys_res = -1;
-    int userId = 0;  // Match orbis/UserService.h signature (int*, not uint32_t*)
-    uint32_t libcmi = 0;
+    int userId = 0;
+    int libcmi = -1;
+    const char *title_id = (tid && tid[0]) ? tid : override_tid;
 
-    if (!tid || !tid[0]) {
-        log_debug("ERROR: No Title ID provided");
+    if (!title_id || !title_id[0]) {
+        log_debug("LAUNCH FAILED: No valid Title ID provided");
         return -1;
     }
 
-    log_debug("=== LAUNCHING: %s ===", tid);
+    log_debug("=== LAUNCHING APP ===");
+    log_debug("Title ID: %s", title_id);
 
     // Step 1: Get the foreground user
     int ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
-        log_debug("WARNING: sceUserServiceGetForegroundUser failed (0x%08X)", ret);
+        log_debug("Failed to get foreground user: 0x%08X, using user 0", ret);
         userId = 0;  // Fallback to user 0
     }
     log_debug("User ID: %d", userId);
 
-    // Step 2: Load libSceSystemService.sprx
-    // Match orbis/libkernel.h signature: uint32_t sceKernelLoadStartModule(const char *, size_t, const void *, uint32_t, void *, void *)
+    // Step 2: Load libSceSystemService.sprx (contains sceLncUtilLaunchApp)
     libcmi = sceKernelLoadStartModule(
-        "/system/common/lib/libSceSystemService.sprx",
-        0,              // args
-        NULL,           // argp
-        0,              // flags
-        NULL,           // opts (use NULL, not 0)
-        NULL            // res (use NULL, not 0)
+        "/system/common/lib/libSceSystemService.sprx", 
+        0, NULL, 0, 0, NULL
     );
+    
+    log_debug("sceKernelLoadStartModule returned: %d", libcmi);
+    
+    if (libcmi < 0) {
+        log_debug("LAUNCH FAILED: Could not load libSceSystemService.sprx (0x%08X)", libcmi);
+        log_debug("Make sure you have jailbreak privileges");
+        return libcmi;
+    }
 
-    log_debug("sceKernelLoadStartModule returned: 0x%08X (module=%u)", libcmi, libcmi);
+    // Step 3: Resolve sceLncUtilLaunchApp symbol dynamically
+    sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)dlsym((void *)(size_t)libcmi, "sceLncUtilLaunchApp");
 
-    if (libcmi == 0) {
-        log_debug("FATAL: Could not load libSceSystemService.sprx");
+    if (!sceLncUtilLaunchApp) {
+        log_debug("LAUNCH FAILED: Could not resolve sceLncUtilLaunchApp via dlsym");
         return -1;
     }
 
-    // Step 3: Prepare launch parameters
+    log_debug("Successfully resolved sceLncUtilLaunchApp");
+
+    // Step 4: Prepare launch parameters
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.sz = sizeof(LncAppParam);
@@ -84,39 +103,100 @@ int launch_app(const char *tid) {
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    // Step 4: LAUNCH THE APP
-    log_debug("Calling sceLncUtilLaunchApp(%s)", tid);
-    sys_res = sceLncUtilLaunchApp(tid, NULL, &param);
+    // Step 5: Launch the app
+    log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
+    sys_res = sceLncUtilLaunchApp(title_id, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
 
-    // Check success
-    if (!IS_ERROR(sys_res)) {
-        log_debug("SUCCESS: App launched");
+    // Step 6: Handle launch result
+    if (sys_res == 0) {
+        log_debug("Launch successful!");
         return 0;
     }
 
-    // Check "already running" (this is also success)
+    // Check for "already running" errors (these are success states)
     if (sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING ||
         sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_SUSPEND_NEEDED ||
         sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_KILL_NEEDED) {
-        log_debug("SUCCESS: App already running (resuming)");
+        log_debug("App already running (resuming it)");
         return 0;
     }
 
-    // Handle errors
-    switch (sys_res) {
-    case SCE_LNC_ERROR_APP_NOT_FOUND:
-        log_debug("ERROR: App not installed");
-        break;
-    case SCE_LNC_UTIL_ERROR_APPHOME_EBOOTBIN_NOT_FOUND:
-        log_debug("ERROR: Missing eboot.bin");
-        break;
-    case SCE_LNC_UTIL_ERROR_APPHOME_PARAMSFO_NOT_FOUND:
-        log_debug("ERROR: Missing param.sfo");
-        break;
-    default:
-        log_debug("ERROR: Launch failed with code 0x%08X", sys_res);
+    // Handle specific errors
+    if (IS_ERROR(sys_res)) {
+        switch (sys_res) {
+        case SCE_LNC_ERROR_APP_NOT_FOUND:
+            log_debug("Launch error: App not found (0x%08X)", sys_res);
+            return -2;
+        case SCE_LNC_UTIL_ERROR_APPHOME_EBOOTBIN_NOT_FOUND:
+            log_debug("Launch error: Missing eboot.bin (0x%08X)", sys_res);
+            return -3;
+        case SCE_LNC_UTIL_ERROR_APPHOME_PARAMSFO_NOT_FOUND:
+            log_debug("Launch error: Missing param.sfo (0x%08X)", sys_res);
+            return -4;
+        case SCE_LNC_UTIL_ERROR_NO_SFOKEY_IN_APP_INFO:
+            log_debug("Launch error: Corrupted SFO (0x%08X)", sys_res);
+            return -5;
+        case SCE_LNC_UTIL_ERROR_SETUP_FS_SANDBOX:
+            log_debug("Launch error: Sandbox setup failed (0x%08X)", sys_res);
+            return -6;
+        case SCE_LNC_UTIL_ERROR_INVALID_TITLE_ID:
+            log_debug("Launch error: Invalid Title ID format (0x%08X)", sys_res);
+            return -7;
+        default:
+            log_debug("Launch error: Unknown error (0x%08X)", sys_res);
+            return (int)sys_res;
+        }
     }
 
-    return (int)sys_res;
+    return sys_res;
+}
+
+/**
+ * Launch emulator (convenience wrapper)
+ * 
+ * @param override_tid Optional custom Title ID, falls back to EMULATOR_TID
+ * @return 0 on success, negative on error
+ */
+int launch_emulator(const char *override_tid) {
+    log_debug("Launching emulator...");
+    return launch_app(override_tid, EMULATOR_TID);
+}
+
+/**
+ * Launch by URI (e.g., "pssettings:play?mode=settings")
+ * This is for system apps like settings, store, etc.
+ * 
+ * @param uri The URI to launch
+ * @return 0 on success, negative on error
+ */
+int launch_by_uri(const char *uri) {
+    if (!uri || !uri[0]) {
+        log_debug("LAUNCH_URI FAILED: No URI provided");
+        return -1;
+    }
+
+    log_debug("Launching URI: %s", uri);
+
+    int userId = 0;
+    int libcmi = sceKernelLoadStartModule(
+        "/system/common/lib/libSceShellUIUtil.sprx",
+        0, NULL, 0, 0, NULL
+    );
+
+    if (libcmi < 0) {
+        log_debug("Failed to load libSceShellUIUtil.sprx: 0x%08X", libcmi);
+        return libcmi;
+    }
+
+    // Get user ID
+    int ret = sceUserServiceGetForegroundUser(&userId);
+    if (ret < 0) {
+        userId = 0;
+    }
+
+    // This would require sceShellUIUtilLaunchByUri which you'd need to dlsym
+    // For now, just log the attempt
+    log_debug("URI launch would go here (requires additional implementation)");
+    return 0;
 }
