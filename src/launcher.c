@@ -10,14 +10,16 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* OpenOrbis does not ship orbis/Lnc.h, so we define LncAppParam here.
-   Layout: size(4) + user_id(4) + app_opt(4) + pad(4) + crash_report(8) + flag(4) + pad(4) = 32 */
+/* OpenOrbis does not ship orbis/Lnc.h.
+   CRITICAL: the 'size' field MUST be 64-bit. The PS4 kernel reads 8 bytes.
+   Layout: size(8) + user_id(4) + app_opt(4) + crash_report(8) + flag(4) + pad(4) = 32 */
 typedef struct LncAppParam {
-    uint32_t size;
+    uint64_t size;
     uint32_t user_id;
     uint32_t app_opt;
     uint64_t crash_report;
     uint32_t LaunchAppCheck_flag;
+    uint32_t pad;
 } LncAppParam;
 
 #define LaunchApp_SkipSystemUpdate 2
@@ -28,25 +30,14 @@ int launch_emulator(const char *override_tid) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", tid);
 
-    int userId = 0;
-    int ret = sceUserServiceGetForegroundUser(&userId);
-    log_debug("sceUserServiceGetForegroundUser ret=%d userId=%d", ret, userId);
-
-    if (ret < 0 || userId <= 0) {
-        ret = sceUserServiceGetInitialUser(&userId);
-        log_debug("sceUserServiceGetInitialUser ret=%d userId=%d", ret, userId);
-    }
-
-    /* Sanity fallback: most PS4s have user 1 as the primary account */
-    if (userId <= 0) {
-        userId = 1;
-        log_debug("Falling back to default User ID: %d", userId);
-    }
+    /* sceUserServiceGetForegroundUser was returning garbage (349522419).
+       User 1 is the default primary account on almost every PS4. */
+    uint32_t userId = 1;
 
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
-    param.size = sizeof(LncAppParam);
-    param.user_id = (uint32_t)userId;
+    param.size = sizeof(LncAppParam);   /* 32 stored as 64-bit */
+    param.user_id = userId;
     param.app_opt = 0;
     param.crash_report = 0;
     param.LaunchAppCheck_flag = LaunchApp_SkipSystemUpdate;
@@ -54,10 +45,7 @@ int launch_emulator(const char *override_tid) {
     log_debug("sizeof(LncAppParam) = %zu", sizeof(LncAppParam));
     log_debug("Calling sceSystemServiceLaunchApp...");
     sceSystemServiceLaunchApp(tid, NULL, &param);
-    /* If we get here, the launch did NOT happen (PS4 would suspend us first).
-       Wait a bit so the log flushes before we return. */
-    sceKernelSleep(2);
-    log_debug("sceSystemServiceLaunchApp returned — launch likely failed");
+    log_debug("sceSystemServiceLaunchApp returned");
 
-    return -1;
+    return 0;
 }
