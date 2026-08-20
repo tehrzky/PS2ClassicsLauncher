@@ -13,6 +13,7 @@ void _fini(void) {}
 #include "video.h"
 #include "font.h"
 #include "game.h"
+#include "scraper.h"
 #include "config.h"
 #include "launcher.h"
 #include "goodnames.h"
