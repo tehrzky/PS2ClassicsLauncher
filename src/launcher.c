@@ -32,9 +32,14 @@ typedef struct {
 
 #define IS_ERROR(ret) ((unsigned int)ret & 0x80000000)
 
-// ============ FORWARD DECLARATIONS ============
-extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], LncAppParam *param);
-extern int sceLncUtilInitialize(void);
+// ============ DYNAMIC SYMBOL RESOLUTION ============
+typedef uint32_t (*sceLncUtilLaunchApp_t)(const char *titleId, const char *argv[], LncAppParam *param);
+typedef int (*sceLncUtilInitialize_t)(void);
+
+static sceLncUtilLaunchApp_t sceLncUtilLaunchApp = NULL;
+static sceLncUtilInitialize_t sceLncUtilInitialize = NULL;
+
+extern void *dlsym(void *handle, const char *symbol);
 
 // ============ MAIN LAUNCHER FUNCTION ============
 /**
@@ -46,8 +51,8 @@ extern int sceLncUtilInitialize(void);
  * @return 0 on success, negative on error
  */
 int launch_app(const char *tid, const char *override_tid) {
-    uint32_t sys_res = -1;
-    uint32_t userId = -1;
+       uint32_t sys_res = -1;
+    int userId = -1;
     int libcmi = -1;
     const char *title_id = (tid && tid[0]) ? tid : override_tid;
 
@@ -65,7 +70,7 @@ int launch_app(const char *tid, const char *override_tid) {
         log_debug("Failed to get foreground user: 0x%08X, using user 0", ret);
         userId = 0;  // Fallback to user 0
     }
-    log_debug("User ID: %u", userId);
+    log_debug("User ID: %d", userId);
 
     // Step 2: Load libSceSystemService.sprx (contains sceLncUtilLaunchApp)
     // This is the ONLY way on real firmware - no alternatives needed
@@ -76,10 +81,19 @@ int launch_app(const char *tid, const char *override_tid) {
     
     log_debug("sceKernelLoadStartModule returned: %d", libcmi);
     
-    if (libcmi < 0) {
+        if (libcmi < 0) {
         log_debug("LAUNCH FAILED: Could not load libSceSystemService.sprx (0x%08X)", libcmi);
         log_debug("Make sure you have jailbreak privileges");
         return libcmi;
+    }
+
+    // Resolve private LNC symbols dynamically
+    sceLncUtilInitialize = (sceLncUtilInitialize_t)dlsym((void *)(size_t)libcmi, "sceLncUtilInitialize");
+    sceLncUtilLaunchApp   = (sceLncUtilLaunchApp_t)  dlsym((void *)(size_t)libcmi, "sceLncUtilLaunchApp");
+
+    if (!sceLncUtilInitialize || !sceLncUtilLaunchApp) {
+        log_debug("LAUNCH FAILED: Could not resolve LNC symbols via dlsym");
+        return -1;
     }
 
     // Step 3: Initialize the LNC utility
@@ -171,7 +185,7 @@ int launch_by_uri(const char *uri) {
 
     log_debug("Launching URI: %s", uri);
 
-    uint32_t userId = -1;
+    int userId = -1;
     int libcmi = sceKernelLoadStartModule(
     "/system/common/lib/libSceShellUIUtil.sprx",
     0, NULL, 0, 0, NULL
