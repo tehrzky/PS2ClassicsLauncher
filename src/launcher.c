@@ -2,15 +2,24 @@
 #include "debug.h"
 #include "config.h"
 #include "syscalls.h"
-#include <orbis/libkernel.h>
-#include <orbis/SystemService.h>
-#include <orbis/UserService.h>
-#include <orbis/Lnc.h>
-#include <string.h>
 
-// Use the toolchain's own LncAppParam — it has crash_report as uint64_t
-// which matches the real PS4 struct layout. Do NOT redefine it.
-// LaunchApp_SkipSystemUpdate = 2 per the enum in sys_service.h
+#include <orbis/UserService.h>
+#include <orbis/SystemService.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdio.h>
+
+/* OpenOrbis does not ship orbis/Lnc.h, so we define LncAppParam here.
+   Layout matches the real PS4 struct (crash_report is uint64_t). */
+typedef struct LncAppParam {
+    uint32_t size;
+    uint32_t user_id;
+    uint32_t app_opt;
+    uint64_t crash_report;
+    uint32_t LaunchAppCheck_flag;
+} LncAppParam;
+
+#define LaunchApp_SkipSystemUpdate 2
 
 int launch_emulator(const char *override_tid) {
     const char *tid = (override_tid && override_tid[0]) ? override_tid : EMULATOR_TID;
@@ -37,6 +46,6 @@ int launch_emulator(const char *override_tid) {
     log_debug("Calling sceLncUtilLaunchApp...");
     ret = sceLncUtilLaunchApp(tid, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
-    
+
     return ret;
 }
