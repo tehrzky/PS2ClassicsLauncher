@@ -5,7 +5,7 @@ TITLE_ID    := PSTL00001
 CONTENT_ID  := IV0000-PSTL00001_00-PS2LAUNCHER00000
 
 # Libraries - REMOVED lSceGpuAddress and lpng for now
-LIBS        := -lc -lkernel -lm -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule -lSceNet -lSceNetCtl
+LIBS        := -lc -lkernel -lm -lSceSystemService -lSceUserService -lScePad -lSceVideoOut -lSceGnmDriver -lSceLibcInternal -lSceSysmodule -lSceNet -lSceNetCtl -lSceHttp -lSceSsl
 
 # Toolchain
 TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
