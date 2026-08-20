@@ -11,5 +11,6 @@ void flip(void);
 void draw_pixel(int x, int y, uint32_t color);
 void draw_rect(int x, int y, int w, int h, uint32_t color);
 void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color);
+void draw_image_rgba(int x, int y, int w, int h, const unsigned char *rgba, int img_w, int img_h);
 
 #endif
