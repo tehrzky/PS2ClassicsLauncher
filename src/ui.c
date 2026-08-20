@@ -4,7 +4,9 @@
 #include "game.h"
 #include "cover.h"
 #include "settings.h"
+#include "config.h"
 #include <string.h>
+#include <stdio.h>
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
