@@ -27,25 +27,25 @@ int launch_emulator(const char *override_tid) {
     log_debug("=== LAUNCHING EMULATOR ===");
     log_debug("EMULATOR_TID: %s", tid);
 
-    uint32_t userId = 0;
+    int userId = 0;
     int ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         sceUserServiceGetInitialUser(&userId);
     }
-    log_debug("User ID: %u", userId);
+    log_debug("User ID: %d", userId);
 
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.size = sizeof(LncAppParam);
-    param.user_id = userId;
+    param.user_id = (uint32_t)userId;
     param.app_opt = 0;
     param.crash_report = 0;
     param.LaunchAppCheck_flag = LaunchApp_SkipSystemUpdate;
 
     log_debug("sizeof(LncAppParam) = %zu", sizeof(LncAppParam));
-    log_debug("Calling sceLncUtilLaunchApp...");
-    ret = sceLncUtilLaunchApp(tid, NULL, &param);
-    log_debug("sceLncUtilLaunchApp returned: 0x%08X", ret);
+    log_debug("Calling sceSystemServiceLaunchApp...");
+    ret = sceSystemServiceLaunchApp(tid, NULL, &param);
+    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
 
     return ret;
 }
