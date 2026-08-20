@@ -3,5 +3,6 @@
 
 // Download cover art for a given serial/disc ID
 void scraper_download_cover(const char *serial);
+void scraper_download_gameindex(void);
 
 #endif
