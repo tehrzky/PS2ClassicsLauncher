@@ -4,6 +4,7 @@ void _fini(void) {}
 #include <string.h>
 #include <unistd.h>
 #include <orbis/libkernel.h>
+#include <orbis/Sysmodule.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 #include <orbis/Pad.h>
@@ -19,6 +20,9 @@ void _fini(void) {}
 #include "goodnames.h"
 #include "ui.h"
 #include "settings.h"
+
+#define SCREEN_WIDTH 1920
+#define SCREEN_HEIGHT 1080
 
 #define EMULATOR_TID "PCSX20042"
 
