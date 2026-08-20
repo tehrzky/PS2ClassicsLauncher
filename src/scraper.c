@@ -5,6 +5,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <orbis/Http.h>
 #include <orbis/_types/http.h>
 #include <orbis/Ssl.h>
@@ -24,20 +27,66 @@ static int ensure_net_init(void)
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_HTTP);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SSL);
 
-    sceNetInit(NULL, 1024 * 1024);
-    sceNetCtlInit();
+    int ret = sceNetInit(NULL, 1024 * 1024);
+    if (ret < 0) {
+        log_debug("sceNetInit failed: 0x%08X", ret);
+        return -1;
+    }
+
+    ret = sceNetCtlInit();
+    if (ret < 0) {
+        log_debug("sceNetCtlInit failed: 0x%08X", ret);
+        return -1;
+    }
 
     net_initialized = 1;
     log_debug("Network stack initialized");
     return 0;
 }
 
-// Must match OrbisHttpsCallback signature exactly
 static int32_t ssl_callback(int32_t libsslCtxId, uint32_t verifyErr,
                             void * const sslCert[], int32_t certNum, void *userArg)
 {
     (void)libsslCtxId; (void)verifyErr; (void)sslCert; (void)certNum; (void)userArg;
     return 1;
+}
+
+static int parse_url(const char *url, char *scheme, size_t scheme_len,
+                     char *host, size_t host_len,
+                     char *path, size_t path_len, int *port)
+{
+    const char *p = url;
+    const char *scheme_end = strstr(p, "://");
+    if (!scheme_end) return -1;
+
+    size_t sLen = scheme_end - p;
+    if (sLen >= scheme_len) return -1;
+    strncpy(scheme, p, sLen);
+    scheme[sLen] = '\0';
+
+    p = scheme_end + 3;
+    const char *path_start = strchr(p, '/');
+    if (!path_start) {
+        strncpy(host, p, host_len - 1);
+        host[host_len - 1] = '\0';
+        strncpy(path, "/", path_len);
+    } else {
+        size_t hLen = path_start - p;
+        if (hLen >= host_len) return -1;
+        strncpy(host, p, hLen);
+        host[hLen] = '\0';
+        strncpy(path, path_start, path_len - 1);
+        path[path_len - 1] = '\0';
+    }
+
+    char *port_colon = strchr(host, ':');
+    if (port_colon) {
+        *port_colon = '\0';
+        *port = atoi(port_colon + 1);
+    } else {
+        *port = (strcmp(scheme, "https") == 0) ? 443 : 80;
+    }
+    return 0;
 }
 
 static int download_file(const char *url, const char *path)
@@ -55,7 +104,6 @@ static int download_file(const char *url, const char *path)
         return -1;
     }
 
-    // Create directory if needed
     char dir_path[512];
     strncpy(dir_path, path, sizeof(dir_path) - 1);
     dir_path[sizeof(dir_path) - 1] = '\0';
@@ -64,6 +112,30 @@ static int download_file(const char *url, const char *path)
         *last_slash = '\0';
         mkdir(dir_path, 0777);
     }
+
+    char scheme[16] = {0};
+    char host[256] = {0};
+    char res_path[512] = {0};
+    int port = 443;
+
+    if (parse_url(url, scheme, sizeof(scheme), host, sizeof(host), res_path, sizeof(res_path), &port) < 0) {
+        log_debug("Failed to parse URL: %s", url);
+        return -1;
+    }
+    log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
+
+    // Bypass sceHttp's broken resolver: resolve manually with gethostbyname (proven working)
+    struct hostent *server = gethostbyname(host);
+    if (!server) {
+        log_debug("gethostbyname failed for: %s", host);
+        return -1;
+    }
+
+    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
+    char ip_str[32];
+    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
+    ip_str[sizeof(ip_str) - 1] = '\0';
+    log_debug("Resolved %s -> %s", host, ip_str);
 
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
@@ -88,22 +160,28 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
-    ret = sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
-    log_debug("sceHttpsSetSslCallback returned: 0x%08X", ret);
+    sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    connId = sceHttpCreateConnectionWithURL(tmplId, url, 1);
+    // Connect by resolved IP — bypasses sceHttp DNS entirely
+    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
-        log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
+        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateConnectionWithURL ok: %d", connId);
+    log_debug("sceHttpCreateConnection ok: %d", connId);
 
-    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
+    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
     if (reqId < 0) {
-        log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
+        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
+    log_debug("sceHttpCreateRequest ok: %d", reqId);
+
+    // Force correct Host header (required for GitHub CDN / HTTPS virtual hosting)
+    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
+    if (ret < 0) {
+        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
+    }
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
