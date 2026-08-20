@@ -25,9 +25,8 @@ typedef struct {
 
 #define IS_ERROR(ret) ((unsigned int)ret & 0x80000000)
 
-// ============ SYSCALL DECLARATIONS ============
-extern int sceUserServiceGetForegroundUser(uint32_t *userId);
-extern int sceKernelLoadStartModule(const char *path, size_t args, const void *argp, unsigned int flags, const void *opts, int *res);
+// ============ FORWARD DECLARATIONS ============
+// Use the correct signatures from orbis/UserService.h and orbis/libkernel.h
 extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], LncAppParam *param);
 
 // ============ MAIN LAUNCHER ============
@@ -40,8 +39,8 @@ extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], Lnc
  */
 int launch_app(const char *tid) {
     uint32_t sys_res = -1;
-    uint32_t userId = 0;  // Changed from -1 to 0
-    int libcmi = -1;
+    int userId = 0;  // Match orbis/UserService.h signature (int*, not uint32_t*)
+    uint32_t libcmi = 0;
 
     if (!tid || !tid[0]) {
         log_debug("ERROR: No Title ID provided");
@@ -56,36 +55,36 @@ int launch_app(const char *tid) {
         log_debug("WARNING: sceUserServiceGetForegroundUser failed (0x%08X)", ret);
         userId = 0;  // Fallback to user 0
     }
-    log_debug("User ID: %u", userId);
+    log_debug("User ID: %d", userId);
 
     // Step 2: Load libSceSystemService.sprx
-    // This is THE ONLY correct path - this is what ItemzFlow uses
+    // Match orbis/libkernel.h signature: uint32_t sceKernelLoadStartModule(const char *, size_t, const void *, uint32_t, void *, void *)
     libcmi = sceKernelLoadStartModule(
         "/system/common/lib/libSceSystemService.sprx",
         0,              // args
         NULL,           // argp
         0,              // flags
-        0,              // opts
-        NULL            // res (ItemzFlow passes 0, not NULL)
+        NULL,           // opts (use NULL, not 0)
+        NULL            // res (use NULL, not 0)
     );
 
-    log_debug("sceKernelLoadStartModule: 0x%08X (module=%d)", libcmi, libcmi);
+    log_debug("sceKernelLoadStartModule returned: 0x%08X (module=%u)", libcmi, libcmi);
 
-    if (libcmi < 0) {
+    if (libcmi == 0) {
         log_debug("FATAL: Could not load libSceSystemService.sprx");
-        return libcmi;
+        return -1;
     }
 
-    // Step 3: Prepare launch parameters (exactly like ItemzFlow)
+    // Step 3: Prepare launch parameters
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.sz = sizeof(LncAppParam);
-    param.user_id = userId;
+    param.user_id = (uint32_t)userId;
     param.app_opt = 0;
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    // Step 4: LAUNCH THE APP - NO sceLncUtilInitialize()
+    // Step 4: LAUNCH THE APP
     log_debug("Calling sceLncUtilLaunchApp(%s)", tid);
     sys_res = sceLncUtilLaunchApp(tid, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
@@ -120,15 +119,4 @@ int launch_app(const char *tid) {
     }
 
     return (int)sys_res;
-}
-
-/**
- * Convenience wrapper
- */
-int launch_emulator(void) {
-    return launch_app(EMULATOR_TID);
-}
-
-int launch_itemzflow(void) {
-    return launch_app("ITEM00001");
 }
