@@ -124,12 +124,15 @@ void scan_games(void) {
             log_debug("DISC ID extraction FAILED for: %s", games[game_count].name);
         }
 
-        build_display_name(entry->d_name, games[game_count].id,
-                           games[game_count].display_name,
-                           sizeof(games[game_count].display_name));
+            build_display_name(entry->d_name, games[game_count].id,
+                       games[game_count].display_name,
+                       sizeof(games[game_count].display_name));
 
-        games[game_count].emulator_name[0] = '\0';
-        games[game_count].emulator_id[0] = '\0';
+    config_get_game_emulator_info(games[game_count].id, games[game_count].name,
+                                   games[game_count].emulator_name,
+                                   sizeof(games[game_count].emulator_name),
+                                   games[game_count].emulator_id,
+                                   sizeof(games[game_count].emulator_id));
 
         game_count++;
     }
