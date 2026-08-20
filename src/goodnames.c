@@ -1,11 +1,10 @@
 #include "goodnames.h"
 #include "debug.h"
+#include <ctype.h>
+#include <string.h>
+#include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <string.h>
-#include <ctype.h>
-#include <stdlib.h>
-#include <stdio.h>      // <-- ADD THIS for snprintf
 
 typedef struct {
     char id[32];
@@ -15,47 +14,122 @@ typedef struct {
 static GoodName good_names[2048];
 static int good_name_count = 0;
 
-void load_good_names(void) {
-    int fd = open("/data/PS4ROMS/PS2ISO/goodnames.txt", O_RDONLY);
-    if (fd < 0) return;
-    char buf[65536];
-    int n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) return;
-    buf[n] = '\0';
+static void trim_trailing(char *s) {
+    int len = (int)strlen(s);
+    while (len > 0 && isspace((unsigned char)s[len - 1])) {
+        s[len - 1] = '\0';
+        len--;
+    }
+}
 
-    char *p = buf;
-    while (*p && good_name_count < 2048) {
-        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-        if (*p == '#' || *p == '\0') {
-            while (*p && *p != '\n') p++;
-            if (*p == '\n') p++;
+static void add_or_override_good_name(const char *id, const char *name) {
+    for (int i = 0; i < good_name_count; i++) {
+        if (strcasecmp(good_names[i].id, id) == 0) {
+            strncpy(good_names[i].name, name, 255);
+            good_names[i].name[255] = '\0';
+            return;
+        }
+    }
+    if (good_name_count < 2048) {
+        strncpy(good_names[good_name_count].id, id, 31);
+        good_names[good_name_count].id[31] = '\0';
+        strncpy(good_names[good_name_count].name, name, 255);
+        good_names[good_name_count].name[255] = '\0';
+        good_name_count++;
+    }
+}
+
+static void load_gameindex_yaml(void) {
+    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/GameIndex.yaml", "r");
+    if (!fp) return;
+
+    char line[512];
+    char pending_id[32] = {0};
+
+    while (fgets(line, sizeof(line), fp) && good_name_count < 2048) {
+        size_t linelen = strlen(line);
+        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
+            line[linelen - 1] = '\0';
+            linelen--;
+        }
+
+        if (linelen >= 11 &&
+            isupper((unsigned char)line[0]) &&
+            isupper((unsigned char)line[1]) &&
+            isupper((unsigned char)line[2]) &&
+            isupper((unsigned char)line[3]) &&
+            line[4] == '-' &&
+            isdigit((unsigned char)line[5]) &&
+            isdigit((unsigned char)line[6]) &&
+            isdigit((unsigned char)line[7]) &&
+            isdigit((unsigned char)line[8]) &&
+            isdigit((unsigned char)line[9]) &&
+            line[10] == ':') {
+            strncpy(pending_id, line, 11);
+            pending_id[11] = '\0';
             continue;
         }
-        char *eq = strchr(p, '=');
-        if (!eq) break;
-        int id_len = eq - p;
-        if (id_len > 0 && id_len < 32) {
-            strncpy(good_names[good_name_count].id, p, id_len);
-            good_names[good_name_count].id[id_len] = '\0';
 
-            char *name_start = eq + 1;
-            char *name_end = name_start;
-            while (*name_end && *name_end != '\n' && *name_end != '\r') name_end++;
-            int name_len = name_end - name_start;
-            if (name_len > 255) name_len = 255;
-            strncpy(good_names[good_name_count].name, name_start, name_len);
-            good_names[good_name_count].name[name_len] = '\0';
-            good_name_count++;
-            
-            p = name_end;  // Now inside the if block where name_end is declared
-        } else {
-            // Invalid ID, skip to next line
-            while (*p && *p != '\n') p++;
+        if (pending_id[0] && strncmp(line, "  name:", 7) == 0) {
+            char *start = strchr(line, '"');
+            if (start) {
+                start++;
+                char *end = strchr(start, '"');
+                if (end) {
+                    int len = end - start;
+                    if (len > 255) len = 255;
+                    if (len > 0) {
+                        add_or_override_good_name(pending_id, start);
+                    }
+                }
+            }
+            pending_id[0] = '\0';
         }
-        while (*p && *p != '\n') p++;
-        if (*p == '\n') p++;
     }
+    fclose(fp);
+}
+
+static void load_goodnames_txt(void) {
+    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/goodnames.txt", "r");
+    if (!fp) return;
+
+    char line[512];
+    while (fgets(line, sizeof(line), fp) && good_name_count < 2048) {
+        // Strip trailing \r and \n
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[len - 1] = '\0';
+            len--;
+        }
+
+        // Skip empty lines and comments
+        if (len == 0 || line[0] == '#') continue;
+
+        // Find = ONLY on this line
+        char *eq = strchr(line, '=');
+        if (!eq) continue;  // malformed line — skip it, DON'T break
+
+        *eq = '\0';
+        char *id = line;
+        char *name = eq + 1;
+
+        trim_trailing(id);
+        // name trailing spaces are less common, but safe to trim too
+        trim_trailing(name);
+
+        size_t id_len = strlen(id);
+        size_t name_len = strlen(name);
+        if (id_len > 0 && id_len < 32 && name_len > 0 && name_len < 256) {
+            add_or_override_good_name(id, name);
+        }
+    }
+    fclose(fp);
+}
+
+void load_good_names(void) {
+    load_gameindex_yaml();
+    load_goodnames_txt();
+    log_debug("Loaded %d good names", good_name_count);
 }
 
 const char* lookup_good_name(const char *disc_id) {
