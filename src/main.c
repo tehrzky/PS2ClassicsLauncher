@@ -71,6 +71,7 @@ int main(void) {
     int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
     log_debug("PAD OPEN: %d (uid=%d)", pad, userId);
 
+    scraper_download_gameindex();
     load_good_names();
     log_debug("GOOD NAMES loaded");
 
