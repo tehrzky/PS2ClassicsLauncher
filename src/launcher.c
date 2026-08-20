@@ -34,7 +34,7 @@ typedef struct {
 
 // ============ FORWARD DECLARATIONS ============
 extern int sceUserServiceGetForegroundUser(int *userId);
-extern size_t sceKernelLoadStartModule(const char *path, size_t args, const void *argp, unsigned int flags, const void *opts, int *res);
+extern int sceKernelLoadStartModule(const char *path, size_t args, const void *argp, unsigned int flags, const void *opts, int *res);
 extern uint32_t sceLncUtilLaunchApp(const char *titleId, const char *argv[], LncAppParam *param);
 extern int sceLncUtilInitialize(void);
 
@@ -175,9 +175,9 @@ int launch_by_uri(const char *uri) {
 
     uint32_t userId = -1;
     int libcmi = sceKernelLoadStartModule(
-        "/system/common/lib/libSceShellUIUtil.sprx",
-        0, NULL, 0, 0, NULL
-    );
+    "/system/common/lib/libSceShellUIUtil.sprx",
+    0, NULL, 0, 0, NULL
+);
 
     if (libcmi < 0) {
         log_debug("Failed to load libSceShellUIUtil.sprx: 0x%08X", libcmi);
