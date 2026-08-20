@@ -11,7 +11,7 @@ typedef struct {
     char name[256];
 } GoodName;
 
-static GoodName good_names[2048];
+static GoodName good_names[12000];
 static int good_name_count = 0;
 
 static void trim_trailing(char *s) {
@@ -30,7 +30,7 @@ static void add_or_override_good_name(const char *id, const char *name) {
             return;
         }
     }
-    if (good_name_count < 2048) {
+    if (good_name_count < 12000) {
         strncpy(good_names[good_name_count].id, id, 31);
         good_names[good_name_count].id[31] = '\0';
         strncpy(good_names[good_name_count].name, name, 255);
@@ -46,7 +46,7 @@ static void load_gameindex_yaml(void) {
     char line[512];
     char pending_id[32] = {0};
 
-    while (fgets(line, sizeof(line), fp) && good_name_count < 2048) {
+    while (fgets(line, sizeof(line), fp) && good_name_count < 12000) {
         size_t linelen = strlen(line);
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
@@ -94,7 +94,7 @@ static void load_goodnames_txt(void) {
     if (!fp) return;
 
     char line[512];
-    while (fgets(line, sizeof(line), fp) && good_name_count < 2048) {
+    while (fgets(line, sizeof(line), fp) && good_name_count < 12000) {
         // Strip trailing \r and \n
         size_t len = strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
