@@ -44,8 +44,8 @@ int launch_emulator(const char *override_tid) {
 
     log_debug("sizeof(LncAppParam) = %zu", sizeof(LncAppParam));
     log_debug("Calling sceSystemServiceLaunchApp...");
-    ret = sceSystemServiceLaunchApp(tid, NULL, &param);
-    log_debug("sceSystemServiceLaunchApp returned: 0x%08X", ret);
+    sceSystemServiceLaunchApp(tid, NULL, &param);
+    log_debug("sceSystemServiceLaunchApp called");
 
-    return ret;
+    return 0;
 }
