@@ -135,7 +135,7 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
     }
 
     const char *label = "NO COVER";
-    int label_w = (int)strlen(label) * FONT_WIDTH * 2;
+        int label_w = font_text_width(label, 24);
     draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, 0xFF6C7C8E, 2);
 }
 
