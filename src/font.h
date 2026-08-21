@@ -1,6 +1,8 @@
 #ifndef FONT_H
 #define FONT_H
 
+#include <stdint.h>
+
 #define FONT_SLOT_BODY   0
 #define FONT_SLOT_TITLE  1
 #define FONT_SLOT_BOLD   2
