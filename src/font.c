@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <ctype.h>  // For tolower()
 #include "settings.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -146,15 +147,78 @@ void font_init(void) {
     }
 
     if (font_list_count > 0) {
+        // Set default indices if not already set
         if (g_settings.font_body < 0 || g_settings.font_body >= font_list_count)
             g_settings.font_body = 0;
         if (g_settings.font_title < 0 || g_settings.font_title >= font_list_count)
             g_settings.font_title = (font_list_count > 1) ? 1 : 0;
 
+        // Load primary fonts
         font_load_slot(FONT_SLOT_BODY, g_settings.font_body);
         font_load_slot(FONT_SLOT_TITLE, g_settings.font_title);
-        if (font_list_count > 2) font_load_slot(FONT_SLOT_BOLD, 2);
-        if (font_list_count > 3) font_load_slot(FONT_SLOT_ITALIC, 3);
+        
+        // Auto-detect font variants
+        int bold_found = -1;
+        int italic_found = -1;
+        int bold_italic_found = -1;
+        int regular_found = -1;
+        
+        // First pass: identify all font variants
+        for (int i = 0; i < font_list_count; i++) {
+            const char *name = font_list[i].name;
+            
+            // Convert to lowercase for case-insensitive comparison
+            char lower_name[64];
+            strncpy(lower_name, name, sizeof(lower_name) - 1);
+            lower_name[sizeof(lower_name) - 1] = '\0';
+            for (int j = 0; lower_name[j]; j++) {
+                lower_name[j] = tolower(lower_name[j]);
+            }
+            
+            int is_bold = strstr(lower_name, "bold") != NULL;
+            int is_italic = strstr(lower_name, "italic") != NULL || 
+                           strstr(lower_name, "oblique") != NULL;
+            
+            if (is_bold && is_italic) {
+                bold_italic_found = i;
+            } else if (is_bold) {
+                bold_found = i;
+            } else if (is_italic) {
+                italic_found = i;
+            } else if (strstr(lower_name, "regular") || strstr(lower_name, "normal")) {
+                regular_found = i;
+            }
+        }
+        
+        // Load bold font with priority: bold > bold-italic > regular > body
+        if (bold_found != -1) {
+            font_load_slot(FONT_SLOT_BOLD, bold_found);
+            log_debug("Auto-detected bold font: %s", font_list[bold_found].name);
+        } else if (bold_italic_found != -1) {
+            font_load_slot(FONT_SLOT_BOLD, bold_italic_found);
+            log_debug("Auto-detected bold-italic font for bold slot: %s", font_list[bold_italic_found].name);
+        } else if (regular_found != -1) {
+            font_load_slot(FONT_SLOT_BOLD, regular_found);
+            log_debug("Using regular font for bold slot: %s", font_list[regular_found].name);
+        } else {
+            font_load_slot(FONT_SLOT_BOLD, g_settings.font_body);
+            log_debug("No bold font found, using body font for bold slot");
+        }
+        
+        // Load italic font with priority: italic > bold-italic > regular > body
+        if (italic_found != -1) {
+            font_load_slot(FONT_SLOT_ITALIC, italic_found);
+            log_debug("Auto-detected italic font: %s", font_list[italic_found].name);
+        } else if (bold_italic_found != -1) {
+            font_load_slot(FONT_SLOT_ITALIC, bold_italic_found);
+            log_debug("Using bold-italic font for italic slot: %s", font_list[bold_italic_found].name);
+        } else if (regular_found != -1) {
+            font_load_slot(FONT_SLOT_ITALIC, regular_found);
+            log_debug("Using regular font for italic slot: %s", font_list[regular_found].name);
+        } else {
+            font_load_slot(FONT_SLOT_ITALIC, g_settings.font_body);
+            log_debug("No italic font found, using body font for italic slot");
+        }
     }
 }
 
