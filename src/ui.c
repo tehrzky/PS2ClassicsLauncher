@@ -45,11 +45,9 @@
 #define RIGHT_PANE_X (LEFT_PANE_X + LEFT_PANE_W + PANEL_GAP)
 #define RIGHT_PANE_W (TOTAL_PANEL_W - LEFT_PANE_W)
 
-/* Reduced item height and gap to pull game titles significantly closer together */
 #define ITEM_H 48
 #define ITEM_GAP 2
 
-/* Cover art positioning */
 #define COVER_PADDING 28
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
 #define COVER_Y (PANEL_Y + 70)
@@ -86,7 +84,7 @@ static void draw_game_list(int sel, int count) {
     int list_y = PANEL_Y + 66;
     int visible = (PANEL_BOT - list_y - 10) / (ITEM_H + ITEM_GAP);
     if (visible < 1) visible = 1;
-    
+
     int start = 0;
     if (sel >= visible) start = sel - visible + 1;
     if (start < 0) start = 0;
@@ -98,7 +96,7 @@ static void draw_game_list(int sel, int count) {
         if (is_sel) {
             draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
             draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
-            
+
             char buf[64];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[64];
@@ -123,31 +121,23 @@ static void draw_game_list(int sel, int count) {
 
 static void draw_game_details(int sel, int total_games) {
     draw_text(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 28);
-    
+
     char cnt[32];
     snprintf(cnt, sizeof(cnt), "Total Games: %d", total_games);
     int cw = font_text_width(cnt, 22);
     draw_text(RIGHT_PANE_X + RIGHT_PANE_W - cw - 20, PANEL_Y + 20, cnt, COLOR_DIM, 22);
-    
+
     draw_rect(RIGHT_PANE_X + 20, PANEL_Y + 54, RIGHT_PANE_W - 40, 2, COLOR_BORDER);
 
     if (sel < 0 || sel >= game_count) return;
     Game *g = &games[sel];
 
-    /* Cover Rendering */
     cover_draw_fit(COVER_X, COVER_Y, COVER_W, COVER_H, g->id);
 
-    /* 
-     * Exact Top Alignment:
-     * Set initial text Y coordinate to COVER_Y minus label height offset.
-     * This places the absolute top baseline of "TITLE:" on the exact same 
-     * Y pixel coordinate as the top border of the cover art image.
-     */
     int tx = COVER_X + COVER_W + 28;
-    int ty = COVER_Y - 4; 
+    int ty = COVER_Y - 4;
     int line_gap = 26;
 
-    /* TITLE */
     draw_text(tx, ty, "TITLE:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "TITLE:", COLOR_GOLD, 22);
     ty += line_gap;
@@ -157,35 +147,32 @@ static void draw_game_details(int sel, int total_games) {
     draw_text(tx + 1, ty, tbuf, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    /* GAME ID */
     draw_text(tx, ty, "GAME ID:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "GAME ID:", COLOR_GOLD, 22);
     ty += line_gap;
     draw_text(tx, ty, g->id, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    /* EMULATOR */
     draw_text(tx, ty, "EMULATOR:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "EMULATOR:", COLOR_GOLD, 22);
     ty += line_gap;
-    const char *emu = g->emulator_name[0] ? g->emulator_name : "KOF Orochi Saga";
+    const char *emu = g->emulator_name[0] ? g->emulator_name : "Default";
     draw_text(tx, ty, emu, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    /* EMU ID */
     draw_text(tx, ty, "EMU ID:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "EMU ID:", COLOR_GOLD, 22);
     ty += line_gap;
-    const char *emu_id = g->emulator_id[0] ? g->emulator_id : "PCSX20042";
+    const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 28);
 }
 
 static void draw_header(void) {
-    draw_text(SAFE_X, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44);
-    draw_text(SAFE_X + 1, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44);
-    
-    int tw = font_text_width("tehrzky", 28);
-    draw_text(SAFE_X1 - tw, SAFE_Y + 10, "tehrzky", COLOR_ACCENT, 28);
+    draw_text_slot(SAFE_X, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X + 1, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44, FONT_SLOT_TITLE);
+
+    int tw = font_text_width_slot("tehrzky", 28, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X1 - tw, SAFE_Y + 10, "tehrzky", COLOR_ACCENT, 28, FONT_SLOT_TITLE);
 
     draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), 2, COLOR_ACCENT);
 }
@@ -241,13 +228,17 @@ static const char *settings_labels[SETTINGS_ITEMS] = {
     "Auto Download GameIndex",
     "Cover Type",
     "Scraper URL",
+    "Work Path",
+    "Master Config",
+    "Body Font",
+    "Title Font",
     "Force Download GameIndex",
     "Force Download All Covers"
 };
 
 void draw_settings_ui(int selected_item, int in_per_game) {
     int pw = 700;
-    int ph = 520;
+    int ph = 600;
     int px = (SCREEN_WIDTH - pw) / 2;
     int py = (SCREEN_HEIGHT - ph) / 2;
 
@@ -260,10 +251,10 @@ void draw_settings_ui(int selected_item, int in_per_game) {
     draw_rounded_rect(px + 2, py + 2, pw - 4, ph - 4, 14, COLOR_BG);
 
     const char *title = in_per_game ? "PER-GAME SETTINGS" : "SETTINGS";
-    int tw = font_text_width(title, 36);
-    draw_text(px + (pw - tw) / 2, py + 20, title, COLOR_GOLD, 36);
+    int tw = font_text_width_slot(title, 36, FONT_SLOT_TITLE);
+    draw_text_slot(px + (pw - tw) / 2, py + 20, title, COLOR_GOLD, 36, FONT_SLOT_TITLE);
 
-    int row_h = 56;
+    int row_h = 52;
     int start_y = py + 90;
 
     for (int i = 0; i < SETTINGS_ITEMS; i++) {
@@ -275,24 +266,41 @@ void draw_settings_ui(int selected_item, int in_per_game) {
             draw_rect(px + 20, ry + 6, 4, row_h - 18, COLOR_ACCENT);
         }
 
-        draw_text(px + 40, ry + 14, settings_labels[i], is_sel ? COLOR_TEXT : COLOR_DIM, 22);
+        draw_text(px + 40, ry + 12, settings_labels[i], is_sel ? COLOR_TEXT : COLOR_DIM, 22);
 
         char value[128] = {0};
         if (i == 0) snprintf(value, sizeof(value), "%s", g_settings.auto_download_covers ? "ON" : "OFF");
         else if (i == 1) snprintf(value, sizeof(value), "%s", g_settings.auto_download_gameindex ? "ON" : "OFF");
         else if (i == 2) snprintf(value, sizeof(value), "%s", g_settings.cover_type == 1 ? "3D" : "Default");
         else if (i == 3) {
-            strncpy(value, g_settings.scraper_base_url, 30);
-            value[30] = '\0';
-            if (strlen(g_settings.scraper_base_url) > 30) strcat(value, "...");
+            strncpy(value, g_settings.scraper_base_url, 28);
+            value[28] = '\0';
+            if (strlen(g_settings.scraper_base_url) > 28) strcat(value, "...");
         }
-        else if (i == 4) snprintf(value, sizeof(value), "Press X");
-        else if (i == 5) snprintf(value, sizeof(value), "Press X");
+        else if (i == 4) {
+            strncpy(value, g_settings.work_path, 28);
+            value[28] = '\0';
+        }
+        else if (i == 5) snprintf(value, sizeof(value), "%s", g_settings.master_config);
+        else if (i == 6) {
+            const char *name = font_get_list_name(g_settings.font_body);
+            strncpy(value, name, 22);
+            value[22] = '\0';
+        }
+        else if (i == 7) {
+            const char *name = font_get_list_name(g_settings.font_title);
+            strncpy(value, name, 22);
+            value[22] = '\0';
+        }
+        else if (i == 8) snprintf(value, sizeof(value), "Press X");
+        else if (i == 9) snprintf(value, sizeof(value), "Press X");
 
         int vw = font_text_width(value, 22);
-        uint32_t vc = (i == 3) ? COLOR_MUTED : (is_sel ? COLOR_ACCENT : COLOR_DIM);
-        if (i >= 4) vc = is_sel ? COLOR_SUCCESS : COLOR_MUTED;
-        draw_text(px + pw - 40 - vw, ry + 14, value, vc, 22);
+        uint32_t vc = COLOR_DIM;
+        if (i == 3 || i == 4 || i == 5) vc = COLOR_MUTED;
+        else if (i >= 8) vc = is_sel ? COLOR_SUCCESS : COLOR_MUTED;
+        else vc = is_sel ? COLOR_ACCENT : COLOR_DIM;
+        draw_text(px + pw - 40 - vw, ry + 12, value, vc, 22);
     }
 
     draw_footer(1);
