@@ -1,9 +1,12 @@
 #include "font.h"
 #include "video.h"
 #include "debug.h"
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <dirent.h>
+#include <unistd.h>
+#include "settings.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
@@ -44,37 +47,128 @@ static unsigned char font8x8[96][8] = {
     {0,0,65,54,8,0,0,0}, {0,8,8,42,28,8,0,0}
 };
 
-// ===== TTF state =====
-static stbtt_fontinfo ttf_font;
-static unsigned char *ttf_data = NULL;
-static int ttf_loaded = 0;
+// ===== Font list (scanned from directory) =====
+typedef struct {
+    char path[512];
+    char name[64];
+} FontEntry;
 
-void font_init(void) {
-    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/assets/font/font.ttf", "rb");
-    if (!fp) fp = fopen("/app0/assets/font.ttf", "rb");
-    if (!fp) {
-        log_debug("No TTF found, using bitmap font");
-        return;
+static FontEntry font_list[MAX_FONTS];
+static int font_list_count = 0;
+
+// ===== Loaded font slots =====
+typedef struct {
+    stbtt_fontinfo info;
+    unsigned char *data;
+    int loaded;
+} FontSlot;
+
+static FontSlot fonts[FONT_SLOT_COUNT];
+
+static void font_load_into_slot(int slot, const char *path) {
+    if (fonts[slot].loaded) {
+        free(fonts[slot].data);
+        fonts[slot].loaded = 0;
     }
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return;
     fseek(fp, 0, SEEK_END);
     long size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    ttf_data = (unsigned char*)malloc(size);
-    if (!ttf_data) { fclose(fp); return; }
-    fread(ttf_data, 1, size, fp);
+    fonts[slot].data = (unsigned char*)malloc(size);
+    if (!fonts[slot].data) { fclose(fp); return; }
+    fread(fonts[slot].data, 1, size, fp);
     fclose(fp);
 
-    int offset = stbtt_GetFontOffsetForIndex(ttf_data, 0);
-    if (stbtt_InitFont(&ttf_font, ttf_data, offset)) {
-        ttf_loaded = 1;
-        log_debug("TTF loaded: %ld bytes", size);
+    int offset = stbtt_GetFontOffsetForIndex(fonts[slot].data, 0);
+    if (stbtt_InitFont(&fonts[slot].info, fonts[slot].data, offset)) {
+        fonts[slot].loaded = 1;
+        log_debug("Font loaded slot %d: %s", slot, path);
     } else {
-        free(ttf_data); ttf_data = NULL;
+        free(fonts[slot].data);
+        fonts[slot].data = NULL;
+    }
+}
+
+void font_scan_directory(const char *dir) {
+    font_list_count = 0;
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL && font_list_count < MAX_FONTS) {
+        int len = strlen(entry->d_name);
+        if (len < 5) continue;
+        char *ext = entry->d_name + len - 4;
+        if (strcasecmp(ext, ".ttf") != 0 && strcasecmp(ext, ".otf") != 0) continue;
+
+        snprintf(font_list[font_list_count].path, sizeof(font_list[0].path),
+                 "%s/%s", dir, entry->d_name);
+        strncpy(font_list[font_list_count].name, entry->d_name,
+                sizeof(font_list[0].name) - 1);
+        font_list[font_list_count].name[sizeof(font_list[0].name) - 1] = '\0';
+        font_list_count++;
+    }
+    closedir(d);
+    log_debug("Scanned %d fonts from %s", font_list_count, dir);
+}
+
+const char *font_get_list_name(int index) {
+    if (index < 0 || index >= font_list_count) return "None";
+    return font_list[index].name;
+}
+
+int font_get_list_count(void) {
+    return font_list_count;
+}
+
+void font_load_slot(int slot, int index) {
+    if (index < 0 || index >= font_list_count) return;
+    font_load_into_slot(slot, font_list[index].path);
+}
+
+void font_cycle_slot(int slot, int delta) {
+    if (font_list_count == 0) return;
+    int *target = (slot == FONT_SLOT_TITLE) ? &g_settings.font_title : &g_settings.font_body;
+    *target += delta;
+    if (*target < 0) *target = font_list_count - 1;
+    if (*target >= font_list_count) *target = 0;
+    font_load_slot(slot, *target);
+}
+
+void font_init(void) {
+    memset(fonts, 0, sizeof(fonts));
+
+    char path[512];
+    settings_get_path(path, sizeof(path), "assets/fonts");
+    font_scan_directory(path);
+    if (font_list_count == 0) {
+        font_scan_directory("/app0/assets/fonts");
+    }
+
+    if (font_list_count > 0) {
+        if (g_settings.font_body < 0 || g_settings.font_body >= font_list_count)
+            g_settings.font_body = 0;
+        if (g_settings.font_title < 0 || g_settings.font_title >= font_list_count)
+            g_settings.font_title = (font_list_count > 1) ? 1 : 0;
+
+        font_load_slot(FONT_SLOT_BODY, g_settings.font_body);
+        font_load_slot(FONT_SLOT_TITLE, g_settings.font_title);
+        if (font_list_count > 2) font_load_slot(FONT_SLOT_BOLD, 2);
+        if (font_list_count > 3) font_load_slot(FONT_SLOT_ITALIC, 3);
     }
 }
 
 void font_cleanup(void) {
-    if (ttf_data) { free(ttf_data); ttf_data = NULL; ttf_loaded = 0; }
+    for (int i = 0; i < FONT_SLOT_COUNT; i++) {
+        if (fonts[i].data) { free(fonts[i].data); fonts[i].data = NULL; }
+        fonts[i].loaded = 0;
+    }
+}
+
+static FontSlot *font_resolve(int slot) {
+    if (slot >= 0 && slot < FONT_SLOT_COUNT && fonts[slot].loaded) return &fonts[slot];
+    if (fonts[FONT_SLOT_BODY].loaded) return &fonts[FONT_SLOT_BODY];
+    return NULL;
 }
 
 // ===== Bitmap fallback =====
@@ -95,14 +189,14 @@ static void draw_text_bitmap(int x, int y, const char *s, uint32_t color, int sc
 }
 
 // ===== TTF rendering =====
-static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float size_px) {
-    float scale = stbtt_ScaleForPixelHeight(&ttf_font, size_px);
+static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float size_px, FontSlot *f) {
+    float scale = stbtt_ScaleForPixelHeight(&f->info, size_px);
     int ascent, baseline;
-    stbtt_GetFontVMetrics(&ttf_font, &ascent, 0, 0);
+    stbtt_GetFontVMetrics(&f->info, &ascent, 0, 0);
     baseline = (int)(ascent * scale);
 
     uint8_t cr = (color >> 16) & 0xFF;
-    uint8_t cg = (color >> 8)  & 0xFF;
+    uint8_t cg = (color >> 8) & 0xFF;
     uint8_t cb = color & 0xFF;
 
     int xpos = x;
@@ -111,7 +205,7 @@ static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float 
         if (c < 32 || c > 126) continue;
 
         int w, h, xoff, yoff;
-        unsigned char *bitmap = stbtt_GetCodepointBitmap(&ttf_font, 0, scale, c, &w, &h, &xoff, &yoff);
+        unsigned char *bitmap = stbtt_GetCodepointBitmap(&f->info, 0, scale, c, &w, &h, &xoff, &yoff);
 
         for (int j = 0; j < h; j++) {
             int py = y + j + baseline + yoff;
@@ -137,50 +231,61 @@ static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float 
         stbtt_FreeBitmap(bitmap, NULL);
 
         int advance, lsb;
-        stbtt_GetCodepointHMetrics(&ttf_font, c, &advance, &lsb);
+        stbtt_GetCodepointHMetrics(&f->info, c, &advance, &lsb);
         xpos += (int)(advance * scale);
     }
 }
 
 // ===== Public API =====
-void draw_text(int x, int y, const char *s, uint32_t color, int size_px) {
-    if (ttf_loaded) draw_text_ttf(x, y, s, color, (float)size_px);
+void draw_text_slot(int x, int y, const char *s, uint32_t color, int size_px, int slot) {
+    FontSlot *f = font_resolve(slot);
+    if (f) draw_text_ttf(x, y, s, color, (float)size_px, f);
     else {
-        int sc = size_px / 16; if (sc < 1) sc = 1; if (sc > 3) sc = 3;
+        int sc = size_px / 16; if (sc < 1) sc = 1; if (sc > 4) sc = 4;
         draw_text_bitmap(x, y, s, color, sc);
     }
 }
 
+void draw_text(int x, int y, const char *s, uint32_t color, int size_px) {
+    draw_text_slot(x, y, s, color, size_px, FONT_SLOT_BODY);
+}
+
 void draw_text_scaled(int x, int y, const char *s, uint32_t color, int scale) {
     int sz = 16;
-    if (scale == 2) sz = 24;
-    if (scale == 3) sz = 36;
-    if (scale >= 4) sz = 48;
+    if (scale == 2) sz = 28;
+    if (scale == 3) sz = 42;
+    if (scale >= 4) sz = 56;
     draw_text(x, y, s, color, sz);
 }
 
-int font_text_width(const char *s, int size_px) {
-    if (!ttf_loaded) {
+int font_text_width_slot(const char *s, int size_px, int slot) {
+    FontSlot *f = font_resolve(slot);
+    if (!f) {
         int sc = size_px / 16; if (sc < 1) sc = 1;
         return (int)strlen(s) * 8 * sc;
     }
-    float scale = stbtt_ScaleForPixelHeight(&ttf_font, (float)size_px);
+    float scale = stbtt_ScaleForPixelHeight(&f->info, (float)size_px);
     int w = 0;
     while (*s) {
         int c = (unsigned char)*s++;
         if (c < 32 || c > 126) continue;
-        int adv, lsb; stbtt_GetCodepointHMetrics(&ttf_font, c, &adv, &lsb);
+        int adv, lsb; stbtt_GetCodepointHMetrics(&f->info, c, &adv, &lsb);
         w += (int)(adv * scale);
     }
     return w;
 }
 
+int font_text_width(const char *s, int size_px) {
+    return font_text_width_slot(s, size_px, FONT_SLOT_BODY);
+}
+
 int font_line_height(int size_px) {
-    if (!ttf_loaded) {
+    FontSlot *f = font_resolve(FONT_SLOT_BODY);
+    if (!f) {
         int sc = size_px / 16; if (sc < 1) sc = 1;
         return 8 * sc;
     }
-    float scale = stbtt_ScaleForPixelHeight(&ttf_font, (float)size_px);
-    int a, d, lg; stbtt_GetFontVMetrics(&ttf_font, &a, &d, &lg);
+    float scale = stbtt_ScaleForPixelHeight(&f->info, (float)size_px);
+    int a, d, lg; stbtt_GetFontVMetrics(&f->info, &a, &d, &lg);
     return (int)((a - d + lg) * scale);
 }
