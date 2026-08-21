@@ -134,7 +134,6 @@ int main(void) {
                         for (int i = 0; i < game_count; i++) scraper_force_download_cover(games[i].id);
                     }
                 }
-                }
             } else {
                 // ===== LAUNCHER MODE =====
                 if (pressed & ORBIS_PAD_BUTTON_CROSS) {
@@ -142,7 +141,8 @@ int main(void) {
                     if (set_active_game(games[selected].path, games[selected].id,
                                         games[selected].name, emu_tid, sizeof(emu_tid))) {
                         draw_launcher_ui(game_count, selected, game_count);
-                        draw_text_scaled(SCREEN_WIDTH/2 - 80, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 3);
+                                                int lw = font_text_width("LAUNCHING...", 42);
+                        draw_text(SCREEN_WIDTH/2 - lw/2, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 42);
                         flip();
                         sceKernelSleep(1);
                         launch_emulator(emu_tid);
