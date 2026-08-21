@@ -62,6 +62,7 @@ int main(void) {
     int pad = scePadOpen(userId, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
 
     settings_load();
+    font_init();
 
     scraper_download_gameindex();
     load_good_names();
