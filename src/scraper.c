@@ -318,10 +318,13 @@ void scraper_download_gameindex(void)
 
     char path[512];
     snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
-    if (access(path, F_OK) == 0) {
-        log_debug("GameIndex.yaml already exists");
+
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 100) {
+        log_debug("GameIndex.yaml already exists (%ld bytes)", st.st_size);
         return;
     }
+
     char url[512];
     build_gameindex_url(url, sizeof(url));
     log_debug("Downloading GameIndex.yaml...");
