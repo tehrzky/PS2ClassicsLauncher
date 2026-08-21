@@ -50,7 +50,8 @@ static unsigned char *ttf_data = NULL;
 static int ttf_loaded = 0;
 
 void font_init(void) {
-    FILE *fp = fopen("/app0/assets/font.ttf", "rb");
+    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/assets/font/font.ttf", "rb");
+    if (!fp) fp = fopen("/app0/assets/font.ttf", "rb");
     if (!fp) {
         log_debug("No TTF found, using bitmap font");
         return;
