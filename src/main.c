@@ -102,10 +102,60 @@ int main(void) {
                 if (pressed & ORBIS_PAD_BUTTON_DOWN) {
                     settings_sel = (settings_sel + 1) % SETTINGS_ITEMS;
                 }
-                if (pressed & ORBIS_PAD_BUTTON_LEFT || pressed & ORBIS_PAD_BUTTON_RIGHT) {
+                                if (pressed & ORBIS_PAD_BUTTON_LEFT || pressed & ORBIS_PAD_BUTTON_RIGHT) {
                     if (settings_sel == 0) g_settings.auto_download_covers ^= 1;
                     if (settings_sel == 1) g_settings.auto_download_gameindex ^= 1;
                     if (settings_sel == 2) g_settings.cover_type ^= 1;
+                    if (settings_sel == 3) {
+                        // Cycle through preset scraper URLs
+                        const char *urls[] = {
+                            "https://raw.githubusercontent.com/xlenore/ps2-covers/main",
+                            "https://raw.githubusercontent.com/tehrzky/ps2-covers/main",
+                            "https://gitlab.com/xlenore/ps2-covers/-/raw/main"
+                        };
+                        int num_urls = sizeof(urls) / sizeof(urls[0]);
+                        int current = 0;
+                        for (int i = 0; i < num_urls; i++) {
+                            if (strcmp(g_settings.scraper_base_url, urls[i]) == 0) {
+                                current = i; break;
+                            }
+                        }
+                        if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
+                            current = (current + 1) % num_urls;
+                        } else {
+                            current = (current - 1 + num_urls) % num_urls;
+                        }
+                        strncpy(g_settings.scraper_base_url, urls[current],
+                                sizeof(g_settings.scraper_base_url) - 1);
+                        g_settings.scraper_base_url[sizeof(g_settings.scraper_base_url) - 1] = '\0';
+                    }
+                }
+                if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                    if (settings_sel == 3) {
+                        // X also cycles URL forward
+                        const char *urls[] = {
+                            "https://raw.githubusercontent.com/xlenore/ps2-covers/main",
+                            "https://raw.githubusercontent.com/tehrzky/ps2-covers/main",
+                            "https://gitlab.com/xlenore/ps2-covers/-/raw/main"
+                        };
+                        int num_urls = sizeof(urls) / sizeof(urls[0]);
+                        int current = 0;
+                        for (int i = 0; i < num_urls; i++) {
+                            if (strcmp(g_settings.scraper_base_url, urls[i]) == 0) {
+                                current = i; break;
+                            }
+                        }
+                        current = (current + 1) % num_urls;
+                        strncpy(g_settings.scraper_base_url, urls[current],
+                                sizeof(g_settings.scraper_base_url) - 1);
+                        g_settings.scraper_base_url[sizeof(g_settings.scraper_base_url) - 1] = '\0';
+                    }
+                    if (settings_sel == 4) scraper_force_download_gameindex();
+                    if (settings_sel == 5) {
+                        for (int i = 0; i < game_count; i++) {
+                            scraper_force_download_cover(games[i].id);
+                        }
+                    }
                 }
                 if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                     if (settings_sel == 4) scraper_force_download_gameindex();
