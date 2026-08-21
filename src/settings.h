@@ -1,6 +1,8 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
+#include <stddef.h>
+
 typedef struct {
     int auto_download_covers;
     int auto_download_gameindex;
