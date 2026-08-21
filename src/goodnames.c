@@ -6,6 +6,14 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+static int is_all_ascii_printable(const char *s) {
+    while (*s) {
+        if (*s < 32 || *s > 126) return 0;
+        s++;
+    }
+    return 1;
+}
+
 typedef struct {
     char id[32];
     char name[256];
@@ -169,7 +177,7 @@ static char* stristr(const char *haystack, const char *needle) {
 
 void build_display_name(const char *iso_name, const char *disc_id, char *out, size_t out_len) {
     const char *good = lookup_good_name(disc_id);
-    if (good) {
+    if (good && is_all_ascii_printable(good)) {
         const char *markers[] = {
             "(Disc 1)", "(Disc 2)", "(Disc 3)", "(Disc 4)",
             "[Disc 1]", "[Disc 2]", "[Disc 3]", "[Disc 4]",
@@ -177,10 +185,7 @@ void build_display_name(const char *iso_name, const char *disc_id, char *out, si
         };
         const char *found = NULL;
         for (int i = 0; markers[i]; i++) {
-            if (stristr(iso_name, markers[i])) {
-                found = markers[i];
-                break;
-            }
+            if (stristr(iso_name, markers[i])) { found = markers[i]; break; }
         }
         if (found) {
             snprintf(out, out_len, "%s %s", good, found);
@@ -189,6 +194,7 @@ void build_display_name(const char *iso_name, const char *disc_id, char *out, si
             out[out_len - 1] = '\0';
         }
     } else {
+        // Fallback to ISO filename if good name has unprintable chars
         strncpy(out, iso_name, out_len - 1);
         out[out_len - 1] = '\0';
         size_t len = strlen(out);
