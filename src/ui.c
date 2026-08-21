@@ -256,25 +256,16 @@ static const char *settings_labels[SETTINGS_ITEMS] = {
 };
 
 void draw_settings_ui(int selected_item, int in_per_game) {
-    // Darken background
-    for (int yy = 0; yy < SCREEN_HEIGHT; yy++) {
-        for (int xx = 0; xx < SCREEN_WIDTH; xx++) {
-            uint32_t c = framebuffer[current_buf][yy * SCREEN_WIDTH + xx];
-            uint8_t a = (c >> 24) & 0xFF;
-            uint8_t r = (c >> 16) & 0xFF;
-            uint8_t g = (c >> 8)  & 0xFF;
-            uint8_t b = c & 0xFF;
-            r = (r * 3) / 10;
-            g = (g * 3) / 10;
-            b = (b * 3) / 10;
-            framebuffer[current_buf][yy * SCREEN_WIDTH + xx] = (a << 24) | (r << 16) | (g << 8) | b;
-        }
-    }
-
     int pw = 700;
     int ph = 520;
     int px = (SCREEN_WIDTH - pw) / 2;
     int py = (SCREEN_HEIGHT - ph) / 2;
+
+    // FAST darkening: 4 solid rects instead of 2M pixel iterations
+    draw_rect(0, 0, SCREEN_WIDTH, py, 0xE60B141F);
+    draw_rect(0, py + ph, SCREEN_WIDTH, SCREEN_HEIGHT - py - ph, 0xE60B141F);
+    draw_rect(0, py, px, ph, 0xE60B141F);
+    draw_rect(px + pw, py, SCREEN_WIDTH - px - pw, ph, 0xE60B141F);
 
     draw_rounded_rect(px, py, pw, ph, 16, COLOR_PANEL);
     draw_rounded_rect(px + 2, py + 2, pw - 4, ph - 4, 14, COLOR_BG);
@@ -302,8 +293,10 @@ void draw_settings_ui(int selected_item, int in_per_game) {
         else if (i == 1) snprintf(value, sizeof(value), "%s", g_settings.auto_download_gameindex ? "ON" : "OFF");
         else if (i == 2) snprintf(value, sizeof(value), "%s", g_settings.cover_type == 1 ? "3D" : "Default");
         else if (i == 3) {
-            strncpy(value, g_settings.scraper_base_url, sizeof(value) - 1);
-            value[sizeof(value) - 1] = '\0';
+            // Show truncated URL
+            strncpy(value, g_settings.scraper_base_url, 30);
+            value[30] = '\0';
+            if (strlen(g_settings.scraper_base_url) > 30) strcat(value, "...");
         }
         else if (i == 4) snprintf(value, sizeof(value), "Press X");
         else if (i == 5) snprintf(value, sizeof(value), "Press X");
