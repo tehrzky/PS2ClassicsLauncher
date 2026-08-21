@@ -20,7 +20,6 @@
 #define COLOR_BG 0xFF0B141F
 #define COLOR_PANEL 0xFF101924
 #define COLOR_CARD 0xFF141F2B
-/* Softened selection card: darker slate blue instead of bright white */
 #define COLOR_CARD_SEL 0xFF283A4E
 #define COLOR_BORDER 0xFF4A6B8A
 #define COLOR_GOLD 0xFFF5C542
@@ -34,13 +33,11 @@
 #define HEADER_H 100
 #define FOOTER_H 70
 
-/* Panel layout: slightly reduced overall height to reveal background image */
 #define PANEL_GAP 28
 #define PANEL_Y 130
 #define PANEL_BOT (SCREEN_HEIGHT - FOOTER_H - 40)
 #define PANEL_H (PANEL_BOT - PANEL_Y)
 
-/* 60 / 40 Width Split calculation */
 #define TOTAL_PANEL_W (SAFE_X1 - SAFE_X - PANEL_GAP)
 #define LEFT_PANE_X SAFE_X
 #define LEFT_PANE_W (int)(TOTAL_PANEL_W * 0.60f)
@@ -48,11 +45,11 @@
 #define RIGHT_PANE_X (LEFT_PANE_X + LEFT_PANE_W + PANEL_GAP)
 #define RIGHT_PANE_W (TOTAL_PANEL_W - LEFT_PANE_W)
 
-/* Increased item height and larger text to remove dead vertical space */
-#define ITEM_H 68
-#define ITEM_GAP 4
+/* Reduced item height and gap to pull game titles significantly closer together */
+#define ITEM_H 48
+#define ITEM_GAP 2
 
-/* Expanded Cover dimensions with extra padding from panel border */
+/* Cover art positioning */
 #define COVER_PADDING 28
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
 #define COVER_Y (PANEL_Y + 70)
@@ -83,11 +80,10 @@ static void draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32
 }
 
 static void draw_game_list(int sel, int count) {
-    /* Header area inside left panel */
     draw_text(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 28);
     draw_rect(LEFT_PANE_X + 20, PANEL_Y + 54, LEFT_PANE_W - 40, 2, COLOR_BORDER);
 
-    int list_y = PANEL_Y + 68;
+    int list_y = PANEL_Y + 66;
     int visible = (PANEL_BOT - list_y - 10) / (ITEM_H + ITEM_GAP);
     if (visible < 1) visible = 1;
     
@@ -100,19 +96,18 @@ static void draw_game_list(int sel, int count) {
         int is_sel = (i == sel);
 
         if (is_sel) {
-            draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 6, COLOR_CARD_SEL);
-            draw_rect(LEFT_PANE_X + 12, yy + 4, 4, ITEM_H - 8, COLOR_GOLD);
+            draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
+            draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
             
             char buf[64];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[64];
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 30);
-            /* Highlighted item text color changed to Gold with larger font size */
-            draw_text(LEFT_PANE_X + 28, yy + (ITEM_H - 30) / 2, tbuf, COLOR_GOLD, 30);
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 28);
+            draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 28) / 2, tbuf, COLOR_GOLD, 28);
         } else {
             char tbuf[64];
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 28);
-            draw_text(LEFT_PANE_X + 48, yy + (ITEM_H - 28) / 2, tbuf, COLOR_TEXT, 28);
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 26);
+            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 26) / 2, tbuf, COLOR_TEXT, 26);
         }
     }
 
@@ -127,7 +122,6 @@ static void draw_game_list(int sel, int count) {
 }
 
 static void draw_game_details(int sel, int total_games) {
-    /* Header area inside right panel */
     draw_text(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 28);
     
     char cnt[32];
@@ -140,57 +134,59 @@ static void draw_game_details(int sel, int total_games) {
     if (sel < 0 || sel >= game_count) return;
     Game *g = &games[sel];
 
-    /* Cover Rendering with padding buffer from border */
+    /* Cover Rendering */
     cover_draw_fit(COVER_X, COVER_Y, COVER_W, COVER_H, g->id);
 
-    /* Align text vertical top start exactly to the top of the cover art frame */
-    int tx = COVER_X + COVER_W + 24;
-    int ty = COVER_Y; 
-    int line_gap = 46;
+    /* 
+     * Exact Top Alignment:
+     * Set initial text Y coordinate to COVER_Y minus label height offset.
+     * This places the absolute top baseline of "TITLE:" on the exact same 
+     * Y pixel coordinate as the top border of the cover art image.
+     */
+    int tx = COVER_X + COVER_W + 28;
+    int ty = COVER_Y - 4; 
+    int line_gap = 26;
 
-    /* TITLE (Bolded via duplicate pixel offset drawing, larger font size) */
+    /* TITLE */
     draw_text(tx, ty, "TITLE:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "TITLE:", COLOR_GOLD, 22);
-    ty += 28;
+    ty += line_gap;
     char tbuf[48];
     truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 28);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 28);
     draw_text(tx + 1, ty, tbuf, COLOR_TEXT, 28);
-    ty += line_gap;
+    ty += line_gap + 16;
 
     /* GAME ID */
     draw_text(tx, ty, "GAME ID:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "GAME ID:", COLOR_GOLD, 22);
-    ty += 28;
-    draw_text(tx, ty, g->id, COLOR_TEXT, 28);
     ty += line_gap;
+    draw_text(tx, ty, g->id, COLOR_TEXT, 28);
+    ty += line_gap + 16;
 
     /* EMULATOR */
     draw_text(tx, ty, "EMULATOR:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "EMULATOR:", COLOR_GOLD, 22);
-    ty += 28;
+    ty += line_gap;
     const char *emu = g->emulator_name[0] ? g->emulator_name : "KOF Orochi Saga";
     draw_text(tx, ty, emu, COLOR_TEXT, 28);
-    ty += line_gap;
+    ty += line_gap + 16;
 
     /* EMU ID */
     draw_text(tx, ty, "EMU ID:", COLOR_GOLD, 22);
     draw_text(tx + 1, ty, "EMU ID:", COLOR_GOLD, 22);
-    ty += 28;
+    ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : "PCSX20042";
     draw_text(tx, ty, emu_id, COLOR_TEXT, 28);
 }
 
 static void draw_header(void) {
-    /* Top Brand Title (Bolded) */
     draw_text(SAFE_X, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44);
     draw_text(SAFE_X + 1, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44);
     
-    /* User Tag */
     int tw = font_text_width("tehrzky", 28);
     draw_text(SAFE_X1 - tw, SAFE_Y + 10, "tehrzky", COLOR_ACCENT, 28);
 
-    /* Header Accent Divider Line */
     draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), 2, COLOR_ACCENT);
 }
 
@@ -216,17 +212,10 @@ static void draw_footer(int in_settings) {
 
 void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games) {
     memset(framebuffer[current_buf], 0, FB_SIZE);
-    
-    /* 
-     * BACKGROUND IMAGE INTEGRATION:
-     * To draw a background wallpaper image, render/copy your decoded background buffer here
-     * before drawing panels. If g_bg_image is NULL, fall back to COLOR_BG.
-     */
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
 
     draw_header();
 
-    /* Draw Left & Right Panels with Gold Outer Borders */
     draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, 8, COLOR_GOLD);
     draw_rounded_rect(LEFT_PANE_X + 2, PANEL_Y + 2, LEFT_PANE_W - 4, PANEL_H - 4, 6, COLOR_PANEL);
 
