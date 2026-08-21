@@ -70,9 +70,17 @@ void draw_pixel(int x, int y, uint32_t color) {
 }
 
 void draw_rect(int x, int y, int w, int h, uint32_t color) {
-    for (int yy = y; yy < y + h; yy++)
-        for (int xx = x; xx < x + w; xx++)
-            draw_pixel(xx, yy, color);
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > SCREEN_WIDTH)  w = SCREEN_WIDTH - x;
+    if (y + h > SCREEN_HEIGHT) h = SCREEN_HEIGHT - y;
+    if (w <= 0 || h <= 0) return;
+
+    uint32_t *dst = &framebuffer[current_buf][y * SCREEN_WIDTH + x];
+    for (int yy = 0; yy < h; yy++) {
+        for (int xx = 0; xx < w; xx++) dst[xx] = color;
+        dst += SCREEN_WIDTH;
+    }
 }
 
 void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
@@ -93,23 +101,21 @@ void draw_rounded_rect(int x, int y, int w, int h, int radius, uint32_t color) {
 
 void draw_image_rgba(int x, int y, int w, int h, const unsigned char *rgba, int img_w, int img_h) {
     if (!rgba || img_w <= 0 || img_h <= 0) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > SCREEN_WIDTH)  w = SCREEN_WIDTH - x;
+    if (y + h > SCREEN_HEIGHT) h = SCREEN_HEIGHT - y;
+    if (w <= 0 || h <= 0) return;
 
     for (int dy = 0; dy < h; dy++) {
         int sy = dy * img_h / h;
         if (sy >= img_h) sy = img_h - 1;
-
+        uint32_t *dst = &framebuffer[current_buf][(y + dy) * SCREEN_WIDTH + x];
         for (int dx = 0; dx < w; dx++) {
             int sx = dx * img_w / w;
             if (sx >= img_w) sx = img_w - 1;
-
             const unsigned char *p = rgba + (sy * img_w + sx) * 4;
-            // stbi_load RGBA: p[0]=R p[1]=G p[2]=B p[3]=A
-            // Framebuffer ARGB: A<<24 | R<<16 | G<<8 | B
-            uint32_t color = ((uint32_t)p[3] << 24) |
-                             ((uint32_t)p[0] << 16) |
-                             ((uint32_t)p[1] << 8)  |
-                             (uint32_t)p[2];
-            draw_pixel(x + dx, y + dy, color);
+            dst[dx] = ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
         }
     }
 }
