@@ -9,8 +9,8 @@
 AppSettings g_settings;
 
 void settings_reset(void) {
-    g_settings.auto_download_covers = 1;
-    g_settings.auto_download_gameindex = 1;
+    g_settings.auto_download_covers = 0;      // OFF by default
+    g_settings.auto_download_gameindex = 0;   // OFF by default
     g_settings.cover_type = 0;
     strncpy(g_settings.scraper_base_url,
             "https://raw.githubusercontent.com/xlenore/ps2-covers/main",
