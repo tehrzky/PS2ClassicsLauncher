@@ -2,17 +2,15 @@
 #include "debug.h"
 #include "goodnames.h"
 #include "config.h"
+#include "settings.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <stdint.h>   // <-- ADD THIS for uint32_t
-#include <stdio.h>    // <-- ADD THIS for snprintf
-
-
-#define ISO_DIR         "/data/PS4ROMS/PS2ISO/"
+#include <stdint.h>
+#include <stdio.h>
 
 Game games[256];
 int game_count = 0;
@@ -104,7 +102,9 @@ static int name_compare(const void *a, const void *b) {
 }
 
 void scan_games(void) {
-    DIR *dir = opendir(ISO_DIR);
+    char iso_dir[512];
+    snprintf(iso_dir, sizeof(iso_dir), "%s/", g_settings.work_path);
+    DIR *dir = opendir(iso_dir);
     if (!dir) return;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL && game_count < 256) {
@@ -117,18 +117,18 @@ void scan_games(void) {
         games[game_count].name[len - 4] = '\0';
 
         snprintf(games[game_count].path, sizeof(games[game_count].path),
-                 "%s%s", ISO_DIR, entry->d_name);
+                 "%s%s", iso_dir, entry->d_name);
 
         if (!extract_disc_id(games[game_count].path, games[game_count].id, sizeof(games[game_count].id))) {
             strncpy(games[game_count].id, "UNKNOWN", sizeof(games[game_count].id) - 1);
             log_debug("DISC ID extraction FAILED for: %s", games[game_count].name);
         }
 
-            build_display_name(entry->d_name, games[game_count].id,
+        build_display_name(entry->d_name, games[game_count].id,
                        games[game_count].display_name,
                        sizeof(games[game_count].display_name));
 
-    config_get_game_emulator_info(games[game_count].id, games[game_count].name,
+        config_get_game_emulator_info(games[game_count].id, games[game_count].name,
                                    games[game_count].emulator_name,
                                    sizeof(games[game_count].emulator_name),
                                    games[game_count].emulator_id,
