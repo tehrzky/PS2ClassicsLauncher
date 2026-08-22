@@ -198,5 +198,9 @@ int main(void) {
         sceKernelUsleep(16666);
     }
 
+        font_cleanup();
+        cover_free_wallpaper();
+        cover_cleanup();
+    
     return 0;
 }
