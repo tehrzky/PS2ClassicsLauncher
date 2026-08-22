@@ -40,23 +40,23 @@ void cover_load(const char *serial) {
     int preferred_3d = g_settings.cover_type == 1;
 
     if (preferred_3d) {
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) == 0) {
             cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
             if (cover_rgba) { cover_loaded = 1; return; }
         }
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) == 0) {
             cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
             if (cover_rgba) { cover_loaded = 1; return; }
         }
     } else {
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) == 0) {
             cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
             if (cover_rgba) { cover_loaded = 1; return; }
         }
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) == 0) {
             cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
             if (cover_rgba) { cover_loaded = 1; return; }
@@ -68,23 +68,23 @@ void cover_load(const char *serial) {
         scraper_download_cover(serial);
 
         if (preferred_3d) {
-            snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             if (access(cover_path, F_OK) == 0) {
                 cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
                 if (cover_rgba) { cover_loaded = 1; return; }
             }
-            snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             if (access(cover_path, F_OK) == 0) {
                 cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
                 if (cover_rgba) { cover_loaded = 1; return; }
             }
         } else {
-            snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             if (access(cover_path, F_OK) == 0) {
                 cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
                 if (cover_rgba) { cover_loaded = 1; return; }
             }
-            snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             if (access(cover_path, F_OK) == 0) {
                 cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
                 if (cover_rgba) { cover_loaded = 1; return; }
@@ -105,9 +105,8 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
         return;
     }
 
-    // Placeholder: centered in box, 80% of box height
     int ph_h = (int)(box_h * 0.80f);
-    int ph_w = ph_h * 3 / 4;  // ~PS2 cover aspect
+    int ph_w = ph_h * 3 / 4;
     int ph_x = x + (box_w - ph_w) / 2;
     int ph_y = y + (box_h - ph_h) / 2;
 
@@ -135,7 +134,7 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
     }
 
     const char *label = "NO COVER";
-        int label_w = font_text_width(label, 24);
+    int label_w = font_text_width(label, 24);
     draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, 0xFF6C7C8E, 2);
 }
 
