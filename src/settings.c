@@ -60,6 +60,10 @@ void settings_load(void) {
             strncpy(g_settings.master_config, val, sizeof(g_settings.master_config) - 1);
             g_settings.master_config[sizeof(g_settings.master_config) - 1] = '\0';
         }
+        else if (strcmp(key, "wallpaper") == 0) {
+            strncpy(g_settings.wallpaper, val, sizeof(g_settings.wallpaper) - 1);
+            g_settings.wallpaper[sizeof(g_settings.wallpaper) - 1] = '\0';
+        }
     }
     fclose(fp);
 }
@@ -79,6 +83,7 @@ void settings_save(void) {
     fprintf(fp, "font_title=%d\n", g_settings.font_title);
     fprintf(fp, "work_path=%s\n", g_settings.work_path);
     fprintf(fp, "master_config=%s\n", g_settings.master_config);
+    fprintf(fp, "wallpaper=%s\n", g_settings.wallpaper);
     fclose(fp);
 }
 
