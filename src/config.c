@@ -19,6 +19,11 @@ static int extract_header_field(const char *line_start, const char *line_end,
     int name_len = (int)strlen(field_name);
     if (p + name_len > line_end) return 0;
     if (strncasecmp(p, field_name, name_len) != 0) return 0;
+    // Ensure "Emulator" does NOT match inside "Emulator Title"
+    if (p + name_len < line_end) {
+        char c = *(p + name_len);
+        if (c != ' ' && c != '\t' && c != ':') return 0;
+    }
     p += name_len;
     while (p < line_end && (*p == ' ' || *p == '\t' || *p == ':')) p++;
     int val_len = (int)(line_end - p);
