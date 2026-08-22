@@ -116,30 +116,6 @@ static int download_file(const char *url, const char *path)
         mkdir(dir_path, 0777);
     }
 
-    char scheme[16] = {0};
-    char host[256] = {0};
-    char res_path[512] = {0};
-    int port = 443;
-
-    if (parse_url(url, scheme, sizeof(scheme), host, sizeof(host),
-                  res_path, sizeof(res_path), &port) < 0) {
-        log_debug("Failed to parse URL: %s", url);
-        return -1;
-    }
-    log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
-
-    struct hostent *server = gethostbyname(host);
-    if (!server) {
-        log_debug("gethostbyname failed for: %s", host);
-        return -1;
-    }
-
-    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
-    char ip_str[32];
-    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
-    ip_str[sizeof(ip_str) - 1] = '\0';
-    log_debug("Resolved %s -> %s", host, ip_str);
-
     snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
@@ -171,25 +147,19 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // Use HOSTNAME (not IP) so TLS SNI works correctly on PS4
-    connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
+    connId = sceHttpCreateConnectionWithURL(tmplId, url, 0);
     if (connId < 0) {
-        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
+        log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateConnection ok: %d", connId);
+    log_debug("sceHttpCreateConnectionWithURL ok: %d", connId);
 
-    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
+    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
     if (reqId < 0) {
-        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
+        log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequest ok: %d", reqId);
-
-    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
-    }
+    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
