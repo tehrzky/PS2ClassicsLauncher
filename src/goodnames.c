@@ -1,5 +1,6 @@
 #include "goodnames.h"
 #include "debug.h"
+#include "settings.h"
 #include <ctype.h>
 #include <string.h>
 #include <stdio.h>
@@ -48,7 +49,9 @@ static void add_or_override_good_name(const char *id, const char *name) {
 }
 
 static void load_gameindex_yaml(void) {
-    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/GameIndex.yaml", "r");
+    char gameindex_path[512];
+    snprintf(gameindex_path, sizeof(gameindex_path), "%s/GameIndex.yaml", g_settings.work_path);
+    FILE *fp = fopen(gameindex_path, "r");
     if (!fp) return;
 
     char line[512];
@@ -108,7 +111,9 @@ static void load_gameindex_yaml(void) {
 }
 
 static void load_goodnames_txt(void) {
-    FILE *fp = fopen("/data/PS4ROMS/PS2ISO/goodnames.txt", "r");
+    char goodnames_path[512];
+    snprintf(goodnames_path, sizeof(goodnames_path), "%s/goodnames.txt", g_settings.work_path);
+    FILE *fp = fopen(goodnames_path, "r");
     if (!fp) return;
 
     char line[512];
