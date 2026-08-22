@@ -4,7 +4,6 @@
 #include "debug.h"
 #include "video.h"
 #include "font.h"
-#include "ui.h"
 #include <string.h>
 #include <unistd.h>
 
