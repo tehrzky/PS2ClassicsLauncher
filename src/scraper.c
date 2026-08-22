@@ -7,7 +7,6 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <stdarg.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <orbis/Http.h>
@@ -21,12 +20,6 @@ static int net_initialized = 0;
 
 char g_download_status[128] = {0};
 int  g_download_active = 0;
-
-// Timeouts (microseconds) so a bad path fails fast instead of hanging the UI.
-#define RESOLVE_TIMEOUT_USEC   (8  * 1000 * 1000)
-#define CONNECT_TIMEOUT_USEC   (8  * 1000 * 1000)
-#define SEND_TIMEOUT_USEC      (8  * 1000 * 1000)
-#define RECV_TIMEOUT_USEC      (15 * 1000 * 1000)
 
 static int ensure_net_init(void)
 {
@@ -57,11 +50,8 @@ static int ensure_net_init(void)
 static int32_t ssl_callback(int32_t libsslCtxId, uint32_t verifyErr,
                             void * const sslCert[], int32_t certNum, void *userArg)
 {
-    (void)libsslCtxId; (void)certNum; (void)userArg; (void)sslCert;
-    if (verifyErr != 0) {
-        log_debug("SSL cert verify warning: 0x%08X (accepting anyway)", verifyErr);
-    }
-    return 1; // accept all certs — we don't ship a CA bundle
+    (void)libsslCtxId; (void)verifyErr; (void)sslCert; (void)certNum; (void)userArg;
+    return 1;
 }
 
 static int parse_url(const char *url, char *scheme, size_t scheme_len,
@@ -83,7 +73,6 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
         strncpy(host, p, host_len - 1);
         host[host_len - 1] = '\0';
         strncpy(path, "/", path_len);
-        path[path_len - 1] = '\0';
     } else {
         size_t hLen = path_start - p;
         if (hLen >= host_len) return -1;
@@ -103,161 +92,18 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-static void set_status(const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(g_download_status, sizeof(g_download_status), fmt, args);
-    va_end(args);
-}
-
-// Does the actual HTTP GET + file write once we already have a connId ready
-// (either connected by hostname directly, or by resolved IP).
-static int http_get_to_file(int32_t tmplId, int32_t connId, const char *url,
-                            const char *path, const char *stage_label)
-{
-    int32_t reqId = -1;
-    int32_t statusCode = 0;
-    FILE *fp = NULL;
-    int ret;
-
-    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
-    if (reqId < 0) {
-        int32_t err = 0;
-        sceHttpGetLastErrno(connId, &err);
-        log_debug("[%s] sceHttpCreateRequestWithURL failed: 0x%08X (errno 0x%08X)", stage_label, reqId, err);
-        set_status("Failed: request (0x%08X)", reqId);
-        return -1;
-    }
-
-    sceHttpSetSendTimeOut(reqId, SEND_TIMEOUT_USEC);
-    sceHttpSetRecvTimeOut(reqId, RECV_TIMEOUT_USEC);
-    sceHttpSetResolveTimeOut(reqId, RESOLVE_TIMEOUT_USEC);
-    sceHttpSetConnectTimeOut(reqId, CONNECT_TIMEOUT_USEC);
-
-    ret = sceHttpSendRequest(reqId, NULL, 0);
-    if (ret < 0) {
-        int32_t err = 0;
-        sceHttpGetLastErrno(reqId, &err);
-        log_debug("[%s] sceHttpSendRequest failed: 0x%08X (errno 0x%08X)", stage_label, ret, err);
-        set_status("Failed: send (0x%08X)", ret);
-        sceHttpDeleteRequest(reqId);
-        return -1;
-    }
-
-    ret = sceHttpGetStatusCode(reqId, &statusCode);
-    if (ret < 0) {
-        log_debug("[%s] sceHttpGetStatusCode failed: 0x%08X", stage_label, ret);
-        set_status("Failed: no status (0x%08X)", ret);
-        sceHttpDeleteRequest(reqId);
-        return -1;
-    }
-    log_debug("[%s] HTTP status code: %d", stage_label, statusCode);
-
-    if (statusCode != 200) {
-        log_debug("[%s] HTTP error: status=%d url=%s", stage_label, statusCode, url);
-        set_status("Failed: HTTP %d", statusCode);
-        sceHttpDeleteRequest(reqId);
-        return -1;
-    }
-
-    fp = fopen(path, "wb");
-    if (!fp) {
-        log_debug("[%s] Failed to create file: %s", stage_label, path);
-        set_status("Failed: can't write file");
-        sceHttpDeleteRequest(reqId);
-        return -1;
-    }
-
-    char buf[4096];
-    size_t total = 0;
-    while ((ret = sceHttpReadData(reqId, buf, sizeof(buf))) > 0) {
-        fwrite(buf, 1, ret, fp);
-        total += ret;
-    }
-    fclose(fp);
-
-    if (ret < 0) {
-        log_debug("[%s] sceHttpReadData error mid-stream: 0x%08X (got %zu bytes)", stage_label, ret, total);
-        set_status("Failed: read error (0x%08X)", ret);
-        sceHttpDeleteRequest(reqId);
-        unlink(path); // don't leave a truncated/corrupt file behind
-        return -1;
-    }
-
-    if (total == 0) {
-        log_debug("[%s] Downloaded 0 bytes: %s", stage_label, path);
-        set_status("Failed: empty response");
-        sceHttpDeleteRequest(reqId);
-        unlink(path);
-        return -1;
-    }
-
-    log_debug("[%s] Downloaded %zu bytes: %s", stage_label, total, path);
-    sceHttpDeleteRequest(reqId);
-    return 0;
-}
-
-// Attempt 1: connect directly by hostname, letting the system resolve DNS
-// and handle SNI/cert hostname matching itself. This is the normal path and
-// works fine on most GoldHen builds — try it first.
-static int try_direct(int32_t tmplId, const char *host, const char *scheme, int port,
-                      const char *url, const char *path)
-{
-    int32_t connId = sceHttpCreateConnection(tmplId, host, scheme, (uint16_t)port, 1);
-    if (connId < 0) {
-        log_debug("[direct] sceHttpCreateConnection failed: 0x%08X", connId);
-        return -1;
-    }
-    log_debug("[direct] sceHttpCreateConnection ok: %d (host=%s)", connId, host);
-
-    int ret = http_get_to_file(tmplId, connId, url, path, "direct");
-    sceHttpDeleteConnection(connId);
-    return ret;
-}
-
-// Attempt 2 (fallback): manually resolve DNS ourselves and connect by IP,
-// while still sending the full URL (with real hostname) in the request so
-// SNI / Host header still work. Some GoldHen versions block or interfere
-// with the console's normal DNS resolution for homebrew apps — this path
-// works around that.
-static int try_manual_dns(int32_t tmplId, const char *host, const char *scheme, int port,
-                          const char *url, const char *path)
-{
-    struct hostent *server = gethostbyname(host);
-    if (!server || !server->h_addr_list || !server->h_addr_list[0]) {
-        log_debug("[manual-dns] gethostbyname failed for: %s", host);
-        set_status("Failed: DNS resolve");
-        return -1;
-    }
-    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
-    char ip_str[32];
-    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
-    ip_str[sizeof(ip_str) - 1] = '\0';
-    log_debug("[manual-dns] Resolved %s -> %s", host, ip_str);
-
-    int32_t connId = sceHttpCreateConnection(tmplId, ip_str, scheme, (uint16_t)port, 1);
-    if (connId < 0) {
-        log_debug("[manual-dns] sceHttpCreateConnection failed: 0x%08X", connId);
-        set_status("Failed: connect (0x%08X)", connId);
-        return -1;
-    }
-    log_debug("[manual-dns] sceHttpCreateConnection ok: %d (ip=%s)", connId, ip_str);
-
-    int ret = http_get_to_file(tmplId, connId, url, path, "manual-dns");
-    sceHttpDeleteConnection(connId);
-    return ret;
-}
-
 static int download_file(const char *url, const char *path)
 {
-    int32_t sslId = -1, httpCtx = -1, tmplId = -1;
+    int ret;
+    int32_t sslId = -1, httpCtx = -1;
+    int32_t tmplId = -1, connId = -1, reqId = -1;
+    FILE *fp = NULL;
+    int32_t statusCode = 0;
 
     log_debug("download_file: %s -> %s", url, path);
 
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
-        set_status("Failed: network init");
         return -1;
     }
 
@@ -278,18 +124,28 @@ static int download_file(const char *url, const char *path)
     if (parse_url(url, scheme, sizeof(scheme), host, sizeof(host),
                   res_path, sizeof(res_path), &port) < 0) {
         log_debug("Failed to parse URL: %s", url);
-        set_status("Failed: bad URL");
         return -1;
     }
     log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
 
-    set_status("Downloading: %s", strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
+    struct hostent *server = gethostbyname(host);
+    if (!server) {
+        log_debug("gethostbyname failed for: %s", host);
+        return -1;
+    }
+    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
+    char ip_str[32];
+    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
+    ip_str[sizeof(ip_str) - 1] = '\0';
+    log_debug("Resolved %s -> %s", host, ip_str);
+
+    snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
+             strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
 
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
         log_debug("sceSslInit failed: 0x%08X", sslId);
-        set_status("Failed: SSL init (0x%08X)", sslId);
         g_download_active = 0;
         return -1;
     }
@@ -298,7 +154,6 @@ static int download_file(const char *url, const char *path)
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
     if (httpCtx < 0) {
         log_debug("sceHttpInit failed: 0x%08X", httpCtx);
-        set_status("Failed: HTTP init (0x%08X)", httpCtx);
         sceSslTerm();
         g_download_active = 0;
         return -1;
@@ -309,45 +164,84 @@ static int download_file(const char *url, const char *path)
                                    ORBIS_HTTP_VERSION_1_1, 0);
     if (tmplId < 0) {
         log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
-        set_status("Failed: template (0x%08X)", tmplId);
         goto cleanup;
     }
     log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
-    sceHttpSetResolveTimeOut(tmplId, RESOLVE_TIMEOUT_USEC);
-    sceHttpSetConnectTimeOut(tmplId, CONNECT_TIMEOUT_USEC);
-    sceHttpSetSendTimeOut(tmplId, SEND_TIMEOUT_USEC);
-    sceHttpSetRecvTimeOut(tmplId, RECV_TIMEOUT_USEC);
 
-    // Try the normal path first...
-    if (try_direct(tmplId, host, scheme, port, url, path) == 0) {
-        goto success;
+    connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
+    if (connId < 0) {
+        log_debug("sceHttpCreateConnection(hostname) failed: 0x%08X, falling back to IP", connId);
+        connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
+        if (connId < 0) {
+            log_debug("sceHttpCreateConnection(IP) failed: 0x%08X", connId);
+            goto cleanup;
+        }
     }
-    log_debug("Direct connection failed, falling back to manual DNS resolve...");
+    log_debug("sceHttpCreateConnection ok: %d", connId);
 
-    // ...then fall back to manual-DNS-resolve + connect-by-IP.
-    if (try_manual_dns(tmplId, host, scheme, port, url, path) == 0) {
-        goto success;
+    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
+    if (reqId < 0) {
+        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
+        goto cleanup;
+    }
+    log_debug("sceHttpCreateRequest ok: %d", reqId);
+
+    ret = sceHttpAddRequestHeader(reqId, "Host", host,, "Host", host, 0);
+    if (ret < 0) {
+        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
     }
 
-    log_debug("Both connection methods failed for: %s", url);
-    goto cleanup;
+    ret = sceHttpSendRequest(reqId, NULL, 0);
+    if (ret < 0) {
+        log_debug("sceHttpSendRequest failed: 0x%08X", ret);
+        goto cleanup;
+    }
+    log_debug("sceHttpSendRequest ok");
 
-success:
+    ret = sceHttpGetStatusCode(reqId, &statusCode);
+    if (ret < 0) {
+        log_debug("sceHttpGetStatusCode failed: 0x%08X", ret);
+        goto cleanup;
+    }
+    log_debug("HTTP status code: %d", statusCode);
+
+    if (statusCode != 200) {
+        log_debug("HTTP error: status=%d", statusCode);
+        goto cleanup;
+    }
+
+    fp = fopen(path, "wb");
+    if (!fp) {
+        log_debug("Failed to create file: %s", path);
+        goto cleanup;
+    }
+
+    char buf[4096];
+    size_t total = 0;
+    while ((ret = sceHttpReadData(reqId, buf, sizeof(buf))) > 0) {
+        fwrite(buf, 1, ret, fp);
+        total += ret;
+    }
+    fclose(fp);
+    log_debug("Downloaded %zu bytes: %s", total, path);
+
+    sceHttpDeleteRequest(reqId);
+    sceHttpDeleteConnection(connId);
     sceHttpDeleteTemplate(tmplId);
     sceHttpTerm(httpCtx);
     sceSslTerm();
     g_download_active = 0;
-    // Leave g_download_status showing the filename briefly rather than
-    // blanking it instantly; caller UI can clear it on next redraw if desired.
+    g_download_status[0] = '\0';
     return 0;
 
 cleanup:
     g_download_active = 0;
-    // NOTE: g_download_status intentionally left set to the failure reason
-    // (set_status was called above) instead of being blanked, so a status
-    // line drawn after this call can show the user what went wrong.
+    g_download_status[0] = '\0';
+    if (fp) fclose(fp);
+    if (reqId >= 0) sceHttpDeleteRequest(reqId);
+    if (connId >= 0) sceHttpDeleteConnection(connId);
     if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
     if (httpCtx >= 0) sceHttpTerm(httpCtx);
     sceSslTerm();
@@ -402,40 +296,34 @@ void scraper_download_cover(const char *serial)
     mkdir(d3_dir, 0777);
 
     int preferred_3d = g_settings.cover_type == 1;
-    int got_any = 0;
 
     if (preferred_3d) {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            if (download_file(url, cover_path) == 0) got_any = 1;
-        } else got_any = 1;
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            if (download_file(url, cover_path) == 0) got_any = 1;
-        } else got_any = 1;
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
     } else {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            if (download_file(url, cover_path) == 0) got_any = 1;
-        } else got_any = 1;
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            if (download_file(url, cover_path) == 0) got_any = 1;
-        } else got_any = 1;
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
     }
-
-    // Only mark "no cover" if BOTH variants genuinely failed — previously a
-    // single failed variant (e.g. no 3D art available) could poison future
-    // attempts to fetch the default cover too.
-    if (!got_any) mark_no_cover(serial);
 }
 
 void scraper_force_download_cover(const char *serial)
@@ -503,6 +391,5 @@ void scraper_force_download_gameindex(void)
     char url[512];
     build_gameindex_url(url, sizeof(url));
     log_debug("Force downloading GameIndex.yaml...");
-    int ret = download_file(url, path);
-    log_debug("Force download GameIndex.yaml result: %s", ret == 0 ? "SUCCESS" : g_download_status);
+    download_file(url, path);
 }
