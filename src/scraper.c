@@ -188,7 +188,7 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
-    ret = sceHttpAddRequestHeader(reqId, "Host", host,, "Host", host, 0);
+    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
     if (ret < 0) {
         log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
     }
