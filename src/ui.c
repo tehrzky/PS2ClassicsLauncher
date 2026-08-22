@@ -54,15 +54,26 @@
 #define SETTINGS_PH        640
 
 static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px, int size) {
-    int chw = font_text_width("M", size);
-    int max_chars = max_px / (chw + 1);
-    if (max_chars < 4) max_chars = 4;
-    size_t len = strlen(s);
-    if ((int)len <= max_chars || out_len < 5) {
+    // First check if the full string fits in the pixel width
+    int full_width = font_text_width(s, size);
+    if (full_width <= max_px) {
         snprintf(out, out_len, "%s", s);
         return;
     }
-    int keep = max_chars - 3;
+
+    // If it doesn't fit, truncate character by character
+    int len = strlen(s);
+    int keep = len;
+    char temp[512];
+    while (keep > 0) {
+        strncpy(temp, s, keep);
+        temp[keep] = '\0';
+        int w = font_text_width(temp, size);
+        if (w + font_text_width("...", size) <= max_px) {
+            break;
+        }
+        keep--;
+    }
     if (keep < 1) keep = 1;
     snprintf(out, out_len, "%.*s...", keep, s);
 }
@@ -96,13 +107,13 @@ static void draw_game_list(int sel, int count) {
             draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
             draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
 
-            char buf[256];
+            char buf[512];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
-            char tbuf[256];
+            char tbuf[512];
             truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
-            char tbuf[256];
+            char tbuf[512];
             truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
             draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 38) / 2, tbuf, COLOR_TEXT, 38);
         }
@@ -139,7 +150,7 @@ static void draw_game_details(int sel, int total_games) {
 
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
-    char tbuf[256];
+    char tbuf[512];
     truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 38);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 38);
     ty += line_gap + 16;
