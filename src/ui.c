@@ -54,14 +54,11 @@
 #define SETTINGS_PH        640
 
 static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px, int size) {
-    // First check if the full string fits in the pixel width
     int full_width = font_text_width(s, size);
     if (full_width <= max_px) {
         snprintf(out, out_len, "%s", s);
         return;
     }
-
-    // If it doesn't fit, truncate character by character
     int len = strlen(s);
     int keep = len;
     char temp[512];
@@ -110,11 +107,13 @@ static void draw_game_list(int sel, int count) {
             char buf[512];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[512];
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
+            // Balanced: show ~12 more characters than before, leave room for future info
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 30, 38);
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
             char tbuf[512];
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
+            // Balanced: show ~12 more characters than before, leave room for future info
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 30, 38);
             draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 38) / 2, tbuf, COLOR_TEXT, 38);
         }
     }
@@ -151,8 +150,9 @@ static void draw_game_details(int sel, int total_games) {
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     char tbuf[512];
-    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 38);
-    draw_text(tx, ty, tbuf, COLOR_TEXT, 38);
+    // Balanced: show ~8 more characters than before
+    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_W - 300, 36);
+    draw_text(tx, ty, tbuf, COLOR_TEXT, 36);
     ty += line_gap + 16;
 
     draw_text_slot(tx, ty, "GAME ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
