@@ -29,13 +29,13 @@
 
 #define TOTAL_PANEL_W (SAFE_X1 - SAFE_X - PANEL_GAP)
 #define LEFT_PANE_X SAFE_X
-#define LEFT_PANE_W (int)(TOTAL_PANEL_W * 0.60f)
+#define LEFT_PANE_W (int)(TOTAL_PANEL_W * 0.52f)
 
 #define RIGHT_PANE_X (LEFT_PANE_X + LEFT_PANE_W + PANEL_GAP)
 #define RIGHT_PANE_W (TOTAL_PANEL_W - LEFT_PANE_W)
 
-#define ITEM_H 48
-#define ITEM_GAP 2
+#define ITEM_H 64
+#define ITEM_GAP 4
 
 #define COVER_PADDING 28
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
@@ -49,9 +49,9 @@
 #define ROUND_RADIUS_SMALL   6
 #define ROUND_RADIUS_LARGE  16
 #define PANEL_BORDER         2
-#define SETTINGS_ROW_H      52
-#define SETTINGS_PW        700
-#define SETTINGS_PH        600
+#define SETTINGS_ROW_H      58
+#define SETTINGS_PW        760
+#define SETTINGS_PH        640
 
 static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px, int size) {
     int chw = font_text_width("M", size);
@@ -68,16 +68,16 @@ static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px
 }
 
 static void draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32_t c) {
-    int bw = font_text_width(btn, 20) + 16;
-    int bh = 32;
+    int bw = font_text_width(btn, 24) + 16;
+    int bh = 36;
     draw_rounded_rect(x, y, bw, bh, 6, COLOR_BORDER);
     draw_rounded_rect(x + 1, y + 1, bw - 2, bh - 2, 5, COLOR_CARD);
-    draw_text(x + 8, y + 5, btn, c, 20);
-    draw_text(x + bw + 12, y + 5, lbl, COLOR_TEXT, 20);
+    draw_text(x + 8, y + 6, btn, c, 24);
+    draw_text(x + bw + 14, y + 6, lbl, COLOR_TEXT, 24);
 }
 
 static void draw_game_list(int sel, int count) {
-    draw_text(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 28);
+    draw_text(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 36);
     draw_rect(LEFT_PANE_X + 20, PANEL_Y + 54, LEFT_PANE_W - 40, PANEL_BORDER, COLOR_BORDER);
 
     int list_y = PANEL_Y + 66;
@@ -99,12 +99,12 @@ static void draw_game_list(int sel, int count) {
             char buf[64];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[64];
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 28);
-            draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 28) / 2, tbuf, COLOR_GOLD, 28);
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 34);
+            draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 34) / 2, tbuf, COLOR_GOLD, 34);
         } else {
             char tbuf[64];
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 26);
-            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 26) / 2, tbuf, COLOR_TEXT, 26);
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 32);
+            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 32) / 2, tbuf, COLOR_TEXT, 32);
         }
     }
 
@@ -119,12 +119,12 @@ static void draw_game_list(int sel, int count) {
 }
 
 static void draw_game_details(int sel, int total_games) {
-    draw_text(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 28);
+    draw_text(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 36);
 
     char cnt[32];
     snprintf(cnt, sizeof(cnt), "Total Games: %d", total_games);
-    int cw = font_text_width(cnt, 22);
-    draw_text(RIGHT_PANE_X + RIGHT_PANE_W - cw - 20, PANEL_Y + 20, cnt, COLOR_DIM, 22);
+    int cw = font_text_width(cnt, 26);
+    draw_text(RIGHT_PANE_X + RIGHT_PANE_W - cw - 20, PANEL_Y + 20, cnt, COLOR_DIM, 26);
 
     draw_rect(RIGHT_PANE_X + 20, PANEL_Y + 54, RIGHT_PANE_W - 40, PANEL_BORDER, COLOR_BORDER);
 
@@ -134,39 +134,39 @@ static void draw_game_details(int sel, int total_games) {
     cover_draw_fit(COVER_X, COVER_Y, COVER_W, COVER_H, g->id);
 
     int tx = COVER_X + COVER_W + 28;
-    int ty = COVER_Y + 32;
-    int line_gap = 26;
+    int ty = COVER_Y + 48;
+    int line_gap = 30;
 
-    draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     char tbuf[48];
-    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 28);
-    draw_text(tx, ty, tbuf, COLOR_TEXT, 28);
+    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 34);
+    draw_text(tx, ty, tbuf, COLOR_TEXT, 34);
     ty += line_gap + 16;
 
-    draw_text_slot(tx, ty, "GAME ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "GAME ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
-    draw_text(tx, ty, g->id, COLOR_TEXT, 28);
+    draw_text(tx, ty, g->id, COLOR_TEXT, 32);
     ty += line_gap + 16;
 
-    draw_text_slot(tx, ty, "EMULATOR:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "EMULATOR:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu = g->emulator_name[0] ? g->emulator_name : "Default";
-    draw_text(tx, ty, emu, COLOR_TEXT, 28);
+    draw_text(tx, ty, emu, COLOR_TEXT, 32);
     ty += line_gap + 16;
 
-    draw_text_slot(tx, ty, "Emu ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "Emu ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
-    draw_text(tx, ty, emu_id, COLOR_TEXT, 28);
+    draw_text(tx, ty, emu_id, COLOR_TEXT, 32);
 }
 
 static void draw_header(void) {
-    draw_text_slot(SAFE_X, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44, FONT_SLOT_TITLE);
-    draw_text_slot(SAFE_X + 1, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 44, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 52, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X + 1, SAFE_Y, "PS2 ISO LAUNCHER", COLOR_ACCENT, 52, FONT_SLOT_TITLE);
 
-    int tw = font_text_width_slot("tehrzky", 28, FONT_SLOT_TITLE);
-    draw_text_slot(SAFE_X1 - tw, SAFE_Y + 10, "tehrzky", COLOR_ACCENT, 28, FONT_SLOT_TITLE);
+    int tw = font_text_width_slot("tehrzky", 32, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X1 - tw, SAFE_Y + 8, "tehrzky", COLOR_ACCENT, 32, FONT_SLOT_TITLE);
 
     draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), PANEL_BORDER, COLOR_ACCENT);
 }
@@ -176,17 +176,17 @@ static void draw_footer(int in_settings) {
     draw_rect(0, y, SCREEN_WIDTH, FOOTER_H, COLOR_PANEL);
     draw_rect(0, y, SCREEN_WIDTH, PANEL_BORDER, COLOR_ACCENT);
 
-    int hy = y + 18;
+    int hy = y + 16;
     int x = SAFE_X + 20;
 
     if (in_settings) {
-        draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
-        draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
+        draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 240;
+        draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 240;
         draw_btn_hint(x, hy, "O", "Close", COLOR_ERROR);
     } else {
-        draw_btn_hint(x, hy, "X", "LAUNCH", COLOR_ACCENT); x += 220;
-        draw_btn_hint(x, hy, "TRI", "SETTINGS", COLOR_ACCENT); x += 240;
-        draw_btn_hint(x, hy, "^v", "SCROLL", COLOR_DIM); x += 220;
+        draw_btn_hint(x, hy, "X", "LAUNCH", COLOR_ACCENT); x += 240;
+        draw_btn_hint(x, hy, "TRI", "SETTINGS", COLOR_ACCENT); x += 260;
+        draw_btn_hint(x, hy, "^v", "SCROLL", COLOR_DIM); x += 240;
         draw_btn_hint(x, hy, "HOLD L2", "FAST SCROLL", COLOR_DIM);
     }
 }
@@ -259,8 +259,8 @@ void draw_settings_ui(int selected_item, int in_per_game) {
     draw_rounded_rect(px + PANEL_BORDER, py + PANEL_BORDER, pw - PANEL_BORDER * 2, ph - PANEL_BORDER * 2, ROUND_RADIUS_LARGE - PANEL_BORDER, COLOR_BG);
 
     const char *title = in_per_game ? "PER-GAME SETTINGS" : "SETTINGS";
-    int tw = font_text_width_slot(title, 36, FONT_SLOT_TITLE);
-    draw_text_slot(px + (pw - tw) / 2, py + 20, title, COLOR_GOLD, 36, FONT_SLOT_TITLE);
+    int tw = font_text_width_slot(title, 40, FONT_SLOT_TITLE);
+    draw_text_slot(px + (pw - tw) / 2, py + 20, title, COLOR_GOLD, 40, FONT_SLOT_TITLE);
 
     int row_h = SETTINGS_ROW_H;
     int start_y = py + 90;
@@ -274,41 +274,41 @@ void draw_settings_ui(int selected_item, int in_per_game) {
             draw_rect(px + 20, ry + 6, 4, row_h - 18, COLOR_ACCENT);
         }
 
-        draw_text(px + 40, ry + 12, settings_labels[i], is_sel ? COLOR_TEXT : COLOR_DIM, 22);
+        draw_text(px + 40, ry + 12, settings_labels[i], is_sel ? COLOR_TEXT : COLOR_DIM, 28);
 
-        char value[128] = {0};
+        char value[196] = {0};
         if (i == 0) snprintf(value, sizeof(value), "%s", g_settings.auto_download_covers ? "ON" : "OFF");
         else if (i == 1) snprintf(value, sizeof(value), "%s", g_settings.auto_download_gameindex ? "ON" : "OFF");
         else if (i == 2) snprintf(value, sizeof(value), "%s", g_settings.cover_type == 1 ? "3D" : "Default");
         else if (i == 3) {
             truncate_to_fit(g_settings.scraper_base_url, value, sizeof(value),
-                            pw - 220, 22);
+                            pw - 300, 26);
         }
         else if (i == 4) {
             truncate_to_fit(g_settings.work_path, value, sizeof(value),
-                            pw - 220, 22);
+                            pw - 300, 26);
         }
         else if (i == 5) {
             truncate_to_fit(g_settings.master_config, value, sizeof(value),
-                            pw - 220, 22);
+                            pw - 300, 26);
         }
         else if (i == 6) {
             const char *name = font_get_list_name(g_settings.font_body);
-            truncate_to_fit(name, value, sizeof(value), pw - 220, 22);
+            truncate_to_fit(name, value, sizeof(value), pw - 300, 26);
         }
         else if (i == 7) {
             const char *name = font_get_list_name(g_settings.font_title);
-            truncate_to_fit(name, value, sizeof(value), pw - 220, 22);
+            truncate_to_fit(name, value, sizeof(value), pw - 300, 26);
         }
         else if (i == 8) snprintf(value, sizeof(value), "Press X");
         else if (i == 9) snprintf(value, sizeof(value), "Press X");
 
-        int vw = font_text_width(value, 22);
+        int vw = font_text_width(value, 26);
         uint32_t vc = COLOR_DIM;
         if (i == 3 || i == 4 || i == 5) vc = COLOR_MUTED;
         else if (i >= 8) vc = is_sel ? COLOR_SUCCESS : COLOR_MUTED;
         else vc = is_sel ? COLOR_ACCENT : COLOR_DIM;
-        draw_text(px + pw - 40 - vw, ry + 12, value, vc, 22);
+        draw_text(px + pw - 40 - vw, ry + 12, value, vc, 26);
     }
 
     draw_footer(1);
