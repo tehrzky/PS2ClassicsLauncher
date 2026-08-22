@@ -148,8 +148,6 @@ static int find_config_by_disc_id_filename(const char *disc_id, char *out_path, 
     return 0;
 }
 
-
-
 static int find_config_by_filename(const char *game_name, char *out_path, size_t out_size) {
     char gameconfig_dir[512];
     snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
@@ -191,7 +189,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     mkdir(gameconfig_dir, 0777);
 
     char game_config_path[700];
-        int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
+    int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
     if (!found) {
         found = find_config_by_disc_id_filename(disc_id, game_config_path, sizeof(game_config_path));
     }
@@ -253,7 +251,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     out_emulator_tid[0] = '\0';
     int fd = open(temp_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open %s", TEMP_CONFIG);
+        log_debug("set_active_game: failed to open %s", temp_config);
         return 0;
     }
 
@@ -308,21 +306,21 @@ int set_active_game(const char *iso_path, const char *disc_id,
 
     fd = open(master_config, O_RDONLY);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open %s", MASTER_CONFIG);
+        log_debug("set_active_game: failed to open %s", master_config);
         return 0;
     }
     char buf[32768];
     int m = read(fd, buf, sizeof(buf) - 1);
     close(fd);
     if (m <= 0) {
-        log_debug("set_active_game: %s empty or unreadable", MASTER_CONFIG);
+        log_debug("set_active_game: %s empty or unreadable", master_config);
         return 0;
     }
     buf[m] = '\0';
 
     fd = open(master_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
-        log_debug("set_active_game: failed to rewrite %s", MASTER_CONFIG);
+        log_debug("set_active_game: failed to rewrite %s", master_config);
         return 0;
     }
 
@@ -341,12 +339,12 @@ int set_active_game(const char *iso_path, const char *disc_id,
         if (*p == '\n') p++;
     }
 
-    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", TEMP_CONFIG);
+    n = snprintf(line_buf, sizeof(line_buf), "--config=\"%s\"\n", temp_config);
     write(fd, line_buf, n);
     close(fd);
 
     log_debug("WROTE MASTER CONFIG: %s (game config: %s, emulator: %s)",
-              MASTER_CONFIG, game_config_path,
+              master_config, game_config_path,
               out_emulator_tid[0] ? out_emulator_tid : EMULATOR_TID);
     return 1;
 }
