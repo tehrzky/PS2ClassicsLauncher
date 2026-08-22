@@ -34,8 +34,8 @@
 #define RIGHT_PANE_X (LEFT_PANE_X + LEFT_PANE_W + PANEL_GAP)
 #define RIGHT_PANE_W (TOTAL_PANEL_W - LEFT_PANE_W)
 
-#define ITEM_H 68
-#define ITEM_GAP 2
+#define ITEM_H 64
+#define ITEM_GAP 4
 
 #define COVER_PADDING 28
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
@@ -96,15 +96,15 @@ static void draw_game_list(int sel, int count) {
             draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
             draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
 
-            char buf[128];
+            char buf[256];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
-            char tbuf[128];
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 38);
+            char tbuf[256];
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
-            char tbuf[128];
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 36);
-            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 36) / 2, tbuf, COLOR_TEXT, 36);
+            char tbuf[256];
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 40, 38);
+            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 38) / 2, tbuf, COLOR_TEXT, 38);
         }
     }
 
@@ -139,7 +139,7 @@ static void draw_game_details(int sel, int total_games) {
 
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
-    char tbuf[128];
+    char tbuf[256];
     truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 38);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 38);
     ty += line_gap + 16;
@@ -155,7 +155,7 @@ static void draw_game_details(int sel, int total_games) {
     draw_text(tx, ty, emu, COLOR_TEXT, 36);
     ty += line_gap + 16;
 
-    draw_text_slot(tx, ty, "Emu ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "EMU ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 36);
