@@ -20,8 +20,9 @@ typedef struct {
     char name[256];
 } GoodName;
 
-static GoodName good_names[12000];
+static GoodName *good_names = NULL;
 static int good_name_count = 0;
+static int good_name_capacity = 0;
 
 static void trim_trailing(char *s) {
     int len = (int)strlen(s);
@@ -29,6 +30,24 @@ static void trim_trailing(char *s) {
         s[len - 1] = '\0';
         len--;
     }
+}
+
+static void ensure_good_name_capacity(void) {
+    if (good_name_count < good_name_capacity) return;
+    int new_cap = good_name_capacity ? good_name_capacity * 2 : 512;
+    GoodName *new_arr = (GoodName*)realloc(good_names, new_cap * sizeof(GoodName));
+    if (!new_arr) {
+        log_debug("Failed to realloc good_names to %d entries", new_cap);
+        return;
+    }
+    good_names = new_arr;
+    good_name_capacity = new_cap;
+}
+
+void cleanup_good_names(void) {
+    if (good_names) { free(good_names); good_names = NULL; }
+    good_name_count = 0;
+    good_name_capacity = 0;
 }
 
 static void add_or_override_good_name(const char *id, const char *name) {
@@ -39,13 +58,13 @@ static void add_or_override_good_name(const char *id, const char *name) {
             return;
         }
     }
-    if (good_name_count < 12000) {
-        strncpy(good_names[good_name_count].id, id, 31);
-        good_names[good_name_count].id[31] = '\0';
-        strncpy(good_names[good_name_count].name, name, 255);
-        good_names[good_name_count].name[255] = '\0';
-        good_name_count++;
-    }
+    ensure_good_name_capacity();
+    if (good_name_count >= good_name_capacity) return; // realloc failed, skip
+    strncpy(good_names[good_name_count].id, id, 31);
+    good_names[good_name_count].id[31] = '\0';
+    strncpy(good_names[good_name_count].name, name, 255);
+    good_names[good_name_count].name[255] = '\0';
+    good_name_count++;
 }
 
 static void load_gameindex_yaml(void) {
@@ -57,7 +76,7 @@ static void load_gameindex_yaml(void) {
     char line[512];
     char pending_id[32] = {0};
 
-    while (fgets(line, sizeof(line), fp) && good_name_count < 12000) {
+    while (fgets(line, sizeof(line), fp)) {
         size_t linelen = strlen(line);
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
@@ -117,7 +136,7 @@ static void load_goodnames_txt(void) {
     if (!fp) return;
 
     char line[512];
-    while (fgets(line, sizeof(line), fp) && good_name_count < 12000) {
+    while (fgets(line, sizeof(line), fp)) {
         // Strip trailing \r and \n
         size_t len = strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
@@ -150,9 +169,10 @@ static void load_goodnames_txt(void) {
 }
 
 void load_good_names(void) {
+    cleanup_good_names(); // reset before reload
     load_gameindex_yaml();
     load_goodnames_txt();
-    log_debug("Loaded %d good names", good_name_count);
+    log_debug("Loaded %d good names (capacity %d)", good_name_count, good_name_capacity);
 }
 
 const char* lookup_good_name(const char *disc_id) {
