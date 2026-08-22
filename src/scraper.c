@@ -16,7 +16,8 @@
 #include <orbis/NetCtl.h>
 #include <orbis/Sysmodule.h>
 
-static int net_initialized = 0;
+char g_download_status[128] = {0};
+int  g_download_active = 0;
 
 static int ensure_net_init(void)
 {
@@ -92,7 +93,9 @@ static int download_file(const char *url, const char *path)
     int32_t statusCode = 0;
 
     log_debug("download_file: %s -> %s", url, path);
-
+    snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s", strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
+    g_download_active = 1;
+    
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
         return -1;
@@ -215,6 +218,8 @@ static int download_file(const char *url, const char *path)
     return 0;
 
 cleanup:
+    g_download_active = 0;
+    g_download_status[0] = '\0';
     if (fp) fclose(fp);
     if (reqId >= 0) sceHttpDeleteRequest(reqId);
     if (connId >= 0) sceHttpDeleteConnection(connId);
@@ -276,6 +281,9 @@ void scraper_download_cover(const char *serial)
     if (preferred_3d) {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
+            char nocover[512];
+            snprintf(nocover, sizeof(nocover), "%s/covers/.%s.nocover", g_settings.work_path, serial);
+            unlink(nocover);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
@@ -283,6 +291,9 @@ void scraper_download_cover(const char *serial)
     } else {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
+            char nocover[512];
+            snprintf(nocover, sizeof(nocover), "%s/covers/.%s.nocover", g_settings.work_path, serial);
+            unlink(nocover);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
@@ -325,7 +336,10 @@ void scraper_download_gameindex(void)
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/GameIndex.yaml", g_settings.work_path);
+    char config_dir[512];
+    snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+    snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
+    mkdir(config_dir, 0777);
 
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 100) {
@@ -342,7 +356,10 @@ void scraper_download_gameindex(void)
 void scraper_force_download_gameindex(void)
 {
     char path[512];
-    snprintf(path, sizeof(path), "%s/GameIndex.yaml", g_settings.work_path);
+    char config_dir[512];
+    snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+    snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
+    mkdir(config_dir, 0777);
     char url[512];
     build_gameindex_url(url, sizeof(url));
     log_debug("Force downloading GameIndex.yaml...");
