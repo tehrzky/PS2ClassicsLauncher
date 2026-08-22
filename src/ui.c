@@ -5,6 +5,7 @@
 #include "cover.h"
 #include "settings.h"
 #include "config.h"
+#include "colors.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -16,19 +17,6 @@
 #define SAFE_Y 40
 #define SAFE_X1 (SCREEN_WIDTH - SAFE_X)
 #define SAFE_Y1 (SCREEN_HEIGHT - SAFE_Y)
-
-#define COLOR_BG 0xFF0B141F
-#define COLOR_PANEL 0xFF101924
-#define COLOR_CARD 0xFF141F2B
-#define COLOR_CARD_SEL 0xFF283A4E
-#define COLOR_BORDER 0xFF4A6B8A
-#define COLOR_GOLD 0xFFF5C542
-#define COLOR_TEXT 0xFFFFFFFF
-#define COLOR_DIM 0xFFCBD5E1
-#define COLOR_MUTED 0xFF64748B
-#define COLOR_ACCENT 0xFF3FA9F5
-#define COLOR_SUCCESS 0xFF3ED598
-#define COLOR_ERROR 0xFFFF5C5C
 
 #define HEADER_H 100
 #define FOOTER_H 70
