@@ -16,6 +16,8 @@
 #include <orbis/NetCtl.h>
 #include <orbis/Sysmodule.h>
 
+static int net_initialized = 0;
+
 char g_download_status[128] = {0};
 int  g_download_active = 0;
 
