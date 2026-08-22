@@ -156,7 +156,7 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
+    connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
