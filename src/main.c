@@ -20,6 +20,7 @@ void _fini(void) {}
 #include "goodnames.h"
 #include "ui.h"
 #include "settings.h"
+#include "cover.h"
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
