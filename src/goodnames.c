@@ -69,7 +69,7 @@ static void add_or_override_good_name(const char *id, const char *name) {
 
 static void load_gameindex_yaml(void) {
     char gameindex_path[512];
-    snprintf(gameindex_path, sizeof(gameindex_path), "%s/GameIndex.yaml", g_settings.work_path);
+    snprintf(gameindex_path, sizeof(gameindex_path), "%s/config/GameIndex.yaml", g_settings.work_path);
     FILE *fp = fopen(gameindex_path, "r");
     if (!fp) return;
 
