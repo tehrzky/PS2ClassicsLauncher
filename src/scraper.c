@@ -128,17 +128,6 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
 
-    struct hostent *server = gethostbyname(host);
-    if (!server) {
-        log_debug("gethostbyname failed for: %s", host);
-        return -1;
-    }
-    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
-    char ip_str[32];
-    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
-    ip_str[sizeof(ip_str) - 1] = '\0';
-    log_debug("Resolved %s -> %s", host, ip_str);
-
     snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
@@ -170,19 +159,29 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
+    // CRITICAL FIX: Use WithURL for connection so PS4 stores hostname for TLS SNI.
+    // This bypasses Sony DNS (blocked by GoldHen) because it uses system resolver.
+    connId = sceHttpCreateConnectionWithURL(tmplId, url, 0);
     if (connId < 0) {
-        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
+        log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateConnection ok: %d", connId);
+    log_debug("sceHttpCreateConnectionWithURL ok: %d", connId);
 
-    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
+    // Use regular request with just the path (NOT WithURL) so GitHub gets correct format:
+    // GET /xlenore/.../SLUS-12345.jpg HTTP/1.1
+    // NOT: GET https://raw.githubusercontent.com/xlenore/... HTTP/1.1
+    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
     if (reqId < 0) {
-        log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
+        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
+    log_debug("sceHttpCreateRequest ok: %d", reqId);
+
+    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
+    if (ret < 0) {
+        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
+    }
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
