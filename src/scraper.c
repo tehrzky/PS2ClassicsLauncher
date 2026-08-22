@@ -31,10 +31,16 @@ static int ensure_net_init(void)
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SSL);
 
     int ret = sceNetInit(NULL, 1024 * 1024);
-    if (ret < 0) { log_debug("sceNetInit failed: 0x%08X", ret); return -1; }
+    if (ret < 0) {
+        log_debug("sceNetInit failed: 0x%08X", ret);
+        return -1;
+    }
 
     ret = sceNetCtlInit();
-    if (ret < 0) { log_debug("sceNetCtlInit failed: 0x%08X", ret); return -1; }
+    if (ret < 0) {
+        log_debug("sceNetCtlInit failed: 0x%08X", ret);
+        return -1;
+    }
 
     net_initialized = 1;
     log_debug("Network stack initialized");
@@ -95,9 +101,7 @@ static int download_file(const char *url, const char *path)
     int32_t statusCode = 0;
 
     log_debug("download_file: %s -> %s", url, path);
-    snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s", strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
-    g_download_active = 1;
-    
+
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
         return -1;
@@ -136,9 +140,14 @@ static int download_file(const char *url, const char *path)
     ip_str[sizeof(ip_str) - 1] = '\0';
     log_debug("Resolved %s -> %s", host, ip_str);
 
+    snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
+             strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
+    g_download_active = 1;
+
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
         log_debug("sceSslInit failed: 0x%08X", sslId);
+        g_download_active = 0;
         return -1;
     }
     log_debug("sceSslInit ok: %d", sslId);
@@ -147,6 +156,7 @@ static int download_file(const char *url, const char *path)
     if (httpCtx < 0) {
         log_debug("sceHttpInit failed: 0x%08X", httpCtx);
         sceSslTerm();
+        g_download_active = 0;
         return -1;
     }
     log_debug("sceHttpInit ok: %d", httpCtx);
@@ -161,6 +171,7 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
+    // Use HOSTNAME (not IP) so TLS SNI works correctly on PS4
     connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
@@ -176,7 +187,9 @@ static int download_file(const char *url, const char *path)
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
     ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
+    if (ret < 0) {
+        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
+    }
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
@@ -217,6 +230,8 @@ static int download_file(const char *url, const char *path)
     sceHttpDeleteTemplate(tmplId);
     sceHttpTerm(httpCtx);
     sceSslTerm();
+    g_download_active = 0;
+    g_download_status[0] = '\0';
     return 0;
 
 cleanup:
@@ -269,8 +284,8 @@ void scraper_download_cover(const char *serial)
 
     char cover_path[512];
     char url[512];
+
     char covers_dir[512], default_dir[512], d3_dir[512];
-    
     snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
     snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
     snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
@@ -283,21 +298,27 @@ void scraper_download_cover(const char *serial)
     if (preferred_3d) {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
-            char nocover[512];
-            snprintf(nocover, sizeof(nocover), "%s/covers/.%s.nocover", g_settings.work_path, serial);
-            unlink(nocover);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+        if (access(cover_path, F_OK) != 0) {
+            build_cover_url(url, sizeof(url), serial, 0);
+            log_debug("Downloading default cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
     } else {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
-            char nocover[512];
-            snprintf(nocover, sizeof(nocover), "%s/covers/.%s.nocover", g_settings.work_path, serial);
-            unlink(nocover);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
+            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+        }
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+        if (access(cover_path, F_OK) != 0) {
+            build_cover_url(url, sizeof(url), serial, 1);
+            log_debug("Downloading 3D cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
     }
@@ -313,8 +334,8 @@ void scraper_force_download_cover(const char *serial)
 
     char cover_path[512];
     char url[512];
+
     char covers_dir[512], default_dir[512], d3_dir[512];
-    
     snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
     snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
     snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
@@ -338,8 +359,9 @@ void scraper_download_gameindex(void)
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
-    char config_dir[512];
     snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+
+    char config_dir[512];
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
 
@@ -358,10 +380,12 @@ void scraper_download_gameindex(void)
 void scraper_force_download_gameindex(void)
 {
     char path[512];
-    char config_dir[512];
     snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+
+    char config_dir[512];
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
+
     char url[512];
     build_gameindex_url(url, sizeof(url));
     log_debug("Force downloading GameIndex.yaml...");
