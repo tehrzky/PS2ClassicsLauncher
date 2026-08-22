@@ -107,13 +107,13 @@ static void draw_game_list(int sel, int count) {
             char buf[512];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[512];
-            // Balanced: show ~12 more characters than before, leave room for future info
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 30, 38);
+            // Removed ~12 characters worth of pixel width (approx 260px)
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 290, 38);
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
             char tbuf[512];
-            // Balanced: show ~12 more characters than before, leave room for future info
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 30, 38);
+            // Removed ~12 characters worth of pixel width (approx 260px)
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 290, 38);
             draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 38) / 2, tbuf, COLOR_TEXT, 38);
         }
     }
@@ -150,8 +150,8 @@ static void draw_game_details(int sel, int total_games) {
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     char tbuf[512];
-    // Balanced: show ~8 more characters than before
-    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_W - 300, 36);
+    // Removed ~8 characters worth of pixel width (approx 170px)
+    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_W - 470, 36);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 36);
     ty += line_gap + 16;
 
