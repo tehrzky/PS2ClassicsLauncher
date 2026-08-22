@@ -115,7 +115,19 @@ void draw_image_rgba(int x, int y, int w, int h, const unsigned char *rgba, int 
             int sx = dx * img_w / w;
             if (sx >= img_w) sx = img_w - 1;
             const unsigned char *p = rgba + (sy * img_w + sx) * 4;
-            dst[dx] = ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
+            uint8_t alpha = p[3];
+            if (alpha == 255) {
+                dst[dx] = (0xFFu << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
+            } else if (alpha > 0) {
+                uint32_t dst_col = dst[dx];
+                uint8_t dr = (dst_col >> 16) & 0xFF;
+                uint8_t dg = (dst_col >> 8) & 0xFF;
+                uint8_t db = dst_col & 0xFF;
+                uint8_t r = (p[0] * alpha + dr * (255 - alpha)) / 255;
+                uint8_t g = (p[1] * alpha + dg * (255 - alpha)) / 255;
+                uint8_t b = (p[2] * alpha + db * (255 - alpha)) / 255;
+                dst[dx] = (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+            }
         }
     }
 }
