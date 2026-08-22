@@ -2,6 +2,7 @@
 #define VIDEO_H
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
+#define FB_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * 4)
 
 
 #include <stdint.h>
