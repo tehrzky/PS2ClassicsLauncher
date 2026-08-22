@@ -132,6 +132,19 @@ static int download_file(const char *url, const char *path)
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
 
+    // Manual DNS bypass — GoldHen blocks Sony DNS, so we resolve ourselves
+    struct hostent *server = gethostbyname(host);
+    if (!server) {
+        log_debug("gethostbyname failed for: %s", host);
+        g_download_active = 0;
+        return -1;
+    }
+    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
+    char ip_str[32];
+    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
+    ip_str[sizeof(ip_str) - 1] = '\0';
+    log_debug("Resolved %s -> %s", host, ip_str);
+
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
         log_debug("sceSslInit failed: 0x%08X", sslId);
@@ -159,20 +172,21 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // CRITICAL: pass HOSTNAME (not IP) so PS4 TLS sends correct SNI
-    connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
+    // Connect by resolved IP — bypasses blocked Sony DNS
+    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
     }
     log_debug("sceHttpCreateConnection ok: %d", connId);
 
-    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
+    // Create request with FULL URL — gives the HTTP/SSL layer the hostname for SNI
+    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
     if (reqId < 0) {
-        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
+        log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequest ok: %d", reqId);
+    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
