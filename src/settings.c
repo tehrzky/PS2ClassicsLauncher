@@ -4,8 +4,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define SETTINGS_PATH "/data/PS4ROMS/PS2ISO/config/launcher_settings.txt"
-
 AppSettings g_settings;
 
 void settings_reset(void) {
@@ -27,8 +25,11 @@ void settings_reset(void) {
 
 void settings_load(void) {
     settings_reset();
-    mkdir("/data/PS4ROMS/PS2ISO/config", 0777);
-    FILE *fp = fopen(SETTINGS_PATH, "r");
+    char config_dir[512], settings_path[512];
+    snprintf(config_dir,   sizeof(config_dir),   "%s/config", g_settings.work_path);
+    snprintf(settings_path, sizeof(settings_path), "%s/config/launcher_settings.txt", g_settings.work_path);
+    mkdir(config_dir, 0777);
+    FILE *fp = fopen(settings_path, "r");
     if (!fp) {
         settings_save();
         return;
@@ -64,8 +65,11 @@ void settings_load(void) {
 }
 
 void settings_save(void) {
-    mkdir("/data/PS4ROMS/PS2ISO/config", 0777);
-    FILE *fp = fopen(SETTINGS_PATH, "w");
+    char config_dir[512], settings_path[512];
+    snprintf(config_dir,   sizeof(config_dir),   "%s/config", g_settings.work_path);
+    snprintf(settings_path, sizeof(settings_path), "%s/config/launcher_settings.txt", g_settings.work_path);
+    mkdir(config_dir, 0777);
+    FILE *fp = fopen(settings_path, "w");
     if (!fp) return;
     fprintf(fp, "auto_download_covers=%d\n", g_settings.auto_download_covers);
     fprintf(fp, "auto_download_gameindex=%d\n", g_settings.auto_download_gameindex);
