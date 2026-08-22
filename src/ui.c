@@ -8,6 +8,7 @@
 #include "colors.h"
 #include <string.h>
 #include <stdio.h>
+#include "scraper.h"
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
@@ -154,7 +155,7 @@ static void draw_game_details(int sel, int total_games) {
     draw_text(tx, ty, emu, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    draw_text_slot(tx, ty, "EMU ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(tx, ty, "Emu ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 28);
@@ -217,6 +218,16 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
         int w2 = font_text_width(m2, 24);
         draw_text(SCREEN_WIDTH / 2 - w1 / 2, SCREEN_HEIGHT / 2 - 20, m1, COLOR_ERROR, 36);
         draw_text(SCREEN_WIDTH / 2 - w2 / 2, SCREEN_HEIGHT / 2 + 30, m2, COLOR_DIM, 24);
+    }
+
+    // Download notification toast
+    if (g_download_active && g_download_status[0]) {
+        int tw = font_text_width(g_download_status, 22);
+        int tx = SCREEN_WIDTH / 2 - tw / 2 - 20;
+        int ty = SCREEN_HEIGHT - FOOTER_H - 50;
+        draw_rounded_rect(tx, ty, tw + 40, 36, 8, COLOR_PANEL);
+        draw_rounded_rect(tx + 1, ty + 1, tw + 38, 34, 7, COLOR_BG);
+        draw_text(tx + 20, ty + 6, g_download_status, COLOR_ACCENT, 22);
     }
 }
 
