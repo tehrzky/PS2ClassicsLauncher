@@ -7,8 +7,6 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <netdb.h>
-#include <arpa/inet.h>
 #include <orbis/Http.h>
 #include <orbis/_types/http.h>
 #include <orbis/Ssl.h>
