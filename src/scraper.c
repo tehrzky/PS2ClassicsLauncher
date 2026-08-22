@@ -170,28 +170,19 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    connId = sceHttpCreateConnection(tmplId, host, scheme, port, 1);
+    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
-        log_debug("sceHttpCreateConnection(hostname) failed: 0x%08X, falling back to IP", connId);
-        connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
-        if (connId < 0) {
-            log_debug("sceHttpCreateConnection(IP) failed: 0x%08X", connId);
-            goto cleanup;
-        }
+        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
+        goto cleanup;
     }
     log_debug("sceHttpCreateConnection ok: %d", connId);
 
-    reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
+    reqId = sceHttpCreateRequestWithURL(connId, ORBIS_METHOD_GET, url, 0);
     if (reqId < 0) {
-        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
+        log_debug("sceHttpCreateRequestWithURL failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequest ok: %d", reqId);
-
-    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
-    }
+    log_debug("sceHttpCreateRequestWithURL ok: %d", reqId);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
