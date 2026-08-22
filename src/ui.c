@@ -135,33 +135,28 @@ static void draw_game_details(int sel, int total_games) {
     cover_draw_fit(COVER_X, COVER_Y, COVER_W, COVER_H, g->id);
 
     int tx = COVER_X + COVER_W + 28;
-    int ty = COVER_Y - 4;
+    int ty = COVER_Y + 32;
     int line_gap = 26;
 
-    draw_text(tx, ty, "TITLE:", COLOR_GOLD, 22);
-    draw_text(tx + 1, ty, "TITLE:", COLOR_GOLD, 22);
+    draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
     ty += line_gap;
     char tbuf[48];
     truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 28);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 28);
-    draw_text(tx + 1, ty, tbuf, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    draw_text(tx, ty, "GAME ID:", COLOR_GOLD, 22);
-    draw_text(tx + 1, ty, "GAME ID:", COLOR_GOLD, 22);
+    draw_text_slot(tx, ty, "GAME ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
     ty += line_gap;
     draw_text(tx, ty, g->id, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    draw_text(tx, ty, "EMULATOR:", COLOR_GOLD, 22);
-    draw_text(tx + 1, ty, "EMULATOR:", COLOR_GOLD, 22);
+    draw_text_slot(tx, ty, "EMULATOR:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu = g->emulator_name[0] ? g->emulator_name : "Default";
     draw_text(tx, ty, emu, COLOR_TEXT, 28);
     ty += line_gap + 16;
 
-    draw_text(tx, ty, "EMU ID:", COLOR_GOLD, 22);
-    draw_text(tx + 1, ty, "EMU ID:", COLOR_GOLD, 22);
+    draw_text_slot(tx, ty, "EMU ID:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 28);
