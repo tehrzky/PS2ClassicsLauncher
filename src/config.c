@@ -19,6 +19,28 @@ static int extract_header_field(const char *line_start, const char *line_end,
     int name_len = (int)strlen(field_name);
     if (p + name_len > line_end) return 0;
     if (strncasecmp(p, field_name, name_len) != 0) return 0;
+    p += name_len;
+    // CRITICAL: after the field name, next non-space MUST be ':'
+    while (p < line_end && (*p == ' ' || *p == '\t')) p++;
+    if (p >= line_end || *p != ':') return 0;
+    p++; // skip ':'
+    while (p < line_end && (*p == ' ' || *p == '\t')) p++;
+    int val_len = (int)(line_end - p);
+    if (val_len <= 0) return 0;
+    if ((size_t)val_len >= out_size) val_len = out_size - 1;
+    strncpy(out, p, val_len);
+    out[val_len] = '\0';
+    while (val_len > 0 && (out[val_len - 1] == ' ' || out[val_len - 1] == '\t')) {
+        out[val_len - 1] = '\0'; val_len--;
+    }
+    return 1;
+}
+    const char *p = line_start;
+    if (p < line_end && *p == '#') p++;
+    while (p < line_end && (*p == ' ' || *p == '\t')) p++;
+    int name_len = (int)strlen(field_name);
+    if (p + name_len > line_end) return 0;
+    if (strncasecmp(p, field_name, name_len) != 0) return 0;
     // Ensure "Emulator" does NOT match inside "Emulator Title"
     if (p + name_len < line_end) {
         char c = *(p + name_len);
