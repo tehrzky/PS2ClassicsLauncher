@@ -54,6 +54,16 @@
 #define COVER_W 360
 #define COVER_H (int)(PANEL_H * 0.72f)
 
+#define SCROLLBAR_WIDTH      4
+#define SCROLLBAR_PADDING   12
+#define ROUND_RADIUS         8
+#define ROUND_RADIUS_SMALL   6
+#define ROUND_RADIUS_LARGE  16
+#define PANEL_BORDER         2
+#define SETTINGS_ROW_H      52
+#define SETTINGS_PW        700
+#define SETTINGS_PH        600
+
 static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px, int size) {
     int chw = font_text_width("M", size);
     int max_chars = max_px / (chw + 1);
@@ -79,7 +89,7 @@ static void draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32
 
 static void draw_game_list(int sel, int count) {
     draw_text(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 28);
-    draw_rect(LEFT_PANE_X + 20, PANEL_Y + 54, LEFT_PANE_W - 40, 2, COLOR_BORDER);
+    draw_rect(LEFT_PANE_X + 20, PANEL_Y + 54, LEFT_PANE_W - 40, PANEL_BORDER, COLOR_BORDER);
 
     int list_y = PANEL_Y + 66;
     int visible = (PANEL_BOT - list_y - 10) / (ITEM_H + ITEM_GAP);
@@ -111,11 +121,11 @@ static void draw_game_list(int sel, int count) {
 
     if (count > visible) {
         int track_h = PANEL_BOT - list_y - 20;
-        draw_rect(LEFT_PANE_X + LEFT_PANE_W - 12, list_y, 4, track_h, COLOR_CARD);
+        draw_rect(LEFT_PANE_X + LEFT_PANE_W - SCROLLBAR_PADDING, list_y, SCROLLBAR_WIDTH, track_h, COLOR_CARD);
         int thumb = track_h * visible / count;
         if (thumb < 24) thumb = 24;
         int ty = list_y + (track_h - thumb) * start / (count - visible > 0 ? count - visible : 1);
-        draw_rect(LEFT_PANE_X + LEFT_PANE_W - 12, ty, 4, thumb, COLOR_ACCENT);
+        draw_rect(LEFT_PANE_X + LEFT_PANE_W - SCROLLBAR_PADDING, ty, SCROLLBAR_WIDTH, thumb, COLOR_ACCENT);
     }
 }
 
@@ -127,7 +137,7 @@ static void draw_game_details(int sel, int total_games) {
     int cw = font_text_width(cnt, 22);
     draw_text(RIGHT_PANE_X + RIGHT_PANE_W - cw - 20, PANEL_Y + 20, cnt, COLOR_DIM, 22);
 
-    draw_rect(RIGHT_PANE_X + 20, PANEL_Y + 54, RIGHT_PANE_W - 40, 2, COLOR_BORDER);
+    draw_rect(RIGHT_PANE_X + 20, PANEL_Y + 54, RIGHT_PANE_W - 40, PANEL_BORDER, COLOR_BORDER);
 
     if (sel < 0 || sel >= game_count) return;
     Game *g = &games[sel];
@@ -169,13 +179,13 @@ static void draw_header(void) {
     int tw = font_text_width_slot("tehrzky", 28, FONT_SLOT_TITLE);
     draw_text_slot(SAFE_X1 - tw, SAFE_Y + 10, "tehrzky", COLOR_ACCENT, 28, FONT_SLOT_TITLE);
 
-    draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), 2, COLOR_ACCENT);
+    draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), PANEL_BORDER, COLOR_ACCENT);
 }
 
 static void draw_footer(int in_settings) {
     int y = SCREEN_HEIGHT - FOOTER_H;
     draw_rect(0, y, SCREEN_WIDTH, FOOTER_H, COLOR_PANEL);
-    draw_rect(0, y, SCREEN_WIDTH, 2, COLOR_ACCENT);
+    draw_rect(0, y, SCREEN_WIDTH, PANEL_BORDER, COLOR_ACCENT);
 
     int hy = y + 18;
     int x = SAFE_X + 20;
@@ -202,11 +212,11 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
 
     draw_header();
 
-    draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, 8, COLOR_GOLD);
-    draw_rounded_rect(LEFT_PANE_X + 2, PANEL_Y + 2, LEFT_PANE_W - 4, PANEL_H - 4, 6, COLOR_PANEL);
+    draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
+    draw_rounded_rect(LEFT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, LEFT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, COLOR_PANEL);
 
-    draw_rounded_rect(RIGHT_PANE_X, PANEL_Y, RIGHT_PANE_W, PANEL_H, 8, COLOR_GOLD);
-    draw_rounded_rect(RIGHT_PANE_X + 2, PANEL_Y + 2, RIGHT_PANE_W - 4, PANEL_H - 4, 6, COLOR_PANEL);
+    draw_rounded_rect(RIGHT_PANE_X, PANEL_Y, RIGHT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
+    draw_rounded_rect(RIGHT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, RIGHT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, COLOR_PANEL);
 
     draw_game_list(selected_idx, game_count_visible);
     draw_game_details(selected_idx, total_games);
@@ -236,8 +246,8 @@ static const char *settings_labels[SETTINGS_ITEMS] = {
 };
 
 void draw_settings_ui(int selected_item, int in_per_game) {
-    int pw = 700;
-    int ph = 600;
+    int pw = SETTINGS_PW;
+    int ph = SETTINGS_PH;
     int px = (SCREEN_WIDTH - pw) / 2;
     int py = (SCREEN_HEIGHT - ph) / 2;
 
@@ -246,14 +256,14 @@ void draw_settings_ui(int selected_item, int in_per_game) {
     draw_rect(0, py, px, ph, 0xE60B141F);
     draw_rect(px + pw, py, SCREEN_WIDTH - px - pw, ph, 0xE60B141F);
 
-    draw_rounded_rect(px, py, pw, ph, 16, COLOR_PANEL);
-    draw_rounded_rect(px + 2, py + 2, pw - 4, ph - 4, 14, COLOR_BG);
+    draw_rounded_rect(px, py, pw, ph, ROUND_RADIUS_LARGE, COLOR_PANEL);
+    draw_rounded_rect(px + PANEL_BORDER, py + PANEL_BORDER, pw - PANEL_BORDER * 2, ph - PANEL_BORDER * 2, ROUND_RADIUS_LARGE - PANEL_BORDER, COLOR_BG);
 
     const char *title = in_per_game ? "PER-GAME SETTINGS" : "SETTINGS";
     int tw = font_text_width_slot(title, 36, FONT_SLOT_TITLE);
     draw_text_slot(px + (pw - tw) / 2, py + 20, title, COLOR_GOLD, 36, FONT_SLOT_TITLE);
 
-    int row_h = 52;
+    int row_h = SETTINGS_ROW_H;
     int start_y = py + 90;
 
     for (int i = 0; i < SETTINGS_ITEMS; i++) {
