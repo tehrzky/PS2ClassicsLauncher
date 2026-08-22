@@ -242,7 +242,7 @@ static void build_gameindex_url(char *out, size_t out_len)
 static void mark_no_cover(const char *serial)
 {
     char path[512];
-    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
     FILE *fp = fopen(path, "w");
     if (fp) fclose(fp);
 }
@@ -250,7 +250,7 @@ static void mark_no_cover(const char *serial)
 static int has_no_cover_marker(const char *serial)
 {
     char path[512];
-    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
     return access(path, F_OK) == 0;
 }
 
@@ -262,22 +262,26 @@ void scraper_download_cover(const char *serial)
 
     char cover_path[512];
     char url[512];
-
-    mkdir("/data/PS4ROMS/PS2ISO/covers", 0777);
-    mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
-    mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
+    char covers_dir[512], default_dir[512], d3_dir[512];
+    
+    snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
+    snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
+    snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
+    mkdir(covers_dir, 0777);
+    mkdir(default_dir, 0777);
+    mkdir(d3_dir, 0777);
 
     int preferred_3d = g_settings.cover_type == 1;
 
     if (preferred_3d) {
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
     } else {
-        snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
@@ -291,22 +295,26 @@ void scraper_force_download_cover(const char *serial)
     if (!serial || strlen(serial) == 0) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/covers/.%s.nocover", serial);
+    snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
     unlink(path);
 
     char cover_path[512];
     char url[512];
+    char covers_dir[512], default_dir[512], d3_dir[512];
+    
+    snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
+    snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
+    snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
+    mkdir(covers_dir, 0777);
+    mkdir(default_dir, 0777);
+    mkdir(d3_dir, 0777);
 
-    mkdir("/data/PS4ROMS/PS2ISO/covers", 0777);
-    mkdir("/data/PS4ROMS/PS2ISO/covers/default", 0777);
-    mkdir("/data/PS4ROMS/PS2ISO/covers/3d", 0777);
-
-    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/default/%s.jpg", serial);
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
     build_cover_url(url, sizeof(url), serial, 0);
     log_debug("Force downloading default cover: %s", url);
     download_file(url, cover_path);
 
-    snprintf(cover_path, sizeof(cover_path), "/data/PS4ROMS/PS2ISO/covers/3d/%s.png", serial);
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
     build_cover_url(url, sizeof(url), serial, 1);
     log_debug("Force downloading 3D cover: %s", url);
     download_file(url, cover_path);
@@ -317,7 +325,7 @@ void scraper_download_gameindex(void)
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
+    snprintf(path, sizeof(path), "%s/GameIndex.yaml", g_settings.work_path);
 
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 100) {
@@ -334,7 +342,7 @@ void scraper_download_gameindex(void)
 void scraper_force_download_gameindex(void)
 {
     char path[512];
-    snprintf(path, sizeof(path), "/data/PS4ROMS/PS2ISO/GameIndex.yaml");
+    snprintf(path, sizeof(path), "%s/GameIndex.yaml", g_settings.work_path);
     char url[512];
     build_gameindex_url(url, sizeof(url));
     log_debug("Force downloading GameIndex.yaml...");
