@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "video.h"
 #include "font.h"
+#include "colors.h"
 #include <string.h>
 #include <unistd.h>
 
@@ -131,7 +132,7 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
     for (int yy = -hole; yy <= hole; yy++) {
         for (int xx = -hole; xx <= hole; xx++) {
             if ((xx * xx + yy * yy) <= (hole * hole)) {
-                draw_pixel(cx + xx, cy + yy, 0xFF141F2B);
+                draw_pixel(cx + xx, cy + yy, COLOR_CARD);
             }
         }
     }
