@@ -34,8 +34,8 @@
 #define RIGHT_PANE_X (LEFT_PANE_X + LEFT_PANE_W + PANEL_GAP)
 #define RIGHT_PANE_W (TOTAL_PANEL_W - LEFT_PANE_W)
 
-#define ITEM_H 64
-#define ITEM_GAP 4
+#define ITEM_H 68
+#define ITEM_GAP 2
 
 #define COVER_PADDING 28
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
@@ -77,7 +77,7 @@ static void draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32
 }
 
 static void draw_game_list(int sel, int count) {
-    draw_text(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 36);
+    draw_text_slot(LEFT_PANE_X + 20, PANEL_Y + 16, "SELECT A GAME", COLOR_TEXT, 40, FONT_SLOT_BOLD);
     draw_rect(LEFT_PANE_X + 20, PANEL_Y + 54, LEFT_PANE_W - 40, PANEL_BORDER, COLOR_BORDER);
 
     int list_y = PANEL_Y + 66;
@@ -96,15 +96,15 @@ static void draw_game_list(int sel, int count) {
             draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
             draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
 
-            char buf[64];
+            char buf[128];
             snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
-            char tbuf[64];
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 34);
-            draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 34) / 2, tbuf, COLOR_GOLD, 34);
+            char tbuf[128];
+            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 38);
+            draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
-            char tbuf[64];
-            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 32);
-            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 32) / 2, tbuf, COLOR_TEXT, 32);
+            char tbuf[128];
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 60, 36);
+            draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 36) / 2, tbuf, COLOR_TEXT, 36);
         }
     }
 
@@ -119,7 +119,7 @@ static void draw_game_list(int sel, int count) {
 }
 
 static void draw_game_details(int sel, int total_games) {
-    draw_text(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 36);
+    draw_text_slot(RIGHT_PANE_X + 20, PANEL_Y + 16, "GAME DETAILS", COLOR_TEXT, 40, FONT_SLOT_BOLD);
 
     char cnt[32];
     snprintf(cnt, sizeof(cnt), "Total Games: %d", total_games);
@@ -135,30 +135,30 @@ static void draw_game_details(int sel, int total_games) {
 
     int tx = COVER_X + COVER_W + 28;
     int ty = COVER_Y + 48;
-    int line_gap = 30;
+    int line_gap = 32;
 
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
-    char tbuf[48];
-    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 34);
-    draw_text(tx, ty, tbuf, COLOR_TEXT, 34);
+    char tbuf[128];
+    truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_X + RIGHT_PANE_W - tx - 20, 38);
+    draw_text(tx, ty, tbuf, COLOR_TEXT, 38);
     ty += line_gap + 16;
 
     draw_text_slot(tx, ty, "GAME ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
-    draw_text(tx, ty, g->id, COLOR_TEXT, 32);
+    draw_text(tx, ty, g->id, COLOR_TEXT, 36);
     ty += line_gap + 16;
 
     draw_text_slot(tx, ty, "EMULATOR:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu = g->emulator_name[0] ? g->emulator_name : "Default";
-    draw_text(tx, ty, emu, COLOR_TEXT, 32);
+    draw_text(tx, ty, emu, COLOR_TEXT, 36);
     ty += line_gap + 16;
 
     draw_text_slot(tx, ty, "Emu ID:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
-    draw_text(tx, ty, emu_id, COLOR_TEXT, 32);
+    draw_text(tx, ty, emu_id, COLOR_TEXT, 36);
 }
 
 static void draw_header(void) {
