@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "video.h"
 #include "font.h"
+#include "ui.h"
 #include <string.h>
 #include <unistd.h>
 
@@ -14,6 +15,9 @@ static int cover_loaded = 0;
 static char current_serial[32] = {0};
 static unsigned char *cover_rgba = NULL;
 static int cover_w = 0, cover_h = 0;
+
+static unsigned char *wallpaper_rgba = NULL;
+static int wallpaper_w = 0, wallpaper_h = 0;
 
 void cover_load(const char *serial) {
     if (cover_loaded && strcmp(current_serial, serial) == 0) return;
@@ -110,8 +114,8 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
     int ph_x = x + (box_w - ph_w) / 2;
     int ph_y = y + (box_h - ph_h) / 2;
 
-    draw_rounded_rect(ph_x, ph_y, ph_w, ph_h, 14, 0xFF2E4256);
-    draw_rounded_rect(ph_x + 3, ph_y + 3, ph_w - 6, ph_h - 6, 11, 0xFF141F2B);
+    draw_rounded_rect(ph_x, ph_y, ph_w, ph_h, 14, COLOR_CARD_SEL);
+    draw_rounded_rect(ph_x + 3, ph_y + 3, ph_w - 6, ph_h - 6, 11, COLOR_CARD);
 
     int cx = ph_x + ph_w / 2;
     int cy = ph_y + ph_h / 2 - 12;
@@ -120,7 +124,7 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
     for (int yy = -radius; yy <= radius; yy++) {
         for (int xx = -radius; xx <= radius; xx++) {
             if ((xx * xx + yy * yy) <= (radius * radius)) {
-                draw_pixel(cx + xx, cy + yy, 0xFF6C7C8E);
+                draw_pixel(cx + xx, cy + yy, COLOR_MUTED);
             }
         }
     }
@@ -135,7 +139,41 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
 
     const char *label = "NO COVER";
     int label_w = font_text_width(label, 24);
-    draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, 0xFF6C7C8E, 2);
+    draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, COLOR_MUTED, 2);
+}
+
+void cover_load_wallpaper(void) {
+    if (wallpaper_rgba) return; // already loaded
+    if (!g_settings.wallpaper[0]) return;
+
+    char wp_path[512];
+    snprintf(wp_path, sizeof(wp_path), "%s/%s", g_settings.work_path, g_settings.wallpaper);
+    if (access(wp_path, F_OK) != 0) return;
+
+    int channels = 0;
+    wallpaper_rgba = stbi_load(wp_path, &wallpaper_w, &wallpaper_h, &channels, 4);
+    if (!wallpaper_rgba) {
+        wallpaper_w = 0; wallpaper_h = 0;
+    }
+}
+
+void cover_draw_wallpaper(void) {
+    cover_load_wallpaper();
+    if (wallpaper_rgba && wallpaper_w > 0 && wallpaper_h > 0) {
+        draw_image_rgba_fit(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, wallpaper_rgba, wallpaper_w, wallpaper_h);
+    } else {
+        memset(framebuffer[current_buf], 0, FB_SIZE);
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    }
+}
+
+void cover_free_wallpaper(void) {
+    if (wallpaper_rgba) {
+        stbi_image_free(wallpaper_rgba);
+        wallpaper_rgba = NULL;
+        wallpaper_w = 0;
+        wallpaper_h = 0;
+    }
 }
 
 void cover_cleanup(void) {
