@@ -193,8 +193,12 @@ static void draw_footer(int in_settings) {
 }
 
 void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games) {
-    memset(framebuffer[current_buf], 0, FB_SIZE);
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    if (g_settings.wallpaper[0]) {
+        cover_draw_wallpaper();
+    } else {
+        memset(framebuffer[current_buf], 0, FB_SIZE);
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    }
 
     draw_header();
 
@@ -268,24 +272,24 @@ void draw_settings_ui(int selected_item, int in_per_game) {
         else if (i == 1) snprintf(value, sizeof(value), "%s", g_settings.auto_download_gameindex ? "ON" : "OFF");
         else if (i == 2) snprintf(value, sizeof(value), "%s", g_settings.cover_type == 1 ? "3D" : "Default");
         else if (i == 3) {
-            strncpy(value, g_settings.scraper_base_url, 28);
-            value[28] = '\0';
-            if (strlen(g_settings.scraper_base_url) > 28) strcat(value, "...");
+            truncate_to_fit(g_settings.scraper_base_url, value, sizeof(value),
+                            pw - 220, 22);
         }
         else if (i == 4) {
-            strncpy(value, g_settings.work_path, 28);
-            value[28] = '\0';
+            truncate_to_fit(g_settings.work_path, value, sizeof(value),
+                            pw - 220, 22);
         }
-        else if (i == 5) snprintf(value, sizeof(value), "%s", g_settings.master_config);
+        else if (i == 5) {
+            truncate_to_fit(g_settings.master_config, value, sizeof(value),
+                            pw - 220, 22);
+        }
         else if (i == 6) {
             const char *name = font_get_list_name(g_settings.font_body);
-            strncpy(value, name, 22);
-            value[22] = '\0';
+            truncate_to_fit(name, value, sizeof(value), pw - 220, 22);
         }
         else if (i == 7) {
             const char *name = font_get_list_name(g_settings.font_title);
-            strncpy(value, name, 22);
-            value[22] = '\0';
+            truncate_to_fit(name, value, sizeof(value), pw - 220, 22);
         }
         else if (i == 8) snprintf(value, sizeof(value), "Press X");
         else if (i == 9) snprintf(value, sizeof(value), "Press X");
