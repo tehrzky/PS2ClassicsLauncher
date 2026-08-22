@@ -49,6 +49,16 @@ void settings_load(void) {
             strncpy(g_settings.scraper_base_url, val, sizeof(g_settings.scraper_base_url) - 1);
             g_settings.scraper_base_url[sizeof(g_settings.scraper_base_url) - 1] = '\0';
         }
+        else if (strcmp(key, "font_body") == 0) g_settings.font_body = atoi(val);
+        else if (strcmp(key, "font_title") == 0) g_settings.font_title = atoi(val);
+        else if (strcmp(key, "work_path") == 0) {
+            strncpy(g_settings.work_path, val, sizeof(g_settings.work_path) - 1);
+            g_settings.work_path[sizeof(g_settings.work_path) - 1] = '\0';
+        }
+        else if (strcmp(key, "master_config") == 0) {
+            strncpy(g_settings.master_config, val, sizeof(g_settings.master_config) - 1);
+            g_settings.master_config[sizeof(g_settings.master_config) - 1] = '\0';
+        }
     }
     fclose(fp);
 }
@@ -61,6 +71,10 @@ void settings_save(void) {
     fprintf(fp, "auto_download_gameindex=%d\n", g_settings.auto_download_gameindex);
     fprintf(fp, "cover_type=%d\n", g_settings.cover_type);
     fprintf(fp, "scraper_base_url=%s\n", g_settings.scraper_base_url);
+    fprintf(fp, "font_body=%d\n", g_settings.font_body);
+    fprintf(fp, "font_title=%d\n", g_settings.font_title);
+    fprintf(fp, "work_path=%s\n", g_settings.work_path);
+    fprintf(fp, "master_config=%s\n", g_settings.master_config);
     fclose(fp);
 }
 
