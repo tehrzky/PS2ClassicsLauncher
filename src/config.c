@@ -1,5 +1,6 @@
 #include "config.h"
 #include "debug.h"
+#include "settings.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -9,10 +10,27 @@
 #include <time.h>
 #include <stdio.h>
 
-#define MASTER_CONFIG   "/data/PS4ROMS/PS2ISO/config/config-emu-ex.txt"
-#define GAMECONFIG_DIR  "/data/PS4ROMS/PS2ISO/gameconfig/"
-#define DEFAULT_CONFIG  "/data/PS4ROMS/PS2ISO/config/default.txt"
-#define TEMP_CONFIG     "/data/PS4ROMS/PS2ISO/config/.launcher_temp.txt"
+static int extract_header_field(const char *line_start, const char *line_end,
+                                 const char *field_name,
+                                 char *out, size_t out_size) {
+    const char *p = line_start;
+    if (p < line_end && *p == '#') p++;
+    while (p < line_end && (*p == ' ' || *p == '\t')) p++;
+    int name_len = (int)strlen(field_name);
+    if (p + name_len > line_end) return 0;
+    if (strncasecmp(p, field_name, name_len) != 0) return 0;
+    p += name_len;
+    while (p < line_end && (*p == ' ' || *p == '\t' || *p == ':')) p++;
+    int val_len = (int)(line_end - p);
+    if (val_len <= 0) return 0;
+    if ((size_t)val_len >= out_size) val_len = out_size - 1;
+    strncpy(out, p, val_len);
+    out[val_len] = '\0';
+    while (val_len > 0 && (out[val_len - 1] == ' ' || out[val_len - 1] == '\t')) {
+        out[val_len - 1] = '\0'; val_len--;
+    }
+    return 1;
+}
 
 extern const char *embedded_default;
 
@@ -20,7 +38,9 @@ static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t ou
     if (!disc_id || disc_id[0] == '\0' || strcasecmp(disc_id, "UNKNOWN") == 0)
         return 0;
 
-    DIR *dir = opendir(GAMECONFIG_DIR);
+    char gameconfig_dir[512];
+    snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
+    DIR *dir = opendir(gameconfig_dir);
     if (!dir) return 0;
 
     struct dirent *entry;
@@ -33,7 +53,7 @@ static int find_config_by_disc_id(const char *disc_id, char *out_path, size_t ou
         if (strcasecmp(entry->d_name + len - 4, ".txt") != 0) continue;
 
         char path[700];
-        snprintf(path, sizeof(path), "%s%s", GAMECONFIG_DIR, entry->d_name);
+        snprintf(path, sizeof(path), "%s%s", gameconfig_dir, entry->d_name);
 
         int fd = open(path, O_RDONLY);
         if (fd < 0) continue;
@@ -76,7 +96,9 @@ static int find_config_by_disc_id_filename(const char *disc_id, char *out_path, 
     if (!disc_id || disc_id[0] == '\0' || strcasecmp(disc_id, "UNKNOWN") == 0)
         return 0;
 
-    DIR *dir = opendir(GAMECONFIG_DIR);
+    char gameconfig_dir[512];
+    snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
+    DIR *dir = opendir(gameconfig_dir);
     if (!dir) return 0;
 
     struct dirent *entry;
@@ -106,7 +128,7 @@ static int find_config_by_disc_id_filename(const char *disc_id, char *out_path, 
 
         if (match) {
             char path[700];
-            snprintf(path, sizeof(path), "%s%s", GAMECONFIG_DIR, entry->d_name);
+            snprintf(path, sizeof(path), "%s%s", gameconfig_dir, entry->d_name);
             struct stat st;
             if (stat(path, &st) == 0) {
                 if (st.st_mtime > best_mtime) {
@@ -129,7 +151,9 @@ static int find_config_by_disc_id_filename(const char *disc_id, char *out_path, 
 
 
 static int find_config_by_filename(const char *game_name, char *out_path, size_t out_size) {
-    DIR *dir = opendir(GAMECONFIG_DIR);
+    char gameconfig_dir[512];
+    snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
+    DIR *dir = opendir(gameconfig_dir);
     if (!dir) return 0;
 
     struct dirent *entry;
@@ -143,7 +167,7 @@ static int find_config_by_filename(const char *game_name, char *out_path, size_t
         basename[len - 4] = '\0';
 
         if (strcasecmp(basename, game_name) == 0) {
-            snprintf(out_path, out_size, "%s%s", GAMECONFIG_DIR, entry->d_name);
+            snprintf(out_path, out_size, "%s%s", gameconfig_dir, entry->d_name);
             closedir(dir);
             return 1;
         }
@@ -157,8 +181,14 @@ int set_active_game(const char *iso_path, const char *disc_id,
     char line_buf[2048];
     int n;
 
-    mkdir("/data/PS4ROMS/PS2ISO/config", 0777);
-    mkdir(GAMECONFIG_DIR, 0777);
+    char config_dir[512], gameconfig_dir[512], default_config[512], temp_config[512], master_config[512];
+    snprintf(config_dir,     sizeof(config_dir),     "%s/config", g_settings.work_path);
+    snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
+    snprintf(default_config, sizeof(default_config), "%s/config/default.txt", g_settings.work_path);
+    snprintf(temp_config,    sizeof(temp_config),    "%s/config/.launcher_temp.txt", g_settings.work_path);
+    snprintf(master_config,  sizeof(master_config),  "%s/config/config-emu-ex.txt", g_settings.work_path);
+    mkdir(config_dir, 0777);
+    mkdir(gameconfig_dir, 0777);
 
     char game_config_path[700];
         int found = find_config_by_disc_id(disc_id, game_config_path, sizeof(game_config_path));
@@ -170,7 +200,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     }
 
     if (!found) {
-        snprintf(game_config_path, sizeof(game_config_path), "%s%s.txt", GAMECONFIG_DIR, game_name);
+        snprintf(game_config_path, sizeof(game_config_path), "%s%s.txt", gameconfig_dir, game_name);
     } else {
         log_debug("Using existing config: %s", game_config_path);
     }
@@ -195,7 +225,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
             );
             write(gfd, header, hlen);
 
-            int dsrc = open(DEFAULT_CONFIG, O_RDONLY);
+            int dsrc = open(default_config, O_RDONLY);
             char default_buf[65536];
             int dlen = 0;
             if (dsrc >= 0) {
@@ -221,7 +251,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     }
 
     out_emulator_tid[0] = '\0';
-    int fd = open(TEMP_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    int fd = open(temp_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
         log_debug("set_active_game: failed to open %s", TEMP_CONFIG);
         return 0;
@@ -251,31 +281,17 @@ int set_active_game(const char *iso_path, const char *disc_id,
                     write(fd, p, line_len);
                     write(fd, "\n", 1);
 
-                    // Parse # Emulator: line (Emulator ID)
-                    if (line_len > 12 && strncmp(p, "#  Emulator:", 12) == 0) {
-                        char *tid_start = p + 12;
-                        while (tid_start < line_end &&
-                               (*tid_start == ' ' || *tid_start == '\t')) tid_start++;
-                        int tid_len = line_end - tid_start;
-                        if (tid_len > 0 && (size_t)tid_len < tid_size) {
-                            strncpy(out_emulator_tid, tid_start, tid_len);
-                            out_emulator_tid[tid_len] = '\0';
+                    char tid_buf[32] = {0};
+                    if (extract_header_field(p, line_end, "Emulator", tid_buf, sizeof(tid_buf))) {
+                        if (tid_buf[0] && strlen(tid_buf) < tid_size) {
+                            strncpy(out_emulator_tid, tid_buf, tid_size - 1);
+                            out_emulator_tid[tid_size - 1] = '\0';
                         }
                     }
 
-                    // Parse # Emulator Title: line (Emulator Name)
-                    if (line_len > 17 && strncmp(p, "#  Emulator Title:", 17) == 0) {
-                        char *name_start = p + 17;
-                        while (name_start < line_end &&
-                               (*name_start == ' ' || *name_start == '\t')) name_start++;
-                        int name_len = line_end - name_start;
-                        if (name_len > 0) {
-                            char temp_name[64];
-                            if (name_len > 63) name_len = 63;
-                            strncpy(temp_name, name_start, name_len);
-                            temp_name[name_len] = '\0';
-                            log_debug("Emulator Title: %s", temp_name);
-                        }
+                    char name_buf[64] = {0};
+                    if (extract_header_field(p, line_end, "Emulator Title", name_buf, sizeof(name_buf))) {
+                        log_debug("Emulator Title: %s", name_buf);
                     }
                 }
                 p = line_end;
@@ -290,7 +306,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     write(fd, line_buf, n);
     close(fd);
 
-    fd = open(MASTER_CONFIG, O_RDONLY);
+    fd = open(master_config, O_RDONLY);
     if (fd < 0) {
         log_debug("set_active_game: failed to open %s", MASTER_CONFIG);
         return 0;
@@ -304,7 +320,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     }
     buf[m] = '\0';
 
-    fd = open(MASTER_CONFIG, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    fd = open(master_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
         log_debug("set_active_game: failed to rewrite %s", MASTER_CONFIG);
         return 0;
@@ -362,24 +378,8 @@ int config_get_game_emulator_info(const char *disc_id, const char *game_name,
         while (*line_end && *line_end != '\n') line_end++;
         int line_len = line_end - p;
 
-        if (line_len > 11 && strncmp(p, "# Emulator:", 11) == 0) {
-            char *start = p + 11;
-            while (start < line_end && (*start == ' ' || *start == '\t')) start++;
-            int len = line_end - start;
-            if (len > 0 && (size_t)len < id_size) {
-                strncpy(out_emu_id, start, len);
-                out_emu_id[len] = '\0';
-            }
-        }
-        if (line_len > 17 && strncmp(p, "# Emulator Title:", 17) == 0) {
-            char *start = p + 17;
-            while (start < line_end && (*start == ' ' || *start == '\t')) start++;
-            int len = line_end - start;
-            if (len > 0 && (size_t)len < name_size) {
-                strncpy(out_emu_name, start, len);
-                out_emu_name[len] = '\0';
-            }
-        }
+        extract_header_field(p, line_end, "Emulator", out_emu_id, id_size);
+        extract_header_field(p, line_end, "Emulator Title", out_emu_name, name_size);
         p = line_end;
         if (*p == '\n') p++;
     }
