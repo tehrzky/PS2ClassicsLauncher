@@ -13,6 +13,31 @@
 #include <stdlib.h>
 #include <orbis/Pad.h>
 #include <stdint.h>
+#include <dirent.h>
+
+/* Simple nearest-neighbor RGBA blit to framebuffer */
+static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
+                           const uint32_t *rgba, int src_w, int src_h)
+{
+    if (!rgba || src_w <= 0 || src_h <= 0) return;
+    uint32_t *fb = (uint32_t *)framebuffer[current_buf];
+
+    for (int dy = 0; dy < dst_h; dy++) {
+        int sy = dy * src_h / dst_h;
+        if (sy >= src_h) sy = src_h - 1;
+        for (int dx = 0; dx < dst_w; dx++) {
+            int sx = dx * src_w / dst_w;
+            if (sx >= src_w) sx = src_w - 1;
+            uint32_t c = rgba[sy * src_w + sx];
+            if (((c >> 24) & 0xFF) > 0x40) {
+                int px = x + dx;
+                int py = y + dy;
+                if (px >= 0 && px < SCREEN_W && py >= 0 && py < SCREEN_H)
+                    fb[py * SCREEN_W + px] = c;
+            }
+        }
+    }
+}
 
 #define SCREEN_W    1920
 #define SCREEN_H    1080
@@ -164,10 +189,14 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
         if (i < slot->save_count) {
             VmcSaveEntry *se = &slot->saves[i];
 
-            /* Icon area (placeholder for now — real icon extraction is Phase 2) */
+            /* Icon area */
             int ix = cx + 6, iy = cy + 6;
             int iw = CELL_W - 12, ih = CELL_H - 32;
-            draw_rounded_rect(ix, iy, iw, ih, 3, COLOR_BG);
+            if (se->icon_rgba && se->icon_w > 0 && se->icon_h > 0) {
+                draw_icon_rgba(ix, iy, iw, ih, se->icon_rgba, se->icon_w, se->icon_h);
+            } else {
+                draw_rounded_rect(ix, iy, iw, ih, 3, COLOR_BG);
+            }
 
             /* Slot number top-left */
             char sn[8];
@@ -553,8 +582,11 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 2: /* Export .PSU */
-                    /* Phase 2 stub */
+                 case 2: /* Export .PSU */
+                    if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
+                        int ok = memcard_export_save_psu(g_active_slot, "/mnt/usb0");
+                        (void)ok;
+                    }
                     break;
 
                 case 3: /* Backup full VMC */
@@ -563,8 +595,31 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 4: /* Import full VMC */
-                    /* TODO: file picker or scan USB for .VM2 files */
+                 case 4: /* Import full VMC */
+                    if (slot->state != SLOT_STATE_OFF) {
+                        DIR *usbdir = opendir("/mnt/usb0/PS2VMC");
+                        if (usbdir) {
+                            struct dirent *ent;
+                            char found[512] = {0};
+                            while ((ent = readdir(usbdir)) != NULL) {
+                                int len = strlen(ent->d_name);
+                                if (len < 5) continue;
+                                const char *ext = ent->d_name + len - 4;
+                                if (strcasecmp(ext, ".VM2") == 0 ||
+                                    strcasecmp(ext, ".bin") == 0 ||
+                                    strcasecmp(ext, ".vmc") == 0) {
+                                    snprintf(found, sizeof(found),
+                                             "/mnt/usb0/PS2VMC/%s", ent->d_name);
+                                    break;
+                                }
+                            }
+                            closedir(usbdir);
+                            if (found[0]) {
+                                memcard_import_vmc_from_usb(g_active_slot, found);
+                                memcard_refresh_slot(g_active_slot);
+                            }
+                        }
+                    }
                     break;
 
                 case 5: /* Format VMC */
