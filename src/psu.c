@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 /* PSU file format (uLaunchELF / PCSX2 / AetherSX2 compatible):
- *   - Sequence of 512-byte headers (same layout as PS2 mcio dirent)
+ *   - Sequence of 512-byte headers
  *   - Each header immediately followed by the file's raw data
  *   - Last entry has mode==0 to terminate
  *
@@ -14,9 +14,9 @@
  *   0x000: mode       (2 bytes)
  *   0x002: reserved   (2 bytes)
  *   0x004: length     (4 bytes)
- *   0x008: created    (8 bytes)
- *   0x010: cluster    (4 bytes)
- *   0x014: dir_entry  (4 bytes)
+ *   0x008: created    (8 bytes: Resv2,Sec,Min,Hour,Day,Month,YearLo,YearHi)
+ *   0x010: cluster    (4 bytes)  -- zeroed, not exposed by io_stat
+ *   0x014: dir_entry  (4 bytes)  -- zeroed, not exposed by io_stat
  *   0x018: modified   (8 bytes)
  *   0x020: attr       (4 bytes)
  *   0x024: reserved2  (4 bytes)
@@ -32,6 +32,19 @@ static int write_all(FILE *fp, const void *buf, size_t len)
 static int read_all(FILE *fp, void *buf, size_t len)
 {
     return (fread(buf, 1, len, fp) == len) ? 0 : -1;
+}
+
+/* Pack a sceMcStDateTime into 8 bytes at dst */
+static void pack_datetime(uint8_t *dst, const struct sceMcStDateTime *dt)
+{
+    dst[0] = dt->Resv2;
+    dst[1] = dt->Sec;
+    dst[2] = dt->Min;
+    dst[3] = dt->Hour;
+    dst[4] = dt->Day;
+    dst[5] = dt->Month;
+    dst[6] = dt->Year & 0xFF;
+    dst[7] = (dt->Year >> 8) & 0xFF;
 }
 
 int psu_export_save(const char *vmc_dir, const char *psu_path)
@@ -80,7 +93,7 @@ int psu_export_save(const char *vmc_dir, const char *psu_path)
         }
         mcio_mcClose(fd);
 
-        /* Build 512-byte PSU header from dirent.stat */
+        /* Build 512-byte PSU header */
         uint8_t hdr[512];
         memset(hdr, 0, sizeof(hdr));
 
@@ -93,34 +106,13 @@ int psu_export_save(const char *vmc_dir, const char *psu_path)
         hdr[0x07] = (dirent.stat.size >> 24) & 0xFF;
 
         /* created 0x08-0x0F */
-        hdr[0x08] = dirent.stat.created.year & 0xFF;
-        hdr[0x09] = (dirent.stat.created.year >> 8) & 0xFF;
-        hdr[0x0A] = dirent.stat.created.month;
-        hdr[0x0B] = dirent.stat.created.day;
-        hdr[0x0C] = dirent.stat.created.hour;
-        hdr[0x0D] = dirent.stat.created.minute;
-        hdr[0x0E] = dirent.stat.created.second;
+        pack_datetime(hdr + 0x08, &dirent.stat.ctime);
 
-        /* cluster 0x10-0x13 */
-        hdr[0x10] = dirent.stat.cluster & 0xFF;
-        hdr[0x11] = (dirent.stat.cluster >> 8) & 0xFF;
-        hdr[0x12] = (dirent.stat.cluster >> 16) & 0xFF;
-        hdr[0x13] = (dirent.stat.cluster >> 24) & 0xFF;
-
-        /* dir_entry 0x14-0x17 */
-        hdr[0x14] = dirent.stat.dir_entry & 0xFF;
-        hdr[0x15] = (dirent.stat.dir_entry >> 8) & 0xFF;
-        hdr[0x16] = (dirent.stat.dir_entry >> 16) & 0xFF;
-        hdr[0x17] = (dirent.stat.dir_entry >> 24) & 0xFF;
+        /* cluster 0x10-0x13 -- zeroed */
+        /* dir_entry 0x14-0x17 -- zeroed */
 
         /* modified 0x18-0x1F */
-        hdr[0x18] = dirent.stat.modified.year & 0xFF;
-        hdr[0x19] = (dirent.stat.modified.year >> 8) & 0xFF;
-        hdr[0x1A] = dirent.stat.modified.month;
-        hdr[0x1B] = dirent.stat.modified.day;
-        hdr[0x1C] = dirent.stat.modified.hour;
-        hdr[0x1D] = dirent.stat.modified.minute;
-        hdr[0x1E] = dirent.stat.modified.second;
+        pack_datetime(hdr + 0x18, &dirent.stat.mtime);
 
         /* attr 0x20-0x23 */
         hdr[0x20] = dirent.stat.attr & 0xFF;
