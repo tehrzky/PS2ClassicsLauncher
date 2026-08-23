@@ -1,5 +1,7 @@
 #include "memcard_ui.h"
 #include "memcard.h"
+#include "mcio.h"
+#include "ps2mc.h"
 #include "video.h"
 #include "font.h"
 #include "colors.h"
@@ -9,6 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <orbisPad.h>
 
 #define SCREEN_W    1920
 #define SCREEN_H    1080
