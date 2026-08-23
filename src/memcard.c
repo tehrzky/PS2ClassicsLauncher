@@ -689,6 +689,55 @@ int memcard_format_vmc(int slot_idx) {
     return 0;
 }
 
+/* ============================================================
+   TOAST NOTIFICATIONS
+   ============================================================ */
+
+char g_toast_msg[128] = {0};
+int g_toast_timer = 0;
+
+void memcard_show_toast(const char *msg)
+{
+    strncpy(g_toast_msg, msg, sizeof(g_toast_msg) - 1);
+    g_toast_msg[sizeof(g_toast_msg) - 1] = '\0';
+    g_toast_timer = TOAST_DURATION;
+}
+
+void memcard_update_toast(void)
+{
+    if (g_toast_timer > 0) g_toast_timer--;
+}
+
+/* ============================================================
+   PSU FILE PICKER
+   ============================================================ */
+
+char g_psu_files[MAX_PSU_FILES][256];
+int g_psu_file_count = 0;
+int g_psu_picker_open = 0;
+int g_psu_picker_sel = 0;
+
+void memcard_scan_psu_files(void)
+{
+    g_psu_file_count = 0;
+    DIR *dir = opendir("/mnt/usb0/PS2SAVES");
+    if (!dir) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && g_psu_file_count < MAX_PSU_FILES) {
+        int len = strlen(ent->d_name);
+        if (len < 5) continue;
+        const char *ext = ent->d_name + len - 4;
+        if (strcasecmp(ext, ".psu") == 0) {
+            snprintf(g_psu_files[g_psu_file_count], 256,
+                     "/mnt/usb0/PS2SAVES/%s", ent->d_name);
+            g_psu_file_count++;
+        }
+    }
+    closedir(dir);
+    g_psu_picker_sel = 0;
+}
+
 /* --- PSU export/import --- */
 
 int memcard_export_save_psu(int slot_idx, const char *usb_base) {
