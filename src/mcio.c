@@ -24,6 +24,7 @@
 #include "util.h"
 #include "ps2mc.h"
 #include "common.h"
+#include "mcio_compat.h"
 
 #include <stdio.h>
 #include <time.h>
