@@ -76,6 +76,8 @@ extern EmulatorEntry g_emulators[MAX_EMULATORS];
 extern int g_emulator_count;
 extern MemCardSlot g_slots[2];
 extern int g_active_slot;
+extern int g_memcard_action_menu_open;
+extern int g_memcard_action_sel;
 
 /* Confirmation dialog state */
 extern int g_confirm_dialog_open;
