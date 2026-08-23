@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <orbis/UserService.h>
 
 
 /* ============================================================
@@ -52,30 +53,30 @@ const char *memcard_get_user_home(void) {
 void memcard_discover_user_home(void) {
     if (g_user_home_discovered) return;
     g_user_home[0] = '\0';
+    g_user_home_discovered = 1;
 
-    DIR *dir = opendir("/user/home");
-    if (!dir) {
-        log_debug("memcard: cannot open /user/home");
+    OrbisUserServiceInitializeParams param;
+    param.priority = ORBIS_KERNEL_PRIO_FIFO_LOWEST;
+    sceUserServiceInitialize(&param);
+
+    int32_t user_id = 0;
+    int ret = sceUserServiceGetInitialUser(&user_id);
+    if (ret < 0) {
+        log_debug("memcard: sceUserServiceGetInitialUser failed: 0x%08X", ret);
         return;
     }
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
+    snprintf(g_user_home, sizeof(g_user_home), "/user/home/%08x", user_id);
 
-        /* Check if this dir has a savedata/ subdir */
-        char test_path[256];
-        snprintf(test_path, sizeof(test_path), "/user/home/%s/savedata", entry->d_name);
-
-        struct stat st;
-        if (stat(test_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            snprintf(g_user_home, sizeof(g_user_home), "/user/home/%s", entry->d_name);
-            log_debug("memcard: discovered user home: %s", g_user_home);
-            break;
-        }
+    struct stat st;
+    char test_path[160];
+    snprintf(test_path, sizeof(test_path), "%s/savedata", g_user_home);
+    if (stat(test_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        log_debug("memcard: constructed home not reachable: %s", g_user_home);
+        g_user_home[0] = '\0';
+    } else {
+        log_debug("memcard: discovered user home: %s", g_user_home);
     }
-    closedir(dir);
-    g_user_home_discovered = 1;
 }
 
 /* ============================================================
