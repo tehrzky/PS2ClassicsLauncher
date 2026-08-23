@@ -6,6 +6,7 @@
 #include "mcio_compat.h"
 #include "ps2icon.h"
 #include "sjis.h"
+#include "psu.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+
 
 /* ============================================================
    GLOBALS
@@ -687,20 +689,37 @@ int memcard_format_vmc(int slot_idx) {
     return 0;
 }
 
-/* --- PSU export/import (stubs for Phase 2) --- */
+/* --- PSU export/import --- */
 
 int memcard_export_save_psu(int slot_idx, const char *usb_base) {
-    /* TODO: Phase 2 - pack save directory into .PSU format */
-    log_debug("memcard: export_save_psu not yet implemented");
-    (void)slot_idx; (void)usb_base;
-    return 0;
+    if (slot_idx < 0 || slot_idx >= 2) return 0;
+    MemCardSlot *slot = &g_slots[slot_idx];
+    if (!slot->vmc_loaded || slot->save_idx < 0 || slot->save_idx >= slot->save_count)
+        return 0;
+
+    char psu_path[512];
+    snprintf(psu_path, sizeof(psu_path), "%s/PS2SAVES/%s.psu",
+             usb_base, slot->saves[slot->save_idx].dir_name);
+
+    char dir_path[512];
+    snprintf(dir_path, sizeof(dir_path), "%s/PS2SAVES", usb_base);
+    mkdir(dir_path, 0777);
+
+    int r = psu_export_save(slot->saves[slot->save_idx].dir_name, psu_path);
+    return (r == 0) ? 1 : 0;
 }
 
 int memcard_import_save_psu(int slot_idx, const char *psu_path) {
-    /* TODO: Phase 2 - unpack .PSU into VMC */
-    log_debug("memcard: import_save_psu not yet implemented");
-    (void)slot_idx; (void)psu_path;
-    return 0;
+    if (slot_idx < 0 || slot_idx >= 2) return 0;
+    MemCardSlot *slot = &g_slots[slot_idx];
+    if (!slot->vmc_loaded) return 0;
+
+    char new_dir[32];
+    int r = psu_import_save(psu_path, new_dir, sizeof(new_dir));
+    if (r != 0) return 0;
+
+    memcard_load_vmc(slot_idx);
+    return 1;
 }
 
 /* ============================================================
