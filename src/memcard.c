@@ -48,7 +48,7 @@ void memcard_discover_user_home(void) {
 
     DIR *dir = opendir("/user/home");
     if (!dir) {
-        LOG("memcard: cannot open /user/home");
+        log_debug("memcard: cannot open /user/home");
         return;
     }
 
@@ -63,7 +63,7 @@ void memcard_discover_user_home(void) {
         struct stat st;
         if (stat(test_path, &st) == 0 && S_ISDIR(st.st_mode)) {
             snprintf(g_user_home, sizeof(g_user_home), "/user/home/%s", entry->d_name);
-            LOG("memcard: discovered user home: %s", g_user_home);
+            log_debug("memcard: discovered user home: %s", g_user_home);
             break;
         }
     }
@@ -208,7 +208,7 @@ void memcard_scan_vmc_files(int slot_idx) {
 
     DIR *dir = opendir(scan_path);
     if (!dir) {
-        LOG("memcard: cannot open VMC dir: %s", scan_path);
+        log_debug("memcard: cannot open VMC dir: %s", scan_path);
         return;
     }
 
@@ -261,7 +261,7 @@ void memcard_scan_vmc_files(int slot_idx) {
         slot->vmc_idx = (slot->vmc_count > 0) ? 0 : -1;
     }
 
-    LOG("memcard: slot %d scanned %d VMC files in %s", slot_idx, slot->vmc_count, scan_path);
+    log_debug("memcard: slot %d scanned %d VMC files in %s", slot_idx, slot->vmc_count, scan_path);
 }
 
 /* ============================================================
@@ -306,17 +306,17 @@ void memcard_load_vmc(int slot_idx) {
     memcard_unload_current_vmc();
 
     if (mcio_vmcInit(vf->full_path) != sceMcResSucceed) {
-        LOG("memcard: failed to load VMC: %s", vf->full_path);
+        log_debug("memcard: failed to load VMC: %s", vf->full_path);
         return;
     }
 
     slot->vmc_loaded = 1;
-    LOG("memcard: loaded VMC: %s", vf->full_path);
+    log_debug("memcard: loaded VMC: %s", vf->full_path);
 
     /* Read root directory to find save games */
     int dd = mcio_mcDopen("/");
     if (dd < 0) {
-        LOG("memcard: mcDopen failed on VMC root");
+        log_debug("memcard: mcDopen failed on VMC root");
         mcio_vmcFinish();
         slot->vmc_loaded = 0;
         return;
@@ -417,7 +417,7 @@ static int read_save_directory(const char *dir_name, SaveDirectory *out) {
 
         size_t size = st.size;
         if (size > MAX_FILE_SIZE) {
-            LOG("memcard: file too large, skipping: %s (%zu bytes)", path, size);
+            log_debug("memcard: file too large, skipping: %s (%zu bytes)", path, size);
             continue;
         }
 
@@ -468,7 +468,7 @@ static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
 
         int fd = mcio_mcOpen(path, sceMcFileAttrWriteable | sceMcFileAttrFile);
         if (fd < 0) {
-            LOG("memcard: mcOpen failed for write: %s", path);
+            log_debug("memcard: mcOpen failed for write: %s", path);
             return 0;
         }
 
@@ -476,7 +476,7 @@ static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
         mcio_mcClose(fd);
 
         if (n != (int)dir->files[i].size) {
-            LOG("memcard: mcWrite incomplete: %s", path);
+            log_debug("memcard: mcWrite incomplete: %s", path);
             return 0;
         }
     }
@@ -537,7 +537,7 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
     /* Check if destination already has this directory */
     if (vmc_has_directory(src_dir)) {
         /* Don't auto-overwrite; caller should have shown confirm dialog */
-        LOG("memcard: destination already has %s, aborting copy", src_dir);
+        log_debug("memcard: destination already has %s, aborting copy", src_dir);
         free_save_directory(&savedir);
         mcio_vmcFinish();
         return 0;
@@ -548,7 +548,7 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
 
     if (ok) {
         mcio_vmcFinish(); /* Commit changes to dest VMC */
-        LOG("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
+        log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
         /* Refresh destination slot */
         memcard_load_vmc(dst_slot);
         return 1;
@@ -659,7 +659,7 @@ int memcard_format_vmc(int slot_idx) {
     int r = mcio_mcFormat();
     if (r == sceMcResSucceed) {
         mcio_vmcFinish();
-        LOG("memcard: formatted VMC: %s", slot->loaded_vmc_path);
+        log_debug("memcard: formatted VMC: %s", slot->loaded_vmc_path);
         memcard_load_vmc(slot_idx);
         return 1;
     }
@@ -671,14 +671,14 @@ int memcard_format_vmc(int slot_idx) {
 
 int memcard_export_save_psu(int slot_idx, const char *usb_base) {
     /* TODO: Phase 2 - pack save directory into .PSU format */
-    LOG("memcard: export_save_psu not yet implemented");
+    log_debug("memcard: export_save_psu not yet implemented");
     (void)slot_idx; (void)usb_base;
     return 0;
 }
 
 int memcard_import_save_psu(int slot_idx, const char *psu_path) {
     /* TODO: Phase 2 - unpack .PSU into VMC */
-    LOG("memcard: import_save_psu not yet implemented");
+    log_debug("memcard: import_save_psu not yet implemented");
     (void)slot_idx; (void)psu_path;
     return 0;
 }
