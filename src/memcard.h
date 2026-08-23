@@ -37,6 +37,9 @@ typedef struct {
     char title[128];        /* Title from icon.sys (ASCII/SJIS raw) */
     int blocks;
     int slot_num;           /* 1-based position in grid */
+    uint32_t *icon_rgba;    /* Decoded icon pixels, ARGB format */
+    int icon_w;
+    int icon_h;
 } VmcSaveEntry;
 
 /* In-memory buffer for one file during copy operations */
