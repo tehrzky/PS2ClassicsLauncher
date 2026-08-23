@@ -325,7 +325,7 @@ void memcard_load_vmc(int slot_idx) {
     struct io_dirent dirent;
     int slot_num = 1;
     while (mcio_mcDread(dd, &dirent) > 0 && slot->save_count < MAX_VMC_SAVES) {
-        if (!(dirent.mode & sceMcFileAttrSubdir)) continue;
+        if (!(dirent.stat.mode & sceMcFileAttrSubdir)) continue;
         if (strcmp(dirent.name, ".") == 0 || strcmp(dirent.name, "..") == 0) continue;
 
         VmcSaveEntry *se = &slot->saves[slot->save_count];
@@ -333,7 +333,7 @@ void memcard_load_vmc(int slot_idx) {
         strncpy(se->dir_name, dirent.name, sizeof(se->dir_name) - 1);
         strncpy(se->title, dirent.name, sizeof(se->title) - 1); /* fallback */
         se->slot_num = slot_num++;
-        se->blocks = (dirent.size + 8191) / 8192;
+        se->blocks = (dirent.stat.size + 8191) / 8192;
         if (se->blocks < 1) se->blocks = 1;
 
         /* Try to read icon.sys for title */
@@ -407,7 +407,7 @@ static int read_save_directory(const char *dir_name, SaveDirectory *out) {
     struct io_dirent dirent;
     while (mcio_mcDread(dd, &dirent) > 0 && out->count < MAX_SAVE_FILES) {
         if (strcmp(dirent.name, ".") == 0 || strcmp(dirent.name, "..") == 0) continue;
-        if (dirent.mode & sceMcFileAttrSubdir) continue; /* Skip nested dirs for now */
+        if (dirent.stat.mode & sceMcFileAttrSubdir) continue; /* Skip nested dirs for now */
 
         char path[128];
         snprintf(path, sizeof(path), "%s/%s", dir_name, dirent.name);
@@ -415,7 +415,7 @@ static int read_save_directory(const char *dir_name, SaveDirectory *out) {
         struct io_dirent st;
         if (mcio_mcStat(path, &st) < 0) continue;
 
-        size_t size = st.size;
+        size_t size = st.stat.size;
         if (size > MAX_FILE_SIZE) {
             log_debug("memcard: file too large, skipping: %s (%zu bytes)", path, size);
             continue;
@@ -485,7 +485,7 @@ static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
 
 static int vmc_has_directory(const char *dir_name) {
     struct io_dirent st;
-    return (mcio_mcStat(dir_name, &st) == 0 && (st.mode & sceMcFileAttrSubdir));
+    return (mcio_mcStat(dir_name, &st) == 0 && (st.stat.mode & sceMcFileAttrSubdir));
 }
 
 static void delete_vmc_directory(const char *dir_name) {
@@ -551,6 +551,7 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
         log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
         /* Refresh destination slot */
         memcard_load_vmc(dst_slot);
+        src->vmc_loaded = 0; /* Source buffer was replaced by dest VMC load; force reload */
         return 1;
     } else {
         mcio_vmcFinish();
