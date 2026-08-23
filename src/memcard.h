@@ -120,9 +120,26 @@ void memcard_show_confirm(const char *title, const char *msg,
 void memcard_confirm_yes(void);
 void memcard_confirm_no(void);
 
+/* Toast notification */
+#define TOAST_DURATION 120  /* ~2 seconds at 60fps */
+extern char g_toast_msg[128];
+extern int g_toast_timer;
+void memcard_show_toast(const char *msg);
+void memcard_update_toast(void);
+
+/* PSU file picker */
+#define MAX_PSU_FILES 32
+extern char g_psu_files[MAX_PSU_FILES][256];
+extern int g_psu_file_count;
+extern int g_psu_picker_open;
+extern int g_psu_picker_sel;
+void memcard_scan_psu_files(void);
+
 /* Utility */
 const char *memcard_get_user_home(void);
 int memcard_is_vmc_file_size_valid(size_t sz);
 void memcard_extract_disc_id(const char *filename, char *out, size_t out_len);
+
+
 
 #endif
