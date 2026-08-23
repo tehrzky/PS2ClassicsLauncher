@@ -20,11 +20,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "mcio.h"
-#include "util.h"
-#include "ps2mc.h"
-#include "common.h"
 #include "mcio_compat.h"
+#include <string.h>
+#include "util.h"
+#include "common.h"
+#include "mcio.h"
+#include "ps2mc.h"
+
 
 #include <stdio.h>
 #include <time.h>
