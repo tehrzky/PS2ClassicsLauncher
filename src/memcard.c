@@ -3,6 +3,9 @@
 #include "debug.h"
 #include "goodnames.h"
 #include "mcio.h"
+#include "mcio_compat.h"
+#include "ps2icon.h"
+#include "sjis.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
@@ -270,19 +273,16 @@ void memcard_scan_vmc_files(int slot_idx) {
    VMC LOADING via Apollo mcio
    ============================================================ */
 
-static void read_icon_sys_title(const uint8_t *icon_sys_data, char *title, size_t title_len) {
-    memset(title, 0, title_len);
-    if (!icon_sys_data) return;
-    /* icon.sys title at offset 0xC0, max 68 bytes */
-    int copy_len = 68;
-    if (copy_len >= (int)title_len) copy_len = (int)title_len - 1;
-    memcpy(title, icon_sys_data + 0xC0, copy_len);
-    title[copy_len] = '\0';
-    /* Trim trailing spaces/nulls */
-    int len = (int)strlen(title);
-    while (len > 0 && (title[len - 1] == ' ' || title[len - 1] == '\0')) {
-        title[len - 1] = '\0';
-        len--;
+/* Free all decoded icons for a slot */
+static void free_slot_icons(MemCardSlot *slot)
+{
+    for (int i = 0; i < slot->save_count; i++) {
+        if (slot->saves[i].icon_rgba) {
+            free(slot->saves[i].icon_rgba);
+            slot->saves[i].icon_rgba = NULL;
+            slot->saves[i].icon_w = 0;
+            slot->saves[i].icon_h = 0;
+        }
     }
 }
 
@@ -294,6 +294,7 @@ void memcard_load_vmc(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
     MemCardSlot *slot = &g_slots[slot_idx];
 
+    free_slot_icons(slot);
     slot->save_count = 0;
     slot->save_idx = -1;
     slot->vmc_loaded = 0;
@@ -338,16 +339,30 @@ void memcard_load_vmc(int slot_idx) {
         se->blocks = (dirent.stat.size + 8191) / 8192;
         if (se->blocks < 1) se->blocks = 1;
 
-        /* Try to read icon.sys for title */
-        char icon_path[128];
-        snprintf(icon_path, sizeof(icon_path), "/%s/icon.sys", dirent.name);
-        int fd = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+        /* Read title from icon.sys (with SJIS->UTF8) */
+        char icon_sys_path[128];
+        snprintf(icon_sys_path, sizeof(icon_sys_path), "/%s/icon.sys", dirent.name);
+        int fd = mcio_mcOpen(icon_sys_path, sceMcFileAttrReadable | sceMcFileAttrFile);
         if (fd >= 0) {
             uint8_t icon_data[1024];
             int n = mcio_mcRead(fd, (void *)icon_data, sizeof(icon_data));
             mcio_mcClose(fd);
             if (n >= 964) {
-                read_icon_sys_title(icon_data, se->title, sizeof(se->title));
+                ps2icon_parse_title(icon_data, n, se->title, sizeof(se->title));
+            }
+        }
+
+        /* Load icon0.ico */
+        char icon0_path[128];
+        snprintf(icon0_path, sizeof(icon0_path), "/%s/icon0.ico", dirent.name);
+        int fd_icon = mcio_mcOpen(icon0_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+        if (fd_icon >= 0) {
+            uint8_t ico_buf[512];
+            int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
+            mcio_mcClose(fd_icon);
+            if (n_icon >= 160) {
+                ps2icon_decode(ico_buf, n_icon,
+                               &se->icon_rgba, &se->icon_w, &se->icon_h);
             }
         }
 
@@ -366,6 +381,7 @@ void memcard_load_vmc(int slot_idx) {
 void memcard_set_slot_off(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
     MemCardSlot *slot = &g_slots[slot_idx];
+    free_slot_icons(slot);
     slot->state = SLOT_STATE_OFF;
     slot->emulator_idx = -1;
     slot->vmc_idx = -1;
@@ -387,6 +403,7 @@ void memcard_refresh_slot(int slot_idx) {
         return;
     }
 
+    free_slot_icons(slot);
     slot->state = SLOT_STATE_EMU_SEL;
     memcard_scan_vmc_files(slot_idx);
 
