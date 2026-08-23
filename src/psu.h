@@ -2,6 +2,7 @@
 #define PSU_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* Export a single save directory from the currently mounted VMC to a .PSU file.
  * vmc_dir   : directory name inside VMC (e.g. "BASLUS-12345")
