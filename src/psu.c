@@ -14,9 +14,9 @@
  *   0x000: mode       (2 bytes)
  *   0x002: reserved   (2 bytes)
  *   0x004: length     (4 bytes)
- *   0x008: created    (8 bytes: Resv2,Sec,Min,Hour,Day,Month,YearLo,YearHi)
- *   0x010: cluster    (4 bytes)  -- zeroed, not exposed by io_stat
- *   0x014: dir_entry  (4 bytes)  -- zeroed, not exposed by io_stat
+ *   0x008: created    (8 bytes)
+ *   0x010: cluster    (4 bytes)  -- zeroed
+ *   0x014: dir_entry  (4 bytes)  -- zeroed
  *   0x018: modified   (8 bytes)
  *   0x020: attr       (4 bytes)
  *   0x024: reserved2  (4 bytes)
@@ -158,10 +158,6 @@ int psu_import_save(const char *psu_path, char *out_dir, size_t out_dir_len)
         return -2;
     }
 
-    char dir_name[32];
-    memset(dir_name, 0, sizeof(dir_name));
-    strncpy(dir_name, (char *)(first_hdr + 0x28), 31);
-
     /* Derive new directory name from PSU basename */
     const char *base = strrchr(psu_path, '/');
     if (!base) base = psu_path; else base++;
@@ -171,11 +167,11 @@ int psu_import_save(const char *psu_path, char *out_dir, size_t out_dir_len)
     if (dot) *dot = '\0';
     if (strlen(new_dir) == 0) strcpy(new_dir, "IMPORT");
 
-    /* Create directory on VMC */
+    /* Create directory on VMC -- mcio_mcMkDir takes only 1 arg */
     char vmc_path[128];
     snprintf(vmc_path, sizeof(vmc_path), "/%s", new_dir);
-    int r = mcio_mcMkDir(vmc_path, sceMcFileAttrSubdir);
-    if (r < 0 && r != -4) { /* -4 might mean already exists */
+    int r = mcio_mcMkDir(vmc_path);
+    if (r < 0 && r != sceMcResNotEmpty && r != sceMcResNoEntry) {
         fclose(fp);
         return -3;
     }
