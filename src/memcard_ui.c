@@ -308,11 +308,12 @@ static const char *action_items[] = {
     "Copy Save to Other Slot",
     "Delete Save",
     "Export Save as .PSU",
+    "Import Save from .PSU",
     "Backup Full VMC",
     "Import Full VMC",
     "Format VMC"
 };
-#define ACTION_COUNT 6
+#define ACTION_COUNT 7
 
 static void draw_action_menu(void) {
     int mw = 520, row_h = 48, mh = ACTION_COUNT * row_h + 50;
@@ -338,8 +339,9 @@ static void draw_action_menu(void) {
         if (i == 1 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 2 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 3 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
-        if (i == 4 && slot->state == SLOT_STATE_OFF) enabled = 0;
-        if (i == 5 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 4 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 5 && slot->state == SLOT_STATE_OFF) enabled = 0;
+        if (i == 6 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
 
         uint32_t tc = enabled ? COLOR_DIM : 0xFF475569;
         if (i == g_memcard_action_sel && enabled) {
@@ -416,11 +418,73 @@ static void draw_footer(void) {
     draw_btn_hint(x, hy, "O", "BACK", COLOR_ERROR);
 }
 
+
+/* ============================================================
+   TOAST NOTIFICATION
+   ============================================================ */
+
+static void draw_toast(void)
+{
+    if (g_toast_timer <= 0) return;
+
+    int tw = font_text_width(g_toast_msg, 24);
+    int tx = (SCREEN_W - tw) / 2;
+    int ty = SCREEN_H - 140;
+
+    draw_rounded_rect(tx - 24, ty - 12, tw + 48, 48, 8, COLOR_PANEL);
+    draw_rounded_rect(tx - 24, ty - 12, tw + 48, 48, 8, COLOR_GOLD);
+    draw_text(tx, ty, g_toast_msg, COLOR_TEXT, 24);
+}
+
+/* ============================================================
+   PSU FILE PICKER
+   ============================================================ */
+
+static void draw_psu_picker(void)
+{
+    if (!g_psu_picker_open) return;
+
+    int mw = 640, row_h = 44;
+    int mh = (g_psu_file_count + 2) * row_h + 50;
+    if (mh > 520) mh = 520;
+    int mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
+
+    draw_rect(0, 0, SCREEN_W, SCREEN_H, 0xE6000000);
+    draw_rounded_rect(mx, my, mw, mh, 12, COLOR_GOLD);
+    draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
+
+    const char *title = "SELECT .PSU FILE TO IMPORT";
+    int tw = font_text_width_slot(title, 26, FONT_SLOT_BOLD);
+    draw_text_slot(mx + (mw - tw) / 2, my + 14, title, COLOR_GOLD, 26, FONT_SLOT_BOLD);
+    draw_rect(mx + 30, my + 48, mw - 60, 2, COLOR_BORDER);
+
+    if (g_psu_file_count == 0) {
+        draw_text(mx + 30, my + 70,
+                  "No .PSU files found in /mnt/usb0/PS2SAVES/", COLOR_DIM, 20);
+    } else {
+        for (int i = 0; i < g_psu_file_count; i++) {
+            int ry = my + 58 + i * row_h;
+            const char *fname = strrchr(g_psu_files[i], '/');
+            if (fname) fname++; else fname = g_psu_files[i];
+
+            if (i == g_psu_picker_sel) {
+                draw_rounded_rect(mx + 20, ry, mw - 40, row_h - 6, 6, COLOR_CARD_SEL);
+                draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_ACCENT);
+                draw_text(mx + 36, ry + 10, fname, COLOR_GOLD, 20);
+            } else {
+                draw_text(mx + 36, ry + 10, fname, COLOR_DIM, 20);
+            }
+        }
+    }
+}
+
 /* ============================================================
    MAIN DRAW
    ============================================================ */
 
 void draw_memcard_ui(void) {
+    memcard_update_toast();
+    /* ... rest of function ... */
     if (g_settings.wallpaper[0]) {
         cover_draw_wallpaper();
     } else {
@@ -486,8 +550,10 @@ void draw_memcard_ui(void) {
 
     draw_footer();
 
+    if (g_psu_picker_open) draw_psu_picker();
     if (g_memcard_action_menu_open) draw_action_menu();
     if (g_confirm_dialog_open) draw_confirm_dialog();
+    if (g_toast_timer > 0) draw_toast();
 }
 
 /* ============================================================
@@ -517,6 +583,7 @@ static int pending_format_slot = -1;
 static void do_delete_save(void) {
     if (pending_delete_slot >= 0) {
         memcard_delete_save(pending_delete_slot);
+        memcard_show_toast("Save deleted");
         pending_delete_slot = -1;
     }
 }
@@ -539,6 +606,34 @@ static void do_format_vmc(void) {
 void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
     MemCardSlot *slot = &g_slots[g_active_slot];
 
+      /* === PSU FILE PICKER === */
+    if (g_psu_picker_open) {
+        if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+            g_psu_picker_open = 0;
+            return;
+        }
+        if (pressed & ORBIS_PAD_BUTTON_UP) {
+            if (g_psu_file_count > 0) {
+                g_psu_picker_sel = (g_psu_picker_sel - 1 + g_psu_file_count) % g_psu_file_count;
+            }
+        }
+        if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+            if (g_psu_file_count > 0) {
+                g_psu_picker_sel = (g_psu_picker_sel + 1) % g_psu_file_count;
+            }
+        }
+        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+            if (g_psu_file_count > 0) {
+                int ok = memcard_import_save_psu(g_active_slot,
+                                                 g_psu_files[g_psu_picker_sel]);
+                memcard_show_toast(ok ? "Import successful" : "Import failed");
+            }
+            g_psu_picker_open = 0;
+        }
+        return;
+    }
+
+  
     /* === CONFIRMATION DIALOG === */
     if (g_confirm_dialog_open) {
         if (pressed & ORBIS_PAD_BUTTON_LEFT)  g_confirm_dialog_sel = 0;
@@ -571,26 +666,24 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
             int other = (g_active_slot == 0) ? 1 : 0;
             MemCardSlot *other_slot = &g_slots[other];
 
-            switch (g_memcard_action_sel) {
+                        switch (g_memcard_action_sel) {
                 case 0: /* Copy to other slot */
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0 &&
                         other_slot->state == SLOT_STATE_VMC_SEL) {
-                        /* Check if destination already has this save dir */
                         memcard_unload_current_vmc();
                         if (mcio_vmcInit(other_slot->loaded_vmc_path) == sceMcResSucceed) {
                             struct io_dirent st;
                             if (mcio_mcStat(slot->saves[slot->save_idx].dir_name, &st) == 0) {
-                                /* Exists — confirm overwrite */
                                 pending_copy_src = g_active_slot;
                                 pending_copy_dst = other;
                                 char msg[256];
                                 snprintf(msg, sizeof(msg),
-                                    "Save %s already exists in Slot %d.\\nOverwrite?",
+                                    "Save %s already exists in Slot %d.\nOverwrite?",
                                     slot->saves[slot->save_idx].dir_name, other + 1);
                                 memcard_show_confirm("CONFIRM OVERWRITE", msg, do_copy_save, NULL);
                             } else {
-                                /* Safe to copy */
                                 memcard_copy_save_between_slots(g_active_slot, other);
+                                memcard_show_toast("Save copied");
                             }
                             mcio_vmcFinish();
                         }
@@ -601,26 +694,35 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
                         pending_delete_slot = g_active_slot;
                         char msg[128];
-                        snprintf(msg, sizeof(msg), "Delete save %s?\\nThis cannot be undone.",
+                        snprintf(msg, sizeof(msg), "Delete save %s?\nThis cannot be undone.",
                                  slot->saves[slot->save_idx].dir_name);
                         memcard_show_confirm("CONFIRM DELETE", msg, do_delete_save, NULL);
                     }
                     break;
 
-                 case 2: /* Export .PSU */
+                case 2: /* Export .PSU */
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
                         int ok = memcard_export_save_psu(g_active_slot, "/mnt/usb0");
-                        (void)ok;
+                        memcard_show_toast(ok ? "Exported to USB" : "Export failed");
                     }
                     break;
 
-                case 3: /* Backup full VMC */
+                case 3: /* Import Save from .PSU */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
-                        memcard_backup_vmc_to_usb(g_active_slot, "/mnt/usb0");
+                        memcard_scan_psu_files();
+                        g_psu_picker_open = 1;
+                        g_psu_picker_sel = 0;
                     }
                     break;
 
-                 case 4: /* Import full VMC */
+                case 4: /* Backup full VMC */
+                    if (slot->state == SLOT_STATE_VMC_SEL) {
+                        int ok = memcard_backup_vmc_to_usb(g_active_slot, "/mnt/usb0");
+                        memcard_show_toast(ok ? "VMC backed up" : "Backup failed");
+                    }
+                    break;
+
+                case 5: /* Import full VMC */
                     if (slot->state != SLOT_STATE_OFF) {
                         DIR *usbdir = opendir("/mnt/usb0/PS2VMC");
                         if (usbdir) {
@@ -640,18 +742,23 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                             }
                             closedir(usbdir);
                             if (found[0]) {
-                                memcard_import_vmc_from_usb(g_active_slot, found);
+                                int ok = memcard_import_vmc_from_usb(g_active_slot, found);
+                                memcard_show_toast(ok ? "VMC imported" : "Import failed");
                                 memcard_refresh_slot(g_active_slot);
+                            } else {
+                                memcard_show_toast("No VMC found on USB");
                             }
+                        } else {
+                            memcard_show_toast("USB not mounted");
                         }
                     }
                     break;
 
-                case 5: /* Format VMC */
+                case 6: /* Format VMC */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         pending_format_slot = g_active_slot;
                         memcard_show_confirm("CONFIRM FORMAT",
-                            "Format this VMC?\\nAll saves will be lost!", do_format_vmc, NULL);
+                            "Format this VMC?\nAll saves will be lost!", do_format_vmc, NULL);
                     }
                     break;
             }
