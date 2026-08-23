@@ -21,6 +21,8 @@ void _fini(void) {}
 #include "ui.h"
 #include "settings.h"
 #include "cover.h"
+#include "memcard.h"
+#include "memcard_ui.h"
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
@@ -82,8 +84,10 @@ int main(void) {
     unsigned int repeat_counter = 0;
     unsigned int repeat_delay = REPEAT_DELAY_BASE;
 
-    int ui_mode = 0;        // 0=launcher, 1=settings
+    int ui_mode = 0;
     int settings_sel = 0;
+
+    memcard_init();
 
     while (1) {
         if (pad >= 0) {
@@ -93,7 +97,6 @@ int main(void) {
             old_buttons = buttons;
 
             if (ui_mode == 1) {
-                // ===== SETTINGS MODE =====
                 if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
                     settings_save();
                     ui_mode = 0;
@@ -135,14 +138,18 @@ int main(void) {
                         for (int i = 0; i < game_count; i++) scraper_force_download_cover(games[i].id);
                     }
                 }
+            } else if (ui_mode == 2) {
+                if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    ui_mode = 0;
+                }
+                memcard_ui_handle_input(pressed, buttons);
             } else {
-                // ===== LAUNCHER MODE =====
                 if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                     char emu_tid[32] = {0};
                     if (set_active_game(games[selected].path, games[selected].id,
                                         games[selected].name, emu_tid, sizeof(emu_tid))) {
                         draw_launcher_ui(game_count, selected, game_count);
-                                                int lw = font_text_width("LAUNCHING...", 42);
+                        int lw = font_text_width("LAUNCHING...", 42);
                         draw_text(SCREEN_WIDTH/2 - lw/2, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 42);
                         flip();
                         sceKernelSleep(1);
@@ -156,8 +163,11 @@ int main(void) {
                     ui_mode = 1;
                     settings_sel = 0;
                 }
+                if (pressed & ORBIS_PAD_BUTTON_L1 || pressed & ORBIS_PAD_BUTTON_R1) {
+                    ui_mode = 2;
+                    memcard_init();
+                }
 
-                // Single press movement
                 if (pressed & ORBIS_PAD_BUTTON_UP) {
                     selected = (selected - 1 + game_count) % game_count;
                     repeat_counter = 0;
@@ -167,7 +177,6 @@ int main(void) {
                     repeat_counter = 0;
                 }
 
-                // Held repeat scrolling
                 int move = 0;
                 if (buttons & ORBIS_PAD_BUTTON_UP) move = -1;
                 else if (buttons & ORBIS_PAD_BUTTON_DOWN) move = 1;
@@ -192,6 +201,8 @@ int main(void) {
         if (ui_mode == 1) {
             draw_launcher_ui(game_count, selected, game_count);
             draw_settings_ui(settings_sel, 0);
+        } else if (ui_mode == 2) {
+            draw_memcard_ui();
         } else {
             draw_launcher_ui(game_count, selected, game_count);
         }
