@@ -15,6 +15,34 @@
 #include <stdint.h>
 #include <dirent.h>
 
+#define SCREEN_W    1920
+#define SCREEN_H    1080
+#define SAFE_X      64
+#define SAFE_Y      40
+#define SAFE_X1     (SCREEN_W - SAFE_X)
+#define SAFE_Y1     (SCREEN_H - SAFE_Y)
+
+#define FOOTER_H    70
+#define PANEL_GAP   28
+#define PANEL_Y     130
+#define PANEL_BOT   (SCREEN_H - FOOTER_H - 40)
+#define PANEL_H     (PANEL_BOT - PANEL_Y)
+#define PANEL_W     ((SAFE_X1 - SAFE_X - PANEL_GAP) / 2)
+#define SLOT1_X     SAFE_X
+#define SLOT2_X     (SLOT1_X + PANEL_W + PANEL_GAP)
+
+#define ID_ROW_H    34
+#define ID_GAP      6
+#define GRID_TOP    (PANEL_Y + 155)
+#define GRID_COLS   4
+#define GRID_ROWS   4
+#define CELL_GAP    10
+#define CELL_W      ((PANEL_W - 40 - (GRID_COLS - 1) * CELL_GAP) / GRID_COLS)
+#define CELL_H      (CELL_W * 3 / 4)
+
+#define RADIUS      8
+#define BORDER_W    2
+
 /* Simple nearest-neighbor RGBA blit to framebuffer */
 static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
                            const uint32_t *rgba, int src_w, int src_h)
@@ -38,9 +66,6 @@ static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
         }
     }
 }
-
-#define SCREEN_W    1920
-#define SCREEN_H    1080
 #define SAFE_X      64
 #define SAFE_Y      40
 #define SAFE_X1     (SCREEN_W - SAFE_X)
