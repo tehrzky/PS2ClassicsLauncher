@@ -90,4 +90,148 @@ int psu_export_save(const char *vmc_dir, const char *psu_path)
         hdr[0x04] = dirent.stat.size & 0xFF;
         hdr[0x05] = (dirent.stat.size >> 8) & 0xFF;
         hdr[0x06] = (dirent.stat.size >> 16) & 0xFF;
-        hdr[0x07] = (dirent
+        hdr[0x07] = (dirent.stat.size >> 24) & 0xFF;
+
+        /* created 0x08-0x0F */
+        hdr[0x08] = dirent.stat.created.year & 0xFF;
+        hdr[0x09] = (dirent.stat.created.year >> 8) & 0xFF;
+        hdr[0x0A] = dirent.stat.created.month;
+        hdr[0x0B] = dirent.stat.created.day;
+        hdr[0x0C] = dirent.stat.created.hour;
+        hdr[0x0D] = dirent.stat.created.minute;
+        hdr[0x0E] = dirent.stat.created.second;
+
+        /* cluster 0x10-0x13 */
+        hdr[0x10] = dirent.stat.cluster & 0xFF;
+        hdr[0x11] = (dirent.stat.cluster >> 8) & 0xFF;
+        hdr[0x12] = (dirent.stat.cluster >> 16) & 0xFF;
+        hdr[0x13] = (dirent.stat.cluster >> 24) & 0xFF;
+
+        /* dir_entry 0x14-0x17 */
+        hdr[0x14] = dirent.stat.dir_entry & 0xFF;
+        hdr[0x15] = (dirent.stat.dir_entry >> 8) & 0xFF;
+        hdr[0x16] = (dirent.stat.dir_entry >> 16) & 0xFF;
+        hdr[0x17] = (dirent.stat.dir_entry >> 24) & 0xFF;
+
+        /* modified 0x18-0x1F */
+        hdr[0x18] = dirent.stat.modified.year & 0xFF;
+        hdr[0x19] = (dirent.stat.modified.year >> 8) & 0xFF;
+        hdr[0x1A] = dirent.stat.modified.month;
+        hdr[0x1B] = dirent.stat.modified.day;
+        hdr[0x1C] = dirent.stat.modified.hour;
+        hdr[0x1D] = dirent.stat.modified.minute;
+        hdr[0x1E] = dirent.stat.modified.second;
+
+        /* attr 0x20-0x23 */
+        hdr[0x20] = dirent.stat.attr & 0xFF;
+        hdr[0x21] = (dirent.stat.attr >> 8) & 0xFF;
+        hdr[0x22] = (dirent.stat.attr >> 16) & 0xFF;
+        hdr[0x23] = (dirent.stat.attr >> 24) & 0xFF;
+
+        /* name 0x28-0x47 */
+        strncpy((char *)(hdr + 0x28), dirent.name, 32);
+
+        /* Write header + data */
+        if (write_all(fp, hdr, 512) != 0 ||
+            (fsize > 0 && write_all(fp, fdata, fsize) != 0)) {
+            ret = -5;
+        }
+
+        free(fdata);
+    }
+
+    mcio_mcDclose(dfd);
+
+    /* Write terminator entry (mode = 0) */
+    if (ret == 0) {
+        uint8_t term[512];
+        memset(term, 0, sizeof(term));
+        if (write_all(fp, term, 512) != 0) ret = -6;
+    }
+
+    fclose(fp);
+    if (ret != 0) remove(psu_path);
+    return ret;
+}
+
+int psu_import_save(const char *psu_path, char *out_dir, size_t out_dir_len)
+{
+    FILE *fp = fopen(psu_path, "rb");
+    if (!fp) return -1;
+
+    /* Read first header to get the save directory name */
+    uint8_t first_hdr[512];
+    if (read_all(fp, first_hdr, 512) != 0) {
+        fclose(fp);
+        return -2;
+    }
+
+    char dir_name[32];
+    memset(dir_name, 0, sizeof(dir_name));
+    strncpy(dir_name, (char *)(first_hdr + 0x28), 31);
+
+    /* Derive new directory name from PSU basename */
+    const char *base = strrchr(psu_path, '/');
+    if (!base) base = psu_path; else base++;
+    char new_dir[32];
+    strncpy(new_dir, base, 31);
+    char *dot = strrchr(new_dir, '.');
+    if (dot) *dot = '\0';
+    if (strlen(new_dir) == 0) strcpy(new_dir, "IMPORT");
+
+    /* Create directory on VMC */
+    char vmc_path[128];
+    snprintf(vmc_path, sizeof(vmc_path), "/%s", new_dir);
+    int r = mcio_mcMkDir(vmc_path, sceMcFileAttrSubdir);
+    if (r < 0 && r != -4) { /* -4 might mean already exists */
+        fclose(fp);
+        return -3;
+    }
+
+    /* Write all files */
+    fseek(fp, 0, SEEK_SET);
+    int ret = 0;
+
+    while (ret == 0) {
+        uint8_t hdr[512];
+        if (read_all(fp, hdr, 512) != 0) break;
+
+        uint16_t mode = hdr[0x00] | (hdr[0x01] << 8);
+        if (mode == 0) break; /* terminator */
+
+        uint32_t length = hdr[0x04] | (hdr[0x05] << 8) |
+                          (hdr[0x06] << 16) | (hdr[0x07] << 24);
+        char fname[32];
+        memset(fname, 0, sizeof(fname));
+        strncpy(fname, (char *)(hdr + 0x28), 31);
+
+        if (length > 0) {
+            uint8_t *fdata = (uint8_t *)malloc(length);
+            if (!fdata) { ret = -4; break; }
+            if (read_all(fp, fdata, length) != 0) {
+                free(fdata);
+                ret = -5;
+                break;
+            }
+
+            char out_path[256];
+            snprintf(out_path, sizeof(out_path), "/%s/%s", new_dir, fname);
+            int fd = mcio_mcOpen(out_path, sceMcFileAttrWriteable | sceMcFileAttrFile);
+            if (fd >= 0) {
+                mcio_mcWrite(fd, fdata, length);
+                mcio_mcClose(fd);
+            } else {
+                ret = -6;
+            }
+            free(fdata);
+        }
+    }
+
+    fclose(fp);
+
+    if (out_dir && out_dir_len > 0) {
+        strncpy(out_dir, new_dir, out_dir_len - 1);
+        out_dir[out_dir_len - 1] = '\0';
+    }
+    return ret;
+}
