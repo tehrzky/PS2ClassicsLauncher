@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <orbisPad.h>
+#include <orbis/Pad.h>
 
 #define SCREEN_W    1920
 #define SCREEN_H    1080
