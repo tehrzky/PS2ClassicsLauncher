@@ -20,6 +20,8 @@ int g_emulator_count = 0;
 
 MemCardSlot g_slots[2];
 int g_active_slot = 0;
+int g_memcard_action_menu_open = 0;
+int g_memcard_action_sel = 0;
 
 static char g_user_home[128] = {0};
 static int g_user_home_discovered = 0;
