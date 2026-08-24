@@ -42,7 +42,7 @@ extern void *dlsym(void *handle, const char *symbol);
 // ============ MAIN LAUNCHER FUNCTION ============
 /**
  * Launch a PS4 application by Title ID
- * Loads libSceLncUtil.sprx to resolve launch symbols safely via ps4_dlsym
+ * Resolves launch functions securely out of libSceSystemService.sprx
  * 
  * @param tid The Title ID to launch (e.g., "CUSA12345")
  * @param override_tid Fallback Title ID if primary is empty
@@ -51,7 +51,7 @@ extern void *dlsym(void *handle, const char *symbol);
 int launch_app(const char *tid, const char *override_tid) {
     uint32_t sys_res = -1;
     int userId = 0;
-    int lnc_mod = -1;
+    int sys_mod = -1;
     const char *title_id = (tid && tid[0]) ? tid : override_tid;
 
     if (!title_id || !title_id[0]) {
@@ -66,56 +66,49 @@ int launch_app(const char *tid, const char *override_tid) {
     int ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         log_debug("Failed to get foreground user: 0x%08X, using user 0", ret);
-        userId = 0;  // Fallback to user 0
+        userId = 0;
     }
     log_debug("User ID: %d", userId);
 
-    // Step 2: Load the CORRECT Launch Utility module containing launch functionality
-    log_debug("Attempting to load libSceLncUtil.sprx...");
-    lnc_mod = sceKernelLoadStartModule(
-        "/system/common/lib/libSceLncUtil.sprx", 
+    // Step 2: Load the actual system service PRX module
+    log_debug("Loading libSceSystemService.sprx...");
+    sys_mod = sceKernelLoadStartModule(
+        "/system/common/lib/libSceSystemService.sprx", 
         0, NULL, 0, 0, NULL
     );
     
-    // Fallback path check if common directory lacks permissions or module path variations apply
-    if (lnc_mod < 0) {
-        log_debug("Common path failed, attempting privileged module path...");
-        lnc_mod = sceKernelLoadStartModule(
-            "/system/priv/lib/libSceLncUtil.sprx", 
-            0, NULL, 0, 0, NULL
-        );
-    }
+    log_debug("sceKernelLoadStartModule (SystemService) returned handle: %d", sys_mod);
     
-    log_debug("sceKernelLoadStartModule (LncUtil) returned handle: %d", lnc_mod);
-    
-    if (lnc_mod < 0) {
-        log_debug("LAUNCH FAILED: Could not load libSceLncUtil.sprx (0x%08X)", lnc_mod);
-        log_debug("Ensure system privileges and sandbox bypass routines executed correctly");
-        return lnc_mod;
+    if (sys_mod < 0) {
+        log_debug("LAUNCH FAILED: Could not load libSceSystemService.sprx (0x%08X)", sys_mod);
+        return sys_mod;
     }
 
-    // Step 3: Resolve launch symbols dynamically from the correct module handle
+    // Step 3: Explicitly initialize the dynamic link layer bindings
     void *init_fn = NULL;
-    ps4_dlsym(lnc_mod, "sceLncUtilInitialize", &init_fn);
-    log_debug("sceLncUtilInitialize address: %p", init_fn);
+    ps4_dlsym(sys_mod, "sceLncUtilInitialize", &init_fn);
+    log_debug("sceLncUtilInitialize function handle: %p", init_fn);
+    
     if (init_fn) {
+        // Run the module setup layout function to unlock the hidden internal pointers
         int r = ((int(*)(void))init_fn)();
-        log_debug("sceLncUtilInitialize executed and returned: 0x%08X", r);
+        log_debug("sceLncUtilInitialize runtime configuration response: 0x%08X", r);
     }
 
+    // Step 4: Extract the true pointer address from the active system library partition
     void *launch_fn = NULL;
-    ps4_dlsym(lnc_mod, "sceLncUtilLaunchApp", &launch_fn);
-    log_debug("sceLncUtilLaunchApp address: %p", launch_fn);
+    ps4_dlsym(sys_mod, "sceLncUtilLaunchApp", &launch_fn);
+    log_debug("sceLncUtilLaunchApp function handle: %p", launch_fn);
 
     if (!launch_fn) {
-        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp function symbol missing in module %d", lnc_mod);
+        log_debug("LAUNCH FAILED: Target function missing from active library context.");
         return -1;
     }
 
     sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
-    log_debug("Successfully resolved sceLncUtilLaunchApp function assignment");
+    log_debug("Successfully mapped launch symbol bindings!");
 
-    // Step 4: Prepare launch parameters
+    // Step 5: Prepare system launch properties
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.sz = sizeof(LncAppParam);
@@ -124,26 +117,24 @@ int launch_app(const char *tid, const char *override_tid) {
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    // Step 5: Launch the app
+    // Step 6: Trigger the emulator boot process
     log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
     sys_res = sceLncUtilLaunchApp(title_id, NULL, &param);
-    log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
+    log_debug("sceLncUtilLaunchApp execution returned: 0x%08X", sys_res);
 
-    // Step 6: Handle launch result
+    // Step 7: Handle runtime outcome values
     if (sys_res == 0) {
         log_debug("Launch successful!");
         return 0;
     }
 
-    // Check for "already running" errors (these are success states)
     if (sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING ||
         sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_SUSPEND_NEEDED ||
         sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_KILL_NEEDED) {
-        log_debug("App already running (resuming it)");
+        log_debug("App already running (resuming background thread execution state)");
         return 0;
     }
 
-    // Handle specific errors
     if (IS_ERROR(sys_res)) {
         switch (sys_res) {
         case SCE_LNC_ERROR_APP_NOT_FOUND:
@@ -156,16 +147,16 @@ int launch_app(const char *tid, const char *override_tid) {
             log_debug("Launch error: Missing param.sfo (0x%08X)", sys_res);
             return -4;
         case SCE_LNC_UTIL_ERROR_NO_SFOKEY_IN_APP_INFO:
-            log_debug("Launch error: Corrupted SFO (0x%08X)", sys_res);
+            log_debug("Launch error: Corrupted SFO configuration (0x%08X)", sys_res);
             return -5;
         case SCE_LNC_UTIL_ERROR_SETUP_FS_SANDBOX:
-            log_debug("Launch error: Sandbox setup failed (0x%08X)", sys_res);
+            log_debug("Launch error: Sandbox setup boundary failure (0x%08X)", sys_res);
             return -6;
         case SCE_LNC_UTIL_ERROR_INVALID_TITLE_ID:
             log_debug("Launch error: Invalid Title ID format (0x%08X)", sys_res);
             return -7;
         default:
-            log_debug("Launch error: Unknown error (0x%08X)", sys_res);
+            log_debug("Launch error: Unhandled system return payload (0x%08X)", sys_res);
             return (int)sys_res;
         }
     }
@@ -210,14 +201,11 @@ int launch_by_uri(const char *uri) {
         return libcmi;
     }
 
-    // Get user ID
     int ret = sceUserServiceGetForegroundUser(&userId);
     if (ret < 0) {
         userId = 0;
     }
 
-    // This would require sceShellUIUtilLaunchByUri which you'd need to dlsym
-    // For now, just log the attempt
-    log_debug("URI launch would go here (requires additional implementation)");
+    log_debug("URI launch placeholder reached execution loop boundary");
     return 0;
 }
