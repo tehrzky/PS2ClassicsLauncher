@@ -170,7 +170,12 @@ int memcard_is_vmc_file_size_valid(size_t sz) {
             sz == 0x4000000 || sz == 0x4200000);
 }
 
-static int is_vmc_extension(const char *name) {
+static int is_vmc_file(const char *name) {
+    /* PS4 emulator stores real VMCs as sdimg_<DISC_ID> with no extension */
+    if (strncmp(name, "sdimg_", 6) == 0)
+        return 1;
+    
+    /* USB/imported VMCs use standard extensions */
     int len = strlen(name);
     if (len < 5) return 0;
     const char *ext = name + len - 4;
@@ -224,7 +229,7 @@ void memcard_scan_vmc_files(int slot_idx) {
     while ((entry = readdir(dir)) != NULL && slot->vmc_count < MAX_VMC_FILES) {
         if (entry->d_name[0] == '.') continue;
         if (strncmp(entry->d_name, "sce_bu_", 7) == 0) continue; /* Skip Sony backups */
-        if (!is_vmc_extension(entry->d_name)) continue;
+        if (!is_vmc_file(entry->d_name)) continue;
 
         char full_path[768];
         snprintf(full_path, sizeof(full_path), "%s/%s", scan_path, entry->d_name);
@@ -233,9 +238,18 @@ void memcard_scan_vmc_files(int slot_idx) {
         if (stat(full_path, &st) != 0) continue;
         if (!S_ISREG(st.st_mode)) continue;
 
-        /* For USB, parse emulator prefix if present: PCSX20042_SLUS-21214.VM2 */
+         if (st.st_size < 0x100000) {  /* Less than 1MB = not a real VMC */
+            log_debug("memcard: skipping %s (size %zu too small)", entry->d_name, st.st_size);
+            continue;
+        }
+
+        /* Extract disc ID from filename */
         char disc_id[32];
-        if (emu->is_usb) {
+        if (strncmp(entry->d_name, "sdimg_", 6) == 0) {
+            /* PS4 savedata format: sdimg_SCUS-97402 */
+            strncpy(disc_id, entry->d_name + 6, sizeof(disc_id) - 1);
+            disc_id[sizeof(disc_id) - 1] = '\0';
+        } else if (emu->is_usb) {
             const char *underscore = strchr(entry->d_name, '_');
             if (underscore) {
                 size_t id_len = underscore - entry->d_name;
