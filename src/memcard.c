@@ -216,6 +216,29 @@ static void memcard_unmount_all(void)
     g_mount_count = 0;
 }
 
+
+static int memcard_mkdirs(const char *path)
+{
+    char tmp[512];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    if (tmp[len - 1] == '/')
+        tmp[len - 1] = 0;
+
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(tmp, 0777);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0777);
+    return 0;
+}
+
 void memcard_scan_vmc_files(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
     MemCardSlot *slot = &g_slots[slot_idx];
@@ -258,6 +281,12 @@ void memcard_scan_vmc_files(int slot_idx) {
                 snprintf(volume_path, sizeof(volume_path), "%s/savedata/%s/%s", home, emu->id, sdimg_entry->d_name);
                 snprintf(key_path, sizeof(key_path), "%s/savedata/%s/%s.bin", home, emu->id, disc_id);
                 snprintf(mount_path, sizeof(mount_path), "/data/PS2ISO/mnt/%s_%s", emu->id, disc_id);
+
+                struct stat st_vol;
+                if (stat(volume_path, &st_vol) != 0 || !S_ISREG(st_vol.st_mode)) {
+                    log_debug("memcard: sdimg missing: %s", volume_path);
+                    continue;
+                }
                 
                 struct stat st_key;
                 if (stat(key_path, &st_key) != 0) {
@@ -265,7 +294,7 @@ void memcard_scan_vmc_files(int slot_idx) {
                     continue;
                 }
                 
-                mkdir(mount_path, 0777);
+                memcard_mkdirs(mount_path);
                 if (mountSave(volume_path, key_path, mount_path) < 0) {
                     log_debug("memcard: failed to mount %s", sdimg_entry->d_name);
                     rmdir(mount_path);
@@ -682,12 +711,14 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
     int ok = write_save_directory(src_dir, &savedir);
     free_save_directory(&savedir);
 
-    if (ok) {
+     if (ok) {
         mcio_vmcFinish(); /* Commit changes to dest VMC */
         log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
-        /* Refresh destination slot */
+        /* Refresh both slots so UI matches physical state */
+        memcard_scan_vmc_files(src_slot);
+        memcard_load_vmc(src_slot);
+        memcard_scan_vmc_files(dst_slot);
         memcard_load_vmc(dst_slot);
-        src->vmc_loaded = 0; /* Source buffer was replaced by dest VMC load; force reload */
         return 1;
     } else {
         mcio_vmcFinish();
