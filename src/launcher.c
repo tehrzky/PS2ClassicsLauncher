@@ -42,7 +42,7 @@ extern void *dlsym(void *handle, const char *symbol);
 // ============ MAIN LAUNCHER FUNCTION ============
 /**
  * Launch a PS4 application by Title ID
- * Uses dlsym to load sceLncUtilLaunchApp from libSceSystemService.sprx
+ * Loads libSceLncUtil.sprx to resolve launch symbols safely via ps4_dlsym
  * 
  * @param tid The Title ID to launch (e.g., "CUSA12345")
  * @param override_tid Fallback Title ID if primary is empty
@@ -51,7 +51,7 @@ extern void *dlsym(void *handle, const char *symbol);
 int launch_app(const char *tid, const char *override_tid) {
     uint32_t sys_res = -1;
     int userId = 0;
-    int libcmi = -1;
+    int lnc_mod = -1;
     const char *title_id = (tid && tid[0]) ? tid : override_tid;
 
     if (!title_id || !title_id[0]) {
@@ -70,40 +70,50 @@ int launch_app(const char *tid, const char *override_tid) {
     }
     log_debug("User ID: %d", userId);
 
-    // Step 2: Load libSceSystemService.sprx (contains sceLncUtilLaunchApp)
-    libcmi = sceKernelLoadStartModule(
-        "/system/common/lib/libSceSystemService.sprx", 
+    // Step 2: Load the CORRECT Launch Utility module containing launch functionality
+    log_debug("Attempting to load libSceLncUtil.sprx...");
+    lnc_mod = sceKernelLoadStartModule(
+        "/system/common/lib/libSceLncUtil.sprx", 
         0, NULL, 0, 0, NULL
     );
     
-    log_debug("sceKernelLoadStartModule returned: %d", libcmi);
+    // Fallback path check if common directory lacks permissions or module path variations apply
+    if (lnc_mod < 0) {
+        log_debug("Common path failed, attempting privileged module path...");
+        lnc_mod = sceKernelLoadStartModule(
+            "/system/priv/lib/libSceLncUtil.sprx", 
+            0, NULL, 0, 0, NULL
+        );
+    }
     
-    if (libcmi < 0) {
-        log_debug("LAUNCH FAILED: Could not load libSceSystemService.sprx (0x%08X)", libcmi);
-        log_debug("Make sure you have jailbreak privileges");
-        return libcmi;
+    log_debug("sceKernelLoadStartModule (LncUtil) returned handle: %d", lnc_mod);
+    
+    if (lnc_mod < 0) {
+        log_debug("LAUNCH FAILED: Could not load libSceLncUtil.sprx (0x%08X)", lnc_mod);
+        log_debug("Ensure system privileges and sandbox bypass routines executed correctly");
+        return lnc_mod;
     }
 
-    // Step 3: Resolve sceLncUtilLaunchApp symbol dynamically
-void *init_fn = NULL;
-ps4_dlsym(libcmi, "sceLncUtilInitialize", &init_fn);
-log_debug("sceLncUtilInitialize: %p", init_fn);
-if (init_fn) {
-    int r = ((int(*)(void))init_fn)();
-    log_debug("sceLncUtilInitialize returned: 0x%08X", r);
-}
+    // Step 3: Resolve launch symbols dynamically from the correct module handle
+    void *init_fn = NULL;
+    ps4_dlsym(lnc_mod, "sceLncUtilInitialize", &init_fn);
+    log_debug("sceLncUtilInitialize address: %p", init_fn);
+    if (init_fn) {
+        int r = ((int(*)(void))init_fn)();
+        log_debug("sceLncUtilInitialize executed and returned: 0x%08X", r);
+    }
 
-void *launch_fn = NULL;
-ps4_dlsym(libcmi, "sceLncUtilLaunchApp", &launch_fn);
-log_debug("sceLncUtilLaunchApp: %p", launch_fn);
+    void *launch_fn = NULL;
+    ps4_dlsym(lnc_mod, "sceLncUtilLaunchApp", &launch_fn);
+    log_debug("sceLncUtilLaunchApp address: %p", launch_fn);
 
-if (!launch_fn) {
-    log_debug("LAUNCH FAILED: sceLncUtilLaunchApp not found in module %d", libcmi);
-    return -1;
-}
+    if (!launch_fn) {
+        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp function symbol missing in module %d", lnc_mod);
+        return -1;
+    }
 
-sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
-log_debug("Successfully resolved sceLncUtilLaunchApp");
+    sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
+    log_debug("Successfully resolved sceLncUtilLaunchApp function assignment");
 
     // Step 4: Prepare launch parameters
     LncAppParam param;
