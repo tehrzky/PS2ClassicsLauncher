@@ -108,14 +108,18 @@ int launch_app(const char *tid, const char *override_tid) {
     sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
     log_debug("Successfully mapped launch symbol bindings!");
 
-    // Step 5: Prepare system launch properties
+    // Step 5: Prepare system launch properties (FIXED BACKGROUND FLAGS)
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.sz = sizeof(LncAppParam);
     param.user_id = (uint32_t)userId;
-    param.app_opt = 0;
+    
+    // Set launcher focus preference behavior to prevent premature kernel thread suspension
+    param.app_opt = 0x00000001; 
     param.crash_report = 0;
-    param.check_flag = SkipSystemUpdateCheck;
+    
+    // Mask out platform checking requirements to skip USB mount collision logic splits
+    param.check_flag = SkipSystemUpdateCheck | 0x00040000; 
 
     // Step 6: Trigger the emulator boot process
     log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
