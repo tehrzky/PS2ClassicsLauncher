@@ -60,6 +60,29 @@ The launcher appends `--image=` and `--ps2-title-id=` automatically.
 
 Cover support can be added later by loading `/data/PS4ROMS/PS2ISO/covers/<DISC-ID>.png`.
 
+
+USB Structure for PS2 Saves
+1. Virtual Memory Cards (VMCs) — what your app uses
+Put VMC image files directly on the USB root:
+plain
+/mnt/usb0/PS2VMC/
+    ├── SLUS-21214.VM2
+    ├── SCUS-97402.BIN
+    ├── SLES-12345.VMC
+    └── ...
+Supported extensions: .VM2 .VMC .BIN .PS2 .CARD .MC2 .MCD
+These are full memory card images (8MB, 16MB, 32MB, or 64MB). When your app scans /mnt/usb0/PS2VMC, it should find these and show the saves inside them.
+2. Individual Save Files — for importing/exporting
+If you want raw save files (to import into a VMC or export from one), use:
+plain
+/mnt/usb0/PS2/SAVEDATA/
+    ├── save1.PSU
+    ├── save2.PSV
+    ├── save3.XPS
+    └── ...
+Formats: .PSU .PSV .XPS .MAX .CBS .SPS
+These are extracted saves, not memory card images. Apollo can import these into a VMC. Your app would need an import feature to use them.
+
 ## Requirements
 
 - PS4 with GoldHEN / homebrew enabler (for file system access).
