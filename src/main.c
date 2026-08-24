@@ -90,6 +90,7 @@ int main(void) {
         draw_launcher_ui(0, 0, 0);
         flip();
         sceKernelSleep(5);
+        memcard_unmount_all();
         return 0;
     }
 
@@ -171,6 +172,7 @@ int main(void) {
                     }
                 }
                 if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    memcard_unmount_all();
                     return 0;
                 }
                 if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
@@ -224,9 +226,10 @@ int main(void) {
         sceKernelUsleep(16666);
     }
 
-        font_cleanup();
-        cover_free_wallpaper();
-        cover_cleanup();
+    font_cleanup();
+    cover_free_wallpaper();
+    cover_cleanup();
+    memcard_unmount_all();
     
     return 0;
 }
