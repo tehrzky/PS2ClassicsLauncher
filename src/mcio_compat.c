@@ -38,6 +38,8 @@ int write_buffer(const char *file_path, uint8_t *data, size_t size) {
         return -1;
     }
     size_t n = fwrite(data, 1, size, fp);
+    fflush(fp);
+    fsync(fileno(fp));
     fclose(fp);
     if (n != size) {
         LOG("write_buffer: fwrite incomplete: %zu/%zu", n, size);
