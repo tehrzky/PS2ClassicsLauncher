@@ -66,31 +66,6 @@ static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
         }
     }
 }
-#define SAFE_X      64
-#define SAFE_Y      40
-#define SAFE_X1     (SCREEN_W - SAFE_X)
-#define SAFE_Y1     (SCREEN_H - SAFE_Y)
-
-#define FOOTER_H    70
-#define PANEL_GAP   28
-#define PANEL_Y     130
-#define PANEL_BOT   (SCREEN_H - FOOTER_H - 40)
-#define PANEL_H     (PANEL_BOT - PANEL_Y)
-#define PANEL_W     ((SAFE_X1 - SAFE_X - PANEL_GAP) / 2)
-#define SLOT1_X     SAFE_X
-#define SLOT2_X     (SLOT1_X + PANEL_W + PANEL_GAP)
-
-#define ID_ROW_H    34
-#define ID_GAP      6
-#define GRID_TOP    (PANEL_Y + 155)
-#define GRID_COLS   4
-#define GRID_ROWS   4
-#define CELL_GAP    10
-#define CELL_W      ((PANEL_W - 40 - (GRID_COLS - 1) * CELL_GAP) / GRID_COLS)
-#define CELL_H      (CELL_W * 3 / 4)
-
-#define RADIUS      8
-#define BORDER_W    2
 
 /* ============================================================
    STATIC HELPERS
@@ -246,7 +221,7 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
 static void draw_insert_card(int px, int is_active) {
     const char *txt = "INSERT CARD";
     int tw = font_text_width_slot(txt, 48, FONT_SLOT_BOLD);
-    uint32_t c = is_active ? 0xFF4A6B8A : 0xFF1E293B; /* dim blue if active, darker if not */
+    uint32_t c = is_active ? 0xFF4A6B8A : 0xFF1E293B;
     int tx = px + (PANEL_W - tw) / 2;
     int ty = PANEL_Y + PANEL_H / 2 - 24;
     draw_text_slot(tx, ty, txt, c, 48, FONT_SLOT_BOLD);
@@ -301,7 +276,7 @@ static void draw_stats(int px, MemCardSlot *slot) {
 }
 
 /* ============================================================
-   ACTION MENU
+   ACTION MENU (LARGER)
    ============================================================ */
 
 static const char *action_items[] = {
@@ -316,7 +291,7 @@ static const char *action_items[] = {
 #define ACTION_COUNT 7
 
 static void draw_action_menu(void) {
-    int mw = 520, row_h = 48, mh = ACTION_COUNT * row_h + 50;
+    int mw = 640, row_h = 56, mh = ACTION_COUNT * row_h + 70;
     int mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
 
     draw_rect(0, 0, SCREEN_W, SCREEN_H, 0xE6000000);
@@ -325,13 +300,13 @@ static void draw_action_menu(void) {
     draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
 
     const char *title = "ACTION MENU";
-    int tw = font_text_width_slot(title, 28, FONT_SLOT_BOLD);
-    draw_text_slot(mx + (mw - tw) / 2, my + 14, title, COLOR_GOLD, 28, FONT_SLOT_BOLD);
-    draw_rect(mx + 30, my + 48, mw - 60, 2, COLOR_BORDER);
+    int tw = font_text_width_slot(title, 32, FONT_SLOT_BOLD);
+    draw_text_slot(mx + (mw - tw) / 2, my + 18, title, COLOR_GOLD, 32, FONT_SLOT_BOLD);
+    draw_rect(mx + 30, my + 56, mw - 60, 2, COLOR_BORDER);
 
     MemCardSlot *slot = &g_slots[g_active_slot];
     for (int i = 0; i < ACTION_COUNT; i++) {
-        int ry = my + 58 + i * row_h;
+        int ry = my + 68 + i * row_h;
         int enabled = 1;
 
         /* Disable items based on state */
@@ -349,7 +324,7 @@ static void draw_action_menu(void) {
             draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_ACCENT);
             tc = COLOR_GOLD;
         }
-        draw_text(mx + 36, ry + 10, action_items[i], tc, 22);
+        draw_text(mx + 36, ry + 14, action_items[i], tc, 24);
     }
 }
 
@@ -358,7 +333,7 @@ static void draw_action_menu(void) {
    ============================================================ */
 
 static void draw_confirm_dialog(void) {
-    int mw = 560, mh = 220;
+    int mw = 640, mh = 260;
     int mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
 
     draw_rect(0, 0, SCREEN_W, SCREEN_H, 0xE6000000);
@@ -366,26 +341,26 @@ static void draw_confirm_dialog(void) {
     draw_rounded_rect(mx, my, mw, mh, 12, COLOR_GOLD);
     draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
 
-    int tw = font_text_width_slot(g_confirm_title, 28, FONT_SLOT_BOLD);
-    draw_text_slot(mx + (mw - tw) / 2, my + 20, g_confirm_title, COLOR_GOLD, 28, FONT_SLOT_BOLD);
-    draw_rect(mx + 30, my + 54, mw - 60, 2, COLOR_BORDER);
+    int tw = font_text_width_slot(g_confirm_title, 32, FONT_SLOT_BOLD);
+    draw_text_slot(mx + (mw - tw) / 2, my + 24, g_confirm_title, COLOR_GOLD, 32, FONT_SLOT_BOLD);
+    draw_rect(mx + 30, my + 62, mw - 60, 2, COLOR_BORDER);
 
     /* Message (multi-line if needed) */
-    draw_text(mx + 30, my + 70, g_confirm_msg, COLOR_TEXT, 22);
+    draw_text(mx + 30, my + 80, g_confirm_msg, COLOR_TEXT, 24);
 
     /* Buttons: NO (default) | YES */
-    int by = my + mh - 60;
-    int no_x = mx + mw / 2 - 140;
-    int yes_x = mx + mw / 2 + 20;
+    int by = my + mh - 70;
+    int no_x = mx + mw / 2 - 160;
+    int yes_x = mx + mw / 2 + 40;
 
     uint32_t no_c = (g_confirm_dialog_sel == 0) ? COLOR_GOLD : COLOR_DIM;
     uint32_t yes_c = (g_confirm_dialog_sel == 1) ? COLOR_ERROR : COLOR_DIM;
 
-    draw_rounded_rect(no_x, by, 120, 40, 6, (g_confirm_dialog_sel == 0) ? COLOR_CARD_SEL : COLOR_CARD);
-    draw_text(no_x + 30, by + 8, "[O] NO", no_c, 22);
+    draw_rounded_rect(no_x, by, 140, 48, 6, (g_confirm_dialog_sel == 0) ? COLOR_CARD_SEL : COLOR_CARD);
+    draw_text(no_x + 34, by + 12, "[O] NO", no_c, 24);
 
-    draw_rounded_rect(yes_x, by, 120, 40, 6, (g_confirm_dialog_sel == 1) ? 0x33FF4444 : COLOR_CARD);
-    draw_text(yes_x + 24, by + 8, "[X] YES", yes_c, 22);
+    draw_rounded_rect(yes_x, by, 140, 48, 6, (g_confirm_dialog_sel == 1) ? 0x33FF4444 : COLOR_CARD);
+    draw_text(yes_x + 28, by + 12, "[X] YES", yes_c, 24);
 }
 
 /* ============================================================
@@ -418,22 +393,21 @@ static void draw_footer(void) {
     draw_btn_hint(x, hy, "O", "BACK", COLOR_ERROR);
 }
 
-
 /* ============================================================
-   TOAST NOTIFICATION
+   TOAST NOTIFICATION (LARGER)
    ============================================================ */
 
 static void draw_toast(void)
 {
     if (g_toast_timer <= 0) return;
 
-    int tw = font_text_width(g_toast_msg, 24);
+    int tw = font_text_width(g_toast_msg, 28);
     int tx = (SCREEN_W - tw) / 2;
     int ty = SCREEN_H - 140;
 
-    draw_rounded_rect(tx - 24, ty - 12, tw + 48, 48, 8, COLOR_PANEL);
-    draw_rounded_rect(tx - 24, ty - 12, tw + 48, 48, 8, COLOR_GOLD);
-    draw_text(tx, ty, g_toast_msg, COLOR_TEXT, 24);
+    draw_rounded_rect(tx - 30, ty - 16, tw + 60, 60, 10, 0xDD000000);
+    draw_rounded_rect(tx - 28, ty - 14, tw + 56, 56, 8, COLOR_GOLD);
+    draw_text(tx, ty + 2, g_toast_msg, COLOR_TEXT, 28);
 }
 
 /* ============================================================
@@ -444,9 +418,9 @@ static void draw_psu_picker(void)
 {
     if (!g_psu_picker_open) return;
 
-    int mw = 640, row_h = 44;
-    int mh = (g_psu_file_count + 2) * row_h + 50;
-    if (mh > 520) mh = 520;
+    int mw = 680, row_h = 50;
+    int mh = (g_psu_file_count + 2) * row_h + 60;
+    if (mh > 560) mh = 560;
     int mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
 
     draw_rect(0, 0, SCREEN_W, SCREEN_H, 0xE6000000);
@@ -454,25 +428,25 @@ static void draw_psu_picker(void)
     draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
 
     const char *title = "SELECT .PSU FILE TO IMPORT";
-    int tw = font_text_width_slot(title, 26, FONT_SLOT_BOLD);
-    draw_text_slot(mx + (mw - tw) / 2, my + 14, title, COLOR_GOLD, 26, FONT_SLOT_BOLD);
-    draw_rect(mx + 30, my + 48, mw - 60, 2, COLOR_BORDER);
+    int tw = font_text_width_slot(title, 28, FONT_SLOT_BOLD);
+    draw_text_slot(mx + (mw - tw) / 2, my + 18, title, COLOR_GOLD, 28, FONT_SLOT_BOLD);
+    draw_rect(mx + 30, my + 54, mw - 60, 2, COLOR_BORDER);
 
     if (g_psu_file_count == 0) {
-        draw_text(mx + 30, my + 70,
-                  "No .PSU files found in /mnt/usb0/PS2SAVES/", COLOR_DIM, 20);
+        draw_text(mx + 30, my + 80,
+                  "No .PSU files found in /mnt/usb0/PS2SAVES/", COLOR_DIM, 22);
     } else {
         for (int i = 0; i < g_psu_file_count; i++) {
-            int ry = my + 58 + i * row_h;
+            int ry = my + 64 + i * row_h;
             const char *fname = strrchr(g_psu_files[i], '/');
             if (fname) fname++; else fname = g_psu_files[i];
 
             if (i == g_psu_picker_sel) {
                 draw_rounded_rect(mx + 20, ry, mw - 40, row_h - 6, 6, COLOR_CARD_SEL);
                 draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_ACCENT);
-                draw_text(mx + 36, ry + 10, fname, COLOR_GOLD, 20);
+                draw_text(mx + 36, ry + 12, fname, COLOR_GOLD, 22);
             } else {
-                draw_text(mx + 36, ry + 10, fname, COLOR_DIM, 20);
+                draw_text(mx + 36, ry + 12, fname, COLOR_DIM, 22);
             }
         }
     }
@@ -484,7 +458,6 @@ static void draw_psu_picker(void)
 
 void draw_memcard_ui(void) {
     memcard_update_toast();
-    /* ... rest of function ... */
     if (g_settings.wallpaper[0]) {
         cover_draw_wallpaper();
     } else {
@@ -606,7 +579,7 @@ static void do_format_vmc(void) {
 void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
     MemCardSlot *slot = &g_slots[g_active_slot];
 
-      /* === PSU FILE PICKER === */
+    /* === PSU FILE PICKER === */
     if (g_psu_picker_open) {
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
             g_psu_picker_open = 0;
@@ -633,7 +606,6 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
         return;
     }
 
-  
     /* === CONFIRMATION DIALOG === */
     if (g_confirm_dialog_open) {
         if (pressed & ORBIS_PAD_BUTTON_LEFT)  g_confirm_dialog_sel = 0;
@@ -666,7 +638,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
             int other = (g_active_slot == 0) ? 1 : 0;
             MemCardSlot *other_slot = &g_slots[other];
 
-                        switch (g_memcard_action_sel) {
+            switch (g_memcard_action_sel) {
                 case 0: /* Copy to other slot */
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0 &&
                         other_slot->state == SLOT_STATE_VMC_SEL) {
@@ -811,31 +783,89 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
     }
 
     /* === NORMAL NAVIGATION === */
+    
+    /* LEFT: Navigate within grid or switch panels */
     if (pressed & ORBIS_PAD_BUTTON_LEFT) {
-        if (g_active_slot == 1) {
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
+            /* In grid - check if at left edge */
+            if (slot->save_count > 0 && slot->save_idx >= 0) {
+                int cols = GRID_COLS;
+                int col = slot->save_idx % cols;
+                if (col == 0) {
+                    /* At left edge - switch to other slot */
+                    if (g_active_slot == 1) {
+                        g_active_slot = 0;
+                        g_slots[0].focus_element = 2;
+                        /* Move to right edge of other slot */
+                        if (g_slots[0].save_count > 0) {
+                            int other_cols = GRID_COLS;
+                            int last_col = (g_slots[0].save_count - 1) % other_cols;
+                            int last_row = (g_slots[0].save_count - 1) / other_cols;
+                            g_slots[0].save_idx = last_row * other_cols + last_col;
+                            if (g_slots[0].save_idx >= g_slots[0].save_count) {
+                                g_slots[0].save_idx = g_slots[0].save_count - 1;
+                            }
+                        }
+                    }
+                } else {
+                    /* Move left within grid */
+                    move_grid_cursor(slot, -1, 0);
+                }
+            }
+        } else if (g_active_slot == 1) {
+            /* Not in grid - switch to slot 0 */
             g_active_slot = 0;
         } else if (slot->focus_element > 0) {
             slot->focus_element--;
         }
     }
+    
+    /* RIGHT: Navigate within grid or switch panels */
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
-        if (g_active_slot == 0) {
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
+            /* In grid - check if at right edge */
+            if (slot->save_count > 0 && slot->save_idx >= 0) {
+                int cols = GRID_COLS;
+                int col = slot->save_idx % cols;
+                int last_col = (slot->save_count - 1) % cols;
+                if (col == last_col || slot->save_idx == slot->save_count - 1) {
+                    /* At right edge - switch to other slot */
+                    if (g_active_slot == 0) {
+                        g_active_slot = 1;
+                        g_slots[1].focus_element = 2;
+                        /* Move to left edge of other slot */
+                        if (g_slots[1].save_count > 0) {
+                            g_slots[1].save_idx = 0;
+                        }
+                    }
+                } else {
+                    /* Move right within grid */
+                    move_grid_cursor(slot, 1, 0);
+                }
+            }
+        } else if (g_active_slot == 0) {
+            /* Not in grid - switch to slot 1 */
             g_active_slot = 1;
         } else if (slot->focus_element < 2) {
             slot->focus_element++;
         }
     }
 
+    /* UP: Navigate within grid or move focus up */
     if (pressed & ORBIS_PAD_BUTTON_UP) {
-        if (slot->focus_element == 2) {
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
+            /* Move up within grid */
             move_grid_cursor(slot, 0, -1);
         } else {
             slot->focus_element--;
             if (slot->focus_element < 0) slot->focus_element = 2;
         }
     }
+    
+    /* DOWN: Navigate within grid or move focus down */
     if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-        if (slot->focus_element == 2) {
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
+            /* Move down within grid */
             move_grid_cursor(slot, 0, 1);
         } else {
             slot->focus_element++;
@@ -843,6 +873,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
         }
     }
 
+    /* CROSS: Open dropdown or select */
     if (pressed & ORBIS_PAD_BUTTON_CROSS) {
         if (slot->focus_element == 0) {
             slot->in_dropdown = 1;
@@ -855,19 +886,14 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
         }
     }
 
+    /* TRIANGLE: Open action menu */
     if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
         if (slot->state == SLOT_STATE_VMC_SEL) {
             g_memcard_action_menu_open = 1;
             g_memcard_action_sel = 0;
         } else if (slot->state == SLOT_STATE_EMU_SEL) {
-            /* Show VMC-only actions */
             g_memcard_action_menu_open = 1;
-            g_memcard_action_sel = 3; /* Jump to Backup VMC */
+            g_memcard_action_sel = 3;
         }
-    }
-
-    if (slot->focus_element == 2) {
-        if (pressed & ORBIS_PAD_BUTTON_L1) move_grid_cursor(slot, -1, 0);
-        if (pressed & ORBIS_PAD_BUTTON_R1) move_grid_cursor(slot, 1, 0);
     }
 }
