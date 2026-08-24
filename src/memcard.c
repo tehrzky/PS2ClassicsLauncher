@@ -1,4 +1,6 @@
 #include "memcard.h"
+#include "sd.h"
+#include <sys/stat.h>
 #include "settings.h"
 #include "debug.h"
 #include "goodnames.h"
@@ -204,7 +206,7 @@ static void build_vmc_display_name(const char *disc_id, char *out, size_t out_le
     }
 }
 
-void memcard_unmount_all(void)
+static void memcard_unmount_all(void)
 {
     for (int i = 0; i < g_mount_count; i++) {
         if (g_mounts[i].active) {
@@ -216,18 +218,16 @@ void memcard_unmount_all(void)
     g_mount_count = 0;
 }
 
-
+/* Recursive mkdir helper */
 static int memcard_mkdirs(const char *path)
 {
     char tmp[512];
     char *p = NULL;
     size_t len;
-
     snprintf(tmp, sizeof(tmp), "%s", path);
     len = strlen(tmp);
     if (tmp[len - 1] == '/')
         tmp[len - 1] = 0;
-
     for (p = tmp + 1; *p; p++) {
         if (*p == '/') {
             *p = 0;
@@ -238,6 +238,7 @@ static int memcard_mkdirs(const char *path)
     mkdir(tmp, 0777);
     return 0;
 }
+
 
 void memcard_scan_vmc_files(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
@@ -281,13 +282,12 @@ void memcard_scan_vmc_files(int slot_idx) {
                 snprintf(volume_path, sizeof(volume_path), "%s/savedata/%s/%s", home, emu->id, sdimg_entry->d_name);
                 snprintf(key_path, sizeof(key_path), "%s/savedata/%s/%s.bin", home, emu->id, disc_id);
                 snprintf(mount_path, sizeof(mount_path), "/data/PS2ISO/mnt/%s_%s", emu->id, disc_id);
-
+                
                 struct stat st_vol;
                 if (stat(volume_path, &st_vol) != 0 || !S_ISREG(st_vol.st_mode)) {
                     log_debug("memcard: sdimg missing: %s", volume_path);
                     continue;
                 }
-                
                 struct stat st_key;
                 if (stat(key_path, &st_key) != 0) {
                     log_debug("memcard: key missing for %s, skipping", sdimg_entry->d_name);
@@ -711,7 +711,7 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
     int ok = write_save_directory(src_dir, &savedir);
     free_save_directory(&savedir);
 
-     if (ok) {
+    if (ok) {
         mcio_vmcFinish(); /* Commit changes to dest VMC */
         log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
         /* Refresh both slots so UI matches physical state */
@@ -719,8 +719,6 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
         memcard_load_vmc(src_slot);
         memcard_scan_vmc_files(dst_slot);
         memcard_load_vmc(dst_slot);
-        return 1;
-    } else {
         mcio_vmcFinish();
         return 0;
     }
