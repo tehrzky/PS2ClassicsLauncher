@@ -23,6 +23,7 @@ void _fini(void) {}
 #include "cover.h"
 #include "memcard.h"
 #include "sandbox.h"
+#include "sd.h"
 #include "memcard_ui.h"
 
 #define SCREEN_WIDTH 1920
@@ -57,6 +58,12 @@ int main(void) {
         log_debug("SANDBOX BYPASS FAILED");
     } else {
         log_debug("SANDBOX BYPASSED");
+    }
+
+    if (loadPrivLibs() < 0) {
+        log_debug("PRIV LIBS LOAD FAILED");
+    } else {
+        log_debug("PRIV LIBS LOADED");
     }
 
     if (init_video() < 0) {
