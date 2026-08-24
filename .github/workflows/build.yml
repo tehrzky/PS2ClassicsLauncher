@@ -28,6 +28,16 @@ jobs:
         run: |
           curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/download/0.0.1.416/toolchain.tar.gz | tar xz -C ./
 
+      - name: Checkout libjbc
+        uses: actions/checkout@v4
+        with:
+          repository: bucanero/ps4-libjbc
+          path: ps4-libjbc
+
+      - name: Install libjbc
+        working-directory: ps4-libjbc
+        run: make install
+
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
