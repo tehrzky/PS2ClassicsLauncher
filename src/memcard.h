@@ -102,6 +102,7 @@ void memcard_scan_vmc_files(int slot_idx);
 void memcard_load_vmc(int slot_idx);
 void memcard_unload_current_vmc(void);
 void memcard_refresh_slot(int slot_idx);
+void memcard_unmount_all(void);  /* Added: Unmount all VMC files from both slots */
 
 /* Save operations */
 int memcard_copy_save_between_slots(int src_slot, int dst_slot);
@@ -139,7 +140,5 @@ void memcard_scan_psu_files(void);
 const char *memcard_get_user_home(void);
 int memcard_is_vmc_file_size_valid(size_t sz);
 void memcard_extract_disc_id(const char *filename, char *out, size_t out_len);
-
-
 
 #endif
