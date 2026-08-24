@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "sd.h"
 #include <orbis/UserService.h>
 
 
@@ -38,6 +39,13 @@ char g_confirm_title[64] = {0};
 char g_confirm_msg[256] = {0};
 void (*g_confirm_yes_callback)(void) = NULL;
 void (*g_confirm_no_callback)(void) = NULL;
+
+#define MAX_MOUNTS 32
+static struct {
+    char mount_path[512];
+    int active;
+} g_mounts[MAX_MOUNTS];
+static int g_mount_count = 0;
 
 /* ============================================================
    USER HOME DISCOVERY (dynamic, not hardcoded)
@@ -196,6 +204,18 @@ static void build_vmc_display_name(const char *disc_id, char *out, size_t out_le
     }
 }
 
+static void memcard_unmount_all(void)
+{
+    for (int i = 0; i < g_mount_count; i++) {
+        if (g_mounts[i].active) {
+            umountSave(g_mounts[i].mount_path, 0, 0);
+            rmdir(g_mounts[i].mount_path);
+            g_mounts[i].active = 0;
+        }
+    }
+    g_mount_count = 0;
+}
+
 void memcard_scan_vmc_files(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
     MemCardSlot *slot = &g_slots[slot_idx];
@@ -217,6 +237,86 @@ void memcard_scan_vmc_files(int slot_idx) {
         const char *home = memcard_get_user_home();
         if (!home) return;
         snprintf(scan_path, sizeof(scan_path), "%s/savedata/%s", home, emu->id);
+        
+        /* Mount sdimg_* containers and scan mount points */
+        memcard_unmount_all();
+        
+        DIR *sdimg_dir = opendir(scan_path);
+        if (sdimg_dir) {
+            struct dirent *sdimg_entry;
+            while ((sdimg_entry = readdir(sdimg_dir)) != NULL) {
+                if (strncmp(sdimg_entry->d_name, "sdimg_", 6) != 0)
+                    continue;
+                
+                char disc_id[32];
+                strncpy(disc_id, sdimg_entry->d_name + 6, sizeof(disc_id)-1);
+                disc_id[sizeof(disc_id)-1] = '\0';
+                
+                char volume_path[512];
+                char key_path[512];
+                char mount_path[512];
+                snprintf(volume_path, sizeof(volume_path), "%s/savedata/%s/%s", home, emu->id, sdimg_entry->d_name);
+                snprintf(key_path, sizeof(key_path), "%s/savedata/%s/%s.bin", home, emu->id, disc_id);
+                snprintf(mount_path, sizeof(mount_path), "/data/PS2ISO/mnt/%s_%s", emu->id, disc_id);
+                
+                struct stat st_key;
+                if (stat(key_path, &st_key) != 0) {
+                    log_debug("memcard: key missing for %s, skipping", sdimg_entry->d_name);
+                    continue;
+                }
+                
+                mkdir(mount_path, 0777);
+                if (mountSave(volume_path, key_path, mount_path) < 0) {
+                    log_debug("memcard: failed to mount %s", sdimg_entry->d_name);
+                    rmdir(mount_path);
+                    continue;
+                }
+                
+                if (g_mount_count < MAX_MOUNTS) {
+                    strncpy(g_mounts[g_mount_count].mount_path, mount_path, sizeof(g_mounts[0].mount_path)-1);
+                    g_mounts[g_mount_count].active = 1;
+                    g_mount_count++;
+                }
+                
+                /* Scan the mount point for VMC files */
+                DIR *mnt_dir = opendir(mount_path);
+                if (!mnt_dir) continue;
+                
+                struct dirent *mnt_entry;
+                while ((mnt_entry = readdir(mnt_dir)) != NULL) {
+                    if (strcmp(mnt_entry->d_name, ".") == 0 || strcmp(mnt_entry->d_name, "..") == 0)
+                        continue;
+                    if (!is_vmc_file(mnt_entry->d_name))
+                        continue;
+                    
+                    char vmc_path[768];
+                    snprintf(vmc_path, sizeof(vmc_path), "%s/%s", mount_path, mnt_entry->d_name);
+                    
+                    struct stat vmc_st;
+                    if (stat(vmc_path, &vmc_st) != 0) continue;
+                    if (!S_ISREG(vmc_st.st_mode)) continue;
+                    if (vmc_st.st_size < 0x100000) continue;
+                    
+                    if (slot->vmc_count >= MAX_VMC_FILES) break;
+                    
+                    VmcFile *vf = &slot->vmc_files[slot->vmc_count];
+                    memset(vf, 0, sizeof(VmcFile));
+                    strncpy(vf->full_path, vmc_path, sizeof(vf->full_path)-1);
+                    strncpy(vf->filename, mnt_entry->d_name, sizeof(vf->filename)-1);
+                    strncpy(vf->disc_id, disc_id, sizeof(vf->disc_id)-1);
+                    vf->disc_id[sizeof(vf->disc_id)-1] = '\0';
+                    vf->file_size = vmc_st.st_size;
+                    build_vmc_display_name(disc_id, vf->display_name, sizeof(vf->display_name));
+                    
+                    slot->vmc_count++;
+                }
+                closedir(mnt_dir);
+            }
+            closedir(sdimg_dir);
+        }
+        
+        log_debug("memcard: slot %d scanned %d VMC files from mounted saves", slot_idx, slot->vmc_count);
+        return;
     }
 
     DIR *dir = opendir(scan_path);
@@ -821,6 +921,9 @@ void memcard_confirm_no(void) {
         cb();
     }
 }
+
+
+
 
 /* ============================================================
    INIT
