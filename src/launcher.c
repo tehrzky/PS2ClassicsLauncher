@@ -85,14 +85,25 @@ int launch_app(const char *tid, const char *override_tid) {
     }
 
     // Step 3: Resolve sceLncUtilLaunchApp symbol dynamically
-    sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)dlsym((void *)(size_t)libcmi, "sceLncUtilLaunchApp");
+void *init_fn = NULL;
+ps4_dlsym(libcmi, "sceLncUtilInitialize", &init_fn);
+log_debug("sceLncUtilInitialize: %p", init_fn);
+if (init_fn) {
+    int r = ((int(*)(void))init_fn)();
+    log_debug("sceLncUtilInitialize returned: 0x%08X", r);
+}
 
-    if (!sceLncUtilLaunchApp) {
-        log_debug("LAUNCH FAILED: Could not resolve sceLncUtilLaunchApp via dlsym");
-        return -1;
-    }
+void *launch_fn = NULL;
+ps4_dlsym(libcmi, "sceLncUtilLaunchApp", &launch_fn);
+log_debug("sceLncUtilLaunchApp: %p", launch_fn);
 
-    log_debug("Successfully resolved sceLncUtilLaunchApp");
+if (!launch_fn) {
+    log_debug("LAUNCH FAILED: sceLncUtilLaunchApp not found in module %d", libcmi);
+    return -1;
+}
+
+sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
+log_debug("Successfully resolved sceLncUtilLaunchApp");
 
     // Step 4: Prepare launch parameters
     LncAppParam param;
