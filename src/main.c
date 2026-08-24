@@ -22,6 +22,7 @@ void _fini(void) {}
 #include "settings.h"
 #include "cover.h"
 #include "memcard.h"
+#include "sandbox.h"
 #include "memcard_ui.h"
 
 #define SCREEN_WIDTH 1920
@@ -51,6 +52,12 @@ int main(void) {
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_VIDEO_OUT);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_PAD);
+    
+    if (!sandbox_bypass()) {
+        log_debug("SANDBOX BYPASS FAILED");
+    } else {
+        log_debug("SANDBOX BYPASSED");
+    }
 
     if (init_video() < 0) {
         log_debug("VIDEO FAIL");
