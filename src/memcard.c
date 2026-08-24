@@ -206,7 +206,7 @@ static void build_vmc_display_name(const char *disc_id, char *out, size_t out_le
     }
 }
 
-static void memcard_unmount_all(void)
+void memcard_unmount_all(void)
 {
     for (int i = 0; i < g_mount_count; i++) {
         if (g_mounts[i].active) {
