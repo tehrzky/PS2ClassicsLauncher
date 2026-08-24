@@ -45,7 +45,7 @@ jobs:
 
       - name: Install libjbc
         working-directory: ps4-libjbc
-        run: make install
+        run: make AR=ar install
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
