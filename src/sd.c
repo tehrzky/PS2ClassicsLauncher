@@ -18,16 +18,27 @@ int (*sceFsInitUmountSaveDataOpt)(UmountSaveDataOpt *opt);
 int (*sceFsUmountSaveData)(UmountSaveDataOpt *opt, const char *mountPath, int handle, bool ignoreErrors);
 
 int loadPrivLibs(void) {
-    int sys = sceKernelLoadStartModule("/system/priv/libSceFsInternalForVsh.sprx", 0, NULL, 0, NULL, NULL);
-    if (sys >= 0) {
-        sceKernelDlsym(sys, "sceFsInitMountSaveDataOpt", (void **)&sceFsInitMountSaveDataOpt);
-        sceKernelDlsym(sys, "sceFsMountSaveData",        (void **)&sceFsMountSaveData);
-        sceKernelDlsym(sys, "sceFsInitUmountSaveDataOpt",(void **)&sceFsInitUmountSaveDataOpt);
-        sceKernelDlsym(sys, "sceFsUmountSaveData",       (void **)&sceFsUmountSaveData);
-    } else {
-        return -1;
+    const char *paths[] = {
+        "/system/priv/libSceFsInternalForVsh.sprx",
+        "/system/priv/lib/libSceFsInternalForVsh.sprx",
+        "/system/common/lib/libSceFsInternalForVsh.sprx",
+        NULL
+    };
+    
+    for (int i = 0; paths[i]; i++) {
+        int sys = sceKernelLoadStartModule(paths[i], 0, NULL, 0, NULL, NULL);
+        if (sys >= 0) {
+            sceKernelDlsym(sys, "sceFsInitMountSaveDataOpt", (void **)&sceFsInitMountSaveDataOpt);
+            sceKernelDlsym(sys, "sceFsMountSaveData",        (void **)&sceFsMountSaveData);
+            sceKernelDlsym(sys, "sceFsInitUmountSaveDataOpt",(void **)&sceFsInitUmountSaveDataOpt);
+            sceKernelDlsym(sys, "sceFsUmountSaveData",       (void **)&sceFsUmountSaveData);
+            
+            if (sceFsInitMountSaveDataOpt && sceFsMountSaveData) {
+                return 0;
+            }
+        }
     }
-    return 0;
+    return -1;
 }
 
 static int decryptSealedKeyAtPath(const char *keyPath, uint8_t decryptedSealedKey[DEC_SEALEDKEY_LEN]) {
@@ -60,6 +71,10 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
     uint8_t decryptedSealedKey[DEC_SEALEDKEY_LEN];
     MountSaveDataOpt opt;
 
+    if (!sceFsInitMountSaveDataOpt || !sceFsMountSaveData) {
+        return -99;
+    }
+
     memset(&opt, 0, sizeof(MountSaveDataOpt));
 
     ret = decryptSealedKeyAtPath(volumeKeyPath, decryptedSealedKey);
@@ -79,6 +94,9 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
 }
 
 int umountSave(const char *mountPath, int handle, bool ignoreErrors) {
+    if (!sceFsInitUmountSaveDataOpt || !sceFsUmountSaveData) {
+        return -99;
+    }
     UmountSaveDataOpt opt;
     memset(&opt, 0, sizeof(UmountSaveDataOpt));
     sceFsInitUmountSaveDataOpt(&opt);
