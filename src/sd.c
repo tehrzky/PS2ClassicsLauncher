@@ -83,6 +83,7 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
     memset(&opt, 0, sizeof(MountSaveDataOpt));
     sceFsInitMountSaveDataOpt(&opt);
     opt.budgetid = "system";
+    opt.readOnly = true;  /* Prevent accidental corruption of live save data */
 
     ret = sceFsMountSaveData(&opt, volumePath, mountPath, decryptedSealedKey);
     if (ret < 0) {
