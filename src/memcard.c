@@ -191,7 +191,8 @@ static int is_vmc_file(const char *name) {
     const char *ext = name + len - 4;
     return (strcasecmp(ext, ".bin") == 0 ||
             strcasecmp(ext, ".vm2") == 0 ||
-            strcasecmp(ext, ".vmc") == 0);
+            strcasecmp(ext, ".vmc") == 0 ||
+            strcasecmp(ext, "card") == 0);  /* PS4 emu uses .card */
 }
 
 static void build_vmc_display_name(const char *disc_id, char *out, size_t out_len) {
@@ -257,12 +258,29 @@ void memcard_scan_vmc_files(int slot_idx) {
 
     if (emu->is_usb) {
         snprintf(scan_path, sizeof(scan_path), "/mnt/usb0/PS2VMC");
-        } else {
+      } else {
         const char *home = memcard_get_user_home();
         if (!home) {
             log_debug("memcard: no user home, aborting scan");
             return;
         }
+
+        /* Clean up any stale mounts for this emulator from a crashed session */
+        char old_sandbox[256];
+        snprintf(old_sandbox, sizeof(old_sandbox), "/data/sandbox/%s", emu->id);
+        DIR *old_d = opendir(old_sandbox);
+        if (old_d) {
+            struct dirent *old_e;
+            while ((old_e = readdir(old_d)) != NULL) {
+                if (old_e->d_name[0] == '.') continue;
+                char old_mount[512];
+                snprintf(old_mount, sizeof(old_mount), "/data/sandbox/%s/%s/", emu->id, old_e->d_name);
+                umountSave(old_mount, 0, 1);
+                rmdir(old_mount);
+            }
+            closedir(old_d);
+        }
+
         snprintf(scan_path, sizeof(scan_path), "%s/savedata/%s", home, emu->id);
         log_debug("memcard: scanning internal savedata: %s", scan_path);
 
@@ -278,8 +296,10 @@ void memcard_scan_vmc_files(int slot_idx) {
         while ((sdimg_entry = readdir(sdimg_dir)) != NULL) {
             if (strncmp(sdimg_entry->d_name, "sdimg_", 6) != 0)
                 continue;
+
+            /* Skip Sony backup images */
             if (strncmp(sdimg_entry->d_name, "sdimg_sce_bu_", 13) == 0)
-            continue;
+                continue;
 
             log_debug("memcard: found sdimg: %s", sdimg_entry->d_name);
 
@@ -296,6 +316,12 @@ void memcard_scan_vmc_files(int slot_idx) {
             memcpy(disc_id, sdimg_entry->d_name + 6, id_len);
             disc_id[id_len] = '\0';
 
+            /* Skip malformed disc IDs (e.g., "SCUS-SLUS-21386") */
+            if (strchr(disc_id, '/') || strlen(disc_id) > 16) {
+                log_debug("memcard: skipping malformed disc_id: %s", disc_id);
+                continue;
+            }
+
             int n;
             n = snprintf(volume_path, sizeof(volume_path),
                          "%s/savedata/%s/%s", home, emu->id, sdimg_entry->d_name);
@@ -306,7 +332,7 @@ void memcard_scan_vmc_files(int slot_idx) {
             if (n < 0 || (size_t)n >= sizeof(key_path)) continue;
 
             n = snprintf(mount_path, sizeof(mount_path),
-             "/data/sandbox/ps2mc_%s/", disc_id);
+                         "/data/sandbox/%s/%s/", emu->id, disc_id);
             if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
 
             struct stat st_vol;
@@ -324,7 +350,7 @@ void memcard_scan_vmc_files(int slot_idx) {
                 continue;
             }
             if (mount_err < 0) {
-                log_debug("memcard: mountSave failed (%d)", mount_err);
+                log_debug("memcard: mountSave failed (0x%08X) for %s", mount_err, disc_id);
                 rmdir(mount_path);
                 continue;
             }
@@ -350,7 +376,7 @@ void memcard_scan_vmc_files(int slot_idx) {
                     continue;
 
                 char vmc_path[512];
-                n = snprintf(vmc_path, sizeof(vmc_path), "%s/%s",
+                n = snprintf(vmc_path, sizeof(vmc_path), "%s%s",
                              mount_path, mnt_entry->d_name);
                 if (n < 0 || (size_t)n >= sizeof(vmc_path)) continue;
 
@@ -372,7 +398,7 @@ void memcard_scan_vmc_files(int slot_idx) {
 
                 size_t did_len = strlen(disc_id);
                 if (did_len >= sizeof(vf->disc_id)) did_len = sizeof(vf->disc_id) - 1;
-                memcpy(vf->disc_id, disc_id, did_len);
+                memcpy(vf->disc_id, disc_id, path_len);
                 vf->disc_id[did_len] = '\0';
 
                 size_t fn_len = strlen(mnt_entry->d_name);
@@ -382,13 +408,19 @@ void memcard_scan_vmc_files(int slot_idx) {
 
                 vf->file_size = vmc_st.st_size;
 
+                /* Distinguish VMC0.card vs VMC1.card in the PS2 ID dropdown */
+                char display_base[256];
+                build_vmc_display_name(disc_id, display_base, sizeof(display_base));
+                snprintf(vf->display_name, sizeof(vf->display_name), "%s [%s]",
+                         display_base, mnt_entry->d_name);
+
                 s->vmc_count++;
             }
             closedir(mnt_dir);
         }
         closedir(sdimg_dir);
 
-       log_debug("memcard: slot %d scanned %d VMC files from mounted saves",
+        log_debug("memcard: slot %d scanned %d VMC files from mounted saves",
                   slot_idx, slot->vmc_count);
         return;
     }
