@@ -155,6 +155,7 @@ int main(void) {
                 }
             } else if (ui_mode == 2) {
                 if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    memcard_unmount_all();  /* Clean up mounts before leaving memcard UI */
                     ui_mode = 0;
                 }
                 memcard_ui_handle_input(pressed, buttons);
