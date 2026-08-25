@@ -75,14 +75,12 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
         return -99;
     }
 
-    memset(&opt, 0, sizeof(MountSaveDataOpt));
-    opt.size = sizeof(MountSaveDataOpt);  /* CRITICAL: must be set before init */
-
     ret = decryptSealedKeyAtPath(volumeKeyPath, decryptedSealedKey);
     if (ret < 0) {
         return ret;
     }
 
+    memset(&opt, 0, sizeof(MountSaveDataOpt));
     sceFsInitMountSaveDataOpt(&opt);
     opt.budgetid = "system";
 
