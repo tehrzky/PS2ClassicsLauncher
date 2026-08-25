@@ -344,7 +344,7 @@ void memcard_scan_vmc_files(int slot_idx) {
                 if (strcmp(mnt_entry->d_name, ".") == 0 ||
                     strcmp(mnt_entry->d_name, "..") == 0)
                     continue;
-                if (!is_vmc_extension(mnt_entry->d_name))
+                if (!is_vmc_file(mnt_entry->d_name))
                     continue;
 
                 char vmc_path[512];
@@ -357,29 +357,37 @@ void memcard_scan_vmc_files(int slot_idx) {
                 if (!S_ISREG(vmc_st.st_mode)) continue;
                 if (vmc_st.st_size < 0x100000) continue;
 
-                if (g_vmc[slot_idx].count >= MAX_VMC_FILES) break;
+                MemCardSlot *s = &g_slots[slot];
+                if (s->vmc_count >= MAX_VMC_FILES) break;
 
-                memcard_file_t *f = &g_vmc[slot_idx].files[g_vmc[slot_idx].count];
-                memset(f, 0, sizeof(memcard_file_t));
+                VmcFile *vf = &s->vmc_files[s->vmc_count];
+                memset(vf, 0, sizeof(VmcFile));
+
                 size_t path_len = strlen(vmc_path);
-                if (path_len >= sizeof(f->path)) path_len = sizeof(f->path) - 1;
-                memcpy(f->path, vmc_path, path_len);
-                f->path[path_len] = '\0';
+                if (path_len >= sizeof(vf->full_path)) path_len = sizeof(vf->full_path) - 1;
+                memcpy(vf->full_path, vmc_path, path_len);
+                vf->full_path[path_len] = '\0';
 
                 size_t did_len = strlen(disc_id);
-                if (did_len >= sizeof(f->disc_id)) did_len = sizeof(f->disc_id) - 1;
-                memcpy(f->disc_id, disc_id, did_len);
-                f->disc_id[did_len] = '\0';
+                if (did_len >= sizeof(vf->disc_id)) did_len = sizeof(vf->disc_id) - 1;
+                memcpy(vf->disc_id, disc_id, did_len);
+                vf->disc_id[did_len] = '\0';
 
-                f->slot = slot_idx;
-                g_vmc[slot_idx].count++;
+                size_t fn_len = strlen(mnt_entry->d_name);
+                if (fn_len >= sizeof(vf->filename)) fn_len = sizeof(vf->filename) - 1;
+                memcpy(vf->filename, mnt_entry->d_name, fn_len);
+                vf->filename[fn_len] = '\0';
+
+                vf->file_size = vmc_st.st_size;
+
+                s->vmc_count++;
             }
             closedir(mnt_dir);
         }
         closedir(sdimg_dir);
 
         log_debug("memcard: slot %d scanned %d VMC files from mounted saves",
-                  slot_idx, g_vmc[slot_idx].count);
+                  slot, g_slots[slot].vmc_count);
         return;
     }
 
