@@ -188,7 +188,7 @@ int set_active_game(const char *iso_path, const char *disc_id,
     snprintf(gameconfig_dir, sizeof(gameconfig_dir), "%s/gameconfig/", g_settings.work_path);
     snprintf(default_config, sizeof(default_config), "%s/config/default.txt", g_settings.work_path);
     snprintf(temp_config,    sizeof(temp_config),    "%s/config/.launcher_temp.txt", g_settings.work_path);
-    snprintf(master_config,  sizeof(master_config),  "%s/config/config-emu-ex.txt", g_settings.work_path);
+    snprintf(master_config, sizeof(master_config), "%s/config/%s", g_settings.work_path, g_settings.master_config);
     mkdir(config_dir, 0777);
     mkdir(gameconfig_dir, 0777);
 
@@ -309,18 +309,20 @@ int set_active_game(const char *iso_path, const char *disc_id,
     close(fd);
 
     fd = open(master_config, O_RDONLY);
+if (fd < 0 || (m = read(fd, buf, sizeof(buf) - 1)) <= 0) {
+    if (fd >= 0) close(fd);
+    log_debug("set_active_game: %s missing/empty, seeding from embedded default", master_config);
+    fd = open(master_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
-        log_debug("set_active_game: failed to open %s", master_config);
+        log_debug("set_active_game: failed to create %s", master_config);
         return 0;
     }
-    char buf[32768];
-    int m = read(fd, buf, sizeof(buf) - 1);
+    write(fd, embedded_default, strlen(embedded_default));
     close(fd);
-    if (m <= 0) {
-        log_debug("set_active_game: %s empty or unreadable", master_config);
-        return 0;
-    }
-    buf[m] = '\0';
+    m = strlen(embedded_default);
+    memcpy(buf, embedded_default, m);
+}
+buf[m] = '\0';
 
     fd = open(master_config, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (fd < 0) {
