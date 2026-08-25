@@ -4,24 +4,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define ENC_SEALEDKEY_LEN 0x30
+#define ENC_SEALEDKEY_LEN 0x60
 #define DEC_SEALEDKEY_LEN 0x20
 
 typedef struct {
-    uint32_t size;
-    uint32_t userId;
-    const char* budgetid;
-    uint32_t mountMode;
-    uint32_t blocks;
-    uint8_t reserved[0x28];
+    bool readOnly;
+    char *budgetid;
 } MountSaveDataOpt;
 
 typedef struct {
-    uint8_t data[0x40];
+    int blockSize;
+    uint8_t idk[2];
 } CreatePfsSaveDataOpt;
 
 typedef struct {
-    uint8_t data[0x10];
+    bool dummy;
 } UmountSaveDataOpt;
 
 int loadPrivLibs(void);
