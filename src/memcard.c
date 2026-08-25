@@ -278,6 +278,8 @@ void memcard_scan_vmc_files(int slot_idx) {
         while ((sdimg_entry = readdir(sdimg_dir)) != NULL) {
             if (strncmp(sdimg_entry->d_name, "sdimg_", 6) != 0)
                 continue;
+            if (strncmp(sdimg_entry->d_name, "sdimg_sce_bu_", 13) == 0)
+            continue;
 
             log_debug("memcard: found sdimg: %s", sdimg_entry->d_name);
 
@@ -304,7 +306,7 @@ void memcard_scan_vmc_files(int slot_idx) {
             if (n < 0 || (size_t)n >= sizeof(key_path)) continue;
 
             n = snprintf(mount_path, sizeof(mount_path),
-                         "/data/sandbox/ps2mc_%s", disc_id);
+             "/data/sandbox/ps2mc_%s/", disc_id);
             if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
 
             struct stat st_vol;
