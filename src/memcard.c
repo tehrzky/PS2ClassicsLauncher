@@ -304,7 +304,7 @@ void memcard_scan_vmc_files(int slot_idx) {
             if (n < 0 || (size_t)n >= sizeof(key_path)) continue;
 
             n = snprintf(mount_path, sizeof(mount_path),
-                         "/tmp/ps2mc_%s", disc_id);
+                         "/data/sandbox/ps2mc_%s", disc_id);
             if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
 
             struct stat st_vol;
