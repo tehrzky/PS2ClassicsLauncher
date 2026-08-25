@@ -73,4 +73,55 @@ int launch_app(const char *tid, const char *override_tid)
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    /* 4) Launch directly through the stub
+    /* 4) Launch directly through the stub — no dlsym needed */
+    log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
+    sys_res = sceLncUtilLaunchApp(title_id, NULL, &param);
+    log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
+
+    /* 5) Handle results */
+    if (sys_res == 0) {
+        log_debug("Launch successful!");
+        return 0;
+    }
+
+    if (sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING ||
+        sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_SUSPEND_NEEDED ||
+        sys_res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING_KILL_NEEDED) {
+        log_debug("App already running, treating as success");
+        return 0;
+    }
+
+    if (IS_ERROR(sys_res)) {
+        switch (sys_res) {
+        case SCE_LNC_ERROR_APP_NOT_FOUND:
+            log_debug("Launch error: App not found (0x%08X)", sys_res);
+            return -2;
+        case SCE_LNC_UTIL_ERROR_APPHOME_EBOOTBIN_NOT_FOUND:
+            log_debug("Launch error: Missing eboot.bin (0x%08X)", sys_res);
+            return -3;
+        case SCE_LNC_UTIL_ERROR_APPHOME_PARAMSFO_NOT_FOUND:
+            log_debug("Launch error: Missing param.sfo (0x%08X)", sys_res);
+            return -4;
+        case SCE_LNC_UTIL_ERROR_NO_SFOKEY_IN_APP_INFO:
+            log_debug("Launch error: Corrupted SFO (0x%08X)", sys_res);
+            return -5;
+        case SCE_LNC_UTIL_ERROR_SETUP_FS_SANDBOX:
+            log_debug("Launch error: Sandbox setup failure (0x%08X)", sys_res);
+            return -6;
+        case SCE_LNC_UTIL_ERROR_INVALID_TITLE_ID:
+            log_debug("Launch error: Invalid Title ID (0x%08X)", sys_res);
+            return -7;
+        default:
+            log_debug("Launch error: Unhandled code (0x%08X)", sys_res);
+            return (int)sys_res;
+        }
+    }
+
+    return (int)sys_res;
+}
+
+int launch_emulator(const char *override_tid)
+{
+    log_debug("Launching emulator...");
+    return launch_app(override_tid, EMULATOR_TID);
+}
