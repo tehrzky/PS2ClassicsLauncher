@@ -308,6 +308,9 @@ int set_active_game(const char *iso_path, const char *disc_id,
     write(fd, line_buf, n);
     close(fd);
 
+    char buf[32768];
+    int m;
+  
     fd = open(master_config, O_RDONLY);
 if (fd < 0 || (m = read(fd, buf, sizeof(buf) - 1)) <= 0) {
     if (fd >= 0) close(fd);
