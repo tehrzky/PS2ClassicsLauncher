@@ -357,7 +357,7 @@ void memcard_scan_vmc_files(int slot_idx) {
                 if (!S_ISREG(vmc_st.st_mode)) continue;
                 if (vmc_st.st_size < 0x100000) continue;
 
-                MemCardSlot *s = &g_slots[slot];
+                MemCardSlot *s = slot;
                 if (s->vmc_count >= MAX_VMC_FILES) break;
 
                 VmcFile *vf = &s->vmc_files[s->vmc_count];
@@ -386,8 +386,8 @@ void memcard_scan_vmc_files(int slot_idx) {
         }
         closedir(sdimg_dir);
 
-        log_debug("memcard: slot %d scanned %d VMC files from mounted saves",
-                  slot, g_slots[slot].vmc_count);
+       log_debug("memcard: slot %d scanned %d VMC files from mounted saves",
+                  slot_idx, slot->vmc_count);
         return;
     }
 
