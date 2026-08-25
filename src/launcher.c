@@ -2,7 +2,6 @@
 #include "debug.h"
 #include "config.h"
 #include <orbis/libkernel.h>
-#include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 #include <string.h>
 
@@ -29,6 +28,8 @@ typedef struct {
 
 #define IS_ERROR(ret) ((unsigned int)(ret) & 0x80000000)
 
+typedef uint32_t (*sceLncUtilLaunchApp_t)(const char *titleId, const char *argv[], LncAppParam *param);
+
 /* ---------- MAIN LAUNCHER FUNCTION ---------- */
 int launch_app(const char *tid, const char *override_tid)
 {
@@ -52,19 +53,38 @@ int launch_app(const char *tid, const char *override_tid)
     }
     log_debug("User ID: %d", userId);
 
-    /* 2) Load the real system service PRX into memory
-       (stubs are already linked via -lSceSystemService) */
+    /* 2) Load the real system service PRX */
     int sys_mod = sceKernelLoadStartModule(
         "/system/common/lib/libSceSystemService.sprx",
         0, NULL, 0, 0, NULL);
 
-    log_debug("sceKernelLoadStartModule (SystemService) returned: %d", sys_mod);
+    log_debug("sceKernelLoadStartModule returned: %d", sys_mod);
     if (sys_mod < 0) {
         log_debug("LAUNCH FAILED: Could not load libSceSystemService.sprx (0x%08X)", sys_mod);
         return sys_mod;
     }
 
-    /* 3) Prepare launch param (Itemzflow-style minimal flags) */
+    /* 3) Resolve symbols via sceKernelDlsym (proper libkernel API) */
+    void *init_fn = NULL;
+    int dret = sceKernelDlsym(sys_mod, "sceLncUtilInitialize", &init_fn);
+    log_debug("sceKernelDlsym(Initialize) returned: 0x%08X, ptr: %p", dret, init_fn);
+    if (init_fn) {
+        int r = ((int(*)(void))init_fn)();
+        log_debug("sceLncUtilInitialize() returned: 0x%08X", r);
+    }
+
+    void *launch_fn = NULL;
+    dret = sceKernelDlsym(sys_mod, "sceLncUtilLaunchApp", &launch_fn);
+    log_debug("sceKernelDlsym(LaunchApp) returned: 0x%08X, ptr: %p", dret, launch_fn);
+
+    if (!launch_fn) {
+        log_debug("LAUNCH FAILED: sceLncUtilLaunchApp could not be resolved.");
+        return -1;
+    }
+
+    sceLncUtilLaunchApp_t sceLncUtilLaunchApp = (sceLncUtilLaunchApp_t)launch_fn;
+
+    /* 4) Prepare launch param */
     LncAppParam param;
     memset(&param, 0, sizeof(LncAppParam));
     param.sz         = sizeof(LncAppParam);
@@ -73,12 +93,12 @@ int launch_app(const char *tid, const char *override_tid)
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    /* 4) Launch directly through the stub - no dlsym needed */
+    /* 5) Launch */
     log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
     sys_res = sceLncUtilLaunchApp(title_id, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
 
-    /* 5) Handle results */
+    /* 6) Handle results */
     if (sys_res == 0) {
         log_debug("Launch successful!");
         return 0;
