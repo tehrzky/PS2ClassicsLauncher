@@ -73,7 +73,7 @@ int launch_app(const char *tid, const char *override_tid)
     param.crash_report = 0;
     param.check_flag = SkipSystemUpdateCheck;
 
-    /* 4) Launch directly through the stub — no dlsym needed */
+    /* 4) Launch directly through the stub - no dlsym needed */
     log_debug("Calling sceLncUtilLaunchApp with TID: %s", title_id);
     sys_res = sceLncUtilLaunchApp(title_id, NULL, &param);
     log_debug("sceLncUtilLaunchApp returned: 0x%08X", sys_res);
