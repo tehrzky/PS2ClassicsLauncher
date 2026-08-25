@@ -76,6 +76,7 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
     }
 
     memset(&opt, 0, sizeof(MountSaveDataOpt));
+    opt.size = sizeof(MountSaveDataOpt);  /* CRITICAL: must be set before init */
 
     ret = decryptSealedKeyAtPath(volumeKeyPath, decryptedSealedKey);
     if (ret < 0) {
