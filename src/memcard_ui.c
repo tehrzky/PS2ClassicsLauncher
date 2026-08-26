@@ -14,6 +14,8 @@
 #include <orbis/Pad.h>
 #include <stdint.h>
 #include <dirent.h>
+#include <limits.h>
+
 
 #define SCREEN_W    1920
 #define SCREEN_H    1080
