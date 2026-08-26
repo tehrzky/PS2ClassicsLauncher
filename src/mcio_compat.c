@@ -34,7 +34,8 @@ int read_buffer(const char *file_path, uint8_t **data, size_t *size) {
 int write_buffer(const char *file_path, uint8_t *data, size_t size) {
     FILE *fp = fopen(file_path, "wb");
     if (!fp) {
-        LOG("write_buffer: fopen failed: %s", file_path);
+        /* Silent fail — mcio_vmcFinish tries to write even on read-only mounts
+         * or when no changes were made. The caller checks return value if needed. */
         return -1;
     }
     size_t n = fwrite(data, 1, size, fp);
