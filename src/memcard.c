@@ -43,10 +43,15 @@ void (*g_confirm_yes_callback)(void) = NULL;
 void (*g_confirm_no_callback)(void) = NULL;
 
 #define MAX_MOUNTS 32
-static struct {
+typedef struct {
     char mount_path[512];
+    char volume_path[512];   /* The actual sdimg file */
     int active;
-} g_mounts[MAX_MOUNTS];
+    int ref_count;
+    uint32_t slot_mask;      /* bit 0 = slot 0, bit 1 = slot 1 */
+} MountEntry;
+
+static MountEntry g_mounts[MAX_MOUNTS];
 static int g_mount_count = 0;
 
 /* ============================================================
@@ -265,18 +270,27 @@ void memcard_scan_vmc_files(int slot_idx) {
             return;
         }
 
-         /* Clean up any stale mounts for this emulator+slot from a crashed session */
+        /* Clean up stale mounts for this emulator, but skip ones still active */
         char old_sandbox[256];
-        snprintf(old_sandbox, sizeof(old_sandbox), "/data/sandbox/%s_slot%d", emu->id, slot_idx);
+        snprintf(old_sandbox, sizeof(old_sandbox), "/data/sandbox/%s", emu->id);
         DIR *old_d = opendir(old_sandbox);
         if (old_d) {
             struct dirent *old_e;
             while ((old_e = readdir(old_d)) != NULL) {
                 if (old_e->d_name[0] == '.') continue;
                 char old_mount[512];
-                snprintf(old_mount, sizeof(old_mount), "/data/sandbox/%s/%s/", emu->id, old_e->d_name);
-                umountSave(old_mount, 0, 1);
-                rmdir(old_mount);
+                snprintf(old_mount, sizeof(old_mount), "%s/%s/", old_sandbox, old_e->d_name);
+                int is_active = 0;
+                for (int m = 0; m < g_mount_count; m++) {
+                    if (g_mounts[m].active && strcmp(g_mounts[m].mount_path, old_mount) == 0) {
+                        is_active = 1;
+                        break;
+                    }
+                }
+                if (!is_active) {
+                    umountSave(old_mount, 0, 1);
+                    rmdir(old_mount);
+                }
             }
             closedir(old_d);
         }
@@ -284,14 +298,30 @@ void memcard_scan_vmc_files(int slot_idx) {
         snprintf(scan_path, sizeof(scan_path), "%s/savedata/%s", home, emu->id);
         log_debug("memcard: scanning internal savedata: %s", scan_path);
 
-        /* Only unmount mounts belonging to this slot so the other slot stays active */
+        /* Release ref counts for mounts this slot was using */
+        for (int i = 0; i < g_mount_count; ) {
+            if (g_mounts[i].active && (g_mounts[i].slot_mask & (1U << slot_idx))) {
+                g_mounts[i].slot_mask &= ~(1U << slot_idx);
+                g_mounts[i].ref_count--;
+                if (g_mounts[i].ref_count <= 0) {
+                    umountSave(g_mounts[i].mount_path, 0, 0);
+                    rmdir(g_mounts[i].mount_path);
+                    for (int j = i; j < g_mount_count - 1; j++) {
+                        g_mounts[j] = g_mounts[j + 1];
+                    }
+                    g_mount_count--;
+                    continue;
+                }
+            }
+            i++;
+        }
+
         char slot_prefix[128];
         snprintf(slot_prefix, sizeof(slot_prefix), "/data/sandbox/%s_slot%d/", emu->id, slot_idx);
         for (int i = 0; i < g_mount_count; ) {
             if (g_mounts[i].active && strncmp(g_mounts[i].mount_path, slot_prefix, strlen(slot_prefix)) == 0) {
                 umountSave(g_mounts[i].mount_path, 0, 0);
                 rmdir(g_mounts[i].mount_path);
-                /* Remove by shifting remaining entries down */
                 for (int j = i; j < g_mount_count - 1; j++) {
                     g_mounts[j] = g_mounts[j + 1];
                 }
@@ -346,35 +376,51 @@ void memcard_scan_vmc_files(int slot_idx) {
                          "%s/savedata/%s/%s.bin", home, emu->id, disc_id);
             if (n < 0 || (size_t)n >= sizeof(key_path)) continue;
 
-            n = snprintf(mount_path, sizeof(mount_path),
-                         "/data/sandbox/%s_slot%d/%s/", emu->id, slot_idx, disc_id);
-            if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
-
             struct stat st_vol;
             if (stat(volume_path, &st_vol) != 0 || !S_ISREG(st_vol.st_mode)) continue;
 
             struct stat st_key;
             if (stat(key_path, &st_key) != 0 || !S_ISREG(st_key.st_mode)) continue;
 
-            memcard_mkdirs(mount_path);
-
-            int mount_err = mountSave(volume_path, key_path, mount_path);
-            if (mount_err == -99) {
-                log_debug("memcard: priv libs not available, skip");
-                rmdir(mount_path);
-                continue;
-            }
-            if (mount_err < 0) {
-                log_debug("memcard: mountSave failed (0x%08X) for %s", mount_err, disc_id);
-                rmdir(mount_path);
-                continue;
+            /* Check if this sdimg is already mounted by another slot */
+            int existing = -1;
+            for (int m = 0; m < g_mount_count; m++) {
+                if (g_mounts[m].active && strcmp(g_mounts[m].volume_path, volume_path) == 0) {
+                    existing = m;
+                    break;
+                }
             }
 
-            if (g_mount_count < MAX_MOUNTS) {
-                size_t mp_len = strlen(mount_path);
-                if (mp_len < sizeof(g_mounts[0].mount_path)) {
-                    memcpy(g_mounts[g_mount_count].mount_path, mount_path, mp_len + 1);
+            if (existing >= 0) {
+                /* Reuse existing mount — safe, both slots share one PFS context */
+                if ((g_mounts[existing].slot_mask & (1U << slot_idx)) == 0) {
+                    g_mounts[existing].slot_mask |= (1U << slot_idx);
+                    g_mounts[existing].ref_count++;
+                }
+                strncpy(mount_path, g_mounts[existing].mount_path, sizeof(mount_path));
+                log_debug("memcard: reusing mount for %s at %s (ref=%d)",
+                          disc_id, mount_path, g_mounts[existing].ref_count);
+            } else {
+                /* New mount — shared path, no slot suffix */
+                n = snprintf(mount_path, sizeof(mount_path),
+                             "/data/sandbox/%s/%s/", emu->id, disc_id);
+                if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
+
+                memcard_mkdirs(mount_path);
+
+                int mount_err = mountSave(volume_path, key_path, mount_path);
+                if (mount_err < 0) {
+                    log_debug("memcard: mountSave failed (0x%08X) for %s", mount_err, disc_id);
+                    rmdir(mount_path);
+                    continue;
+                }
+
+                if (g_mount_count < MAX_MOUNTS) {
+                    strncpy(g_mounts[g_mount_count].mount_path, mount_path, sizeof(g_mounts[0].mount_path) - 1);
+                    strncpy(g_mounts[g_mount_count].volume_path, volume_path, sizeof(g_mounts[0].volume_path) - 1);
                     g_mounts[g_mount_count].active = 1;
+                    g_mounts[g_mount_count].ref_count = 1;
+                    g_mounts[g_mount_count].slot_mask = (1U << slot_idx);
                     g_mount_count++;
                 }
             }
@@ -577,7 +623,7 @@ void memcard_load_vmc(int slot_idx) {
         se->blocks = (dirent.stat.size + 8191) / 8192;
         if (se->blocks < 1) se->blocks = 1;
 
-                /* Read title from icon.sys (with SJIS->UTF8) */
+        /* Read title from icon.sys (with SJIS->UTF8) */
         char icon_sys_path[128];
         snprintf(icon_sys_path, sizeof(icon_sys_path), "/%s/icon.sys", dirent.name);
         int fd = mcio_mcOpen(icon_sys_path, sceMcFileAttrReadable | sceMcFileAttrFile);
@@ -1053,9 +1099,6 @@ void memcard_confirm_no(void) {
         cb();
     }
 }
-
-
-
 
 /* ============================================================
    INIT
