@@ -788,7 +788,10 @@ static void free_save_directory(SaveDirectory *dir) {
 }
 
 static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
-    mcio_mcMkDir(dir_name);
+        if (mcio_mcMkDir(dir_name) < 0) {
+        log_debug("memcard: mcMkDir failed for %s", dir_name);
+        return 0;
+    }
 
     for (int i = 0; i < dir->count; i++) {
         char path[128];
@@ -862,6 +865,31 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
         return 0;
     }
 
+    /* Check if destination has enough free blocks */
+    int src_blocks = 0;
+    for (int i = 0; i < savedir.count; i++) {
+        src_blocks += (savedir.files[i].size + 8191) / 8192;
+    }
+    src_blocks += 1; /* directory entry itself */
+
+    int dst_used = 0;
+    int dd2 = mcio_mcDopen("/");
+    if (dd2 >= 0) {
+        struct io_dirent de2;
+        while (mcio_mcDread(dd2, &de2) > 0) {
+            if (de2.stat.mode & sceMcFileAttrSubdir)
+                dst_used += (de2.stat.size + 8191) / 8192;
+        }
+        mcio_mcDclose(dd2);
+    }
+    int dst_free = 120 - dst_used; /* standard 8MB VMC = ~120 blocks */
+    if (dst_free < src_blocks) {
+        log_debug("memcard: not enough free blocks (%d needed, %d available)", src_blocks, dst_free);
+        free_save_directory(&savedir);
+        mcio_vmcFinish();
+        return 0;
+    }
+   
     /* Check if destination already has this directory */
     if (vmc_has_directory(src_dir)) {
         log_debug("memcard: destination already has %s, aborting copy", src_dir);
