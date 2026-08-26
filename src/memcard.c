@@ -265,9 +265,9 @@ void memcard_scan_vmc_files(int slot_idx) {
             return;
         }
 
-        /* Clean up any stale mounts for this emulator from a crashed session */
+         /* Clean up any stale mounts for this emulator+slot from a crashed session */
         char old_sandbox[256];
-        snprintf(old_sandbox, sizeof(old_sandbox), "/data/sandbox/%s", emu->id);
+        snprintf(old_sandbox, sizeof(old_sandbox), "/data/sandbox/%s_slot%d", emu->id, slot_idx);
         DIR *old_d = opendir(old_sandbox);
         if (old_d) {
             struct dirent *old_e;
@@ -332,7 +332,7 @@ void memcard_scan_vmc_files(int slot_idx) {
             if (n < 0 || (size_t)n >= sizeof(key_path)) continue;
 
             n = snprintf(mount_path, sizeof(mount_path),
-                         "/data/sandbox/%s/%s/", emu->id, disc_id);
+                         "/data/sandbox/%s_slot%d/%s/", emu->id, slot_idx, disc_id);
             if (n < 0 || (size_t)n >= sizeof(mount_path)) continue;
 
             struct stat st_vol;
@@ -562,7 +562,7 @@ void memcard_load_vmc(int slot_idx) {
         se->blocks = (dirent.stat.size + 8191) / 8192;
         if (se->blocks < 1) se->blocks = 1;
 
-        /* Read title from icon.sys (with SJIS->UTF8) */
+                /* Read title from icon.sys (with SJIS->UTF8) */
         char icon_sys_path[128];
         snprintf(icon_sys_path, sizeof(icon_sys_path), "/%s/icon.sys", dirent.name);
         int fd = mcio_mcOpen(icon_sys_path, sceMcFileAttrReadable | sceMcFileAttrFile);
@@ -572,7 +572,11 @@ void memcard_load_vmc(int slot_idx) {
             mcio_mcClose(fd);
             if (n >= 964) {
                 ps2icon_parse_title(icon_data, n, se->title, sizeof(se->title));
+            } else {
+                log_debug("memcard: icon.sys too small (%d bytes) for %s", n, dirent.name);
             }
+        } else {
+            log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd);
         }
 
         /* Load icon0.ico */
@@ -586,7 +590,11 @@ void memcard_load_vmc(int slot_idx) {
             if (n_icon >= 160) {
                 ps2icon_decode(ico_buf, n_icon,
                                &se->icon_rgba, &se->icon_w, &se->icon_h);
+            } else {
+                log_debug("memcard: icon0.ico too small (%d bytes) for %s", n_icon, dirent.name);
             }
+        } else {
+            log_debug("memcard: no icon0.ico for %s (fd=%d)", dirent.name, fd_icon);
         }
 
         slot->save_count++;
@@ -778,7 +786,6 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
 
     /* Check if destination already has this directory */
     if (vmc_has_directory(src_dir)) {
-        /* Don't auto-overwrite; caller should have shown confirm dialog */
         log_debug("memcard: destination already has %s, aborting copy", src_dir);
         free_save_directory(&savedir);
         mcio_vmcFinish();
@@ -788,17 +795,21 @@ int memcard_copy_save_between_slots(int src_slot, int dst_slot) {
     int ok = write_save_directory(src_dir, &savedir);
     free_save_directory(&savedir);
 
-    if (ok) {
-        mcio_vmcFinish(); /* Commit changes to dest VMC */
-        log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
-        /* Refresh both slots so UI matches physical state */
-        memcard_scan_vmc_files(src_slot);
-        memcard_load_vmc(src_slot);
-        memcard_scan_vmc_files(dst_slot);
-        memcard_load_vmc(dst_slot);
+    if (!ok) {
         mcio_vmcFinish();
         return 0;
     }
+
+    /* Commit changes to destination VMC */
+    mcio_vmcFinish();
+
+    log_debug("memcard: copied %s from slot %d to slot %d", src_dir, src_slot, dst_slot);
+
+    /* Refresh both slots' save listings without remounting */
+    memcard_load_vmc(src_slot);
+    memcard_load_vmc(dst_slot);
+
+    return 1;  /* SUCCESS */
 }
 
 /* --- Delete save --- */
