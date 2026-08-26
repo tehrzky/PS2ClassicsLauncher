@@ -83,7 +83,10 @@ int mountSave(const char *volumePath, const char *volumeKeyPath, const char *mou
     memset(&opt, 0, sizeof(MountSaveDataOpt));
     sceFsInitMountSaveDataOpt(&opt);
     opt.budgetid = "system";
-    opt.readOnly = true;  /* Prevent accidental corruption of live save data */
+    /* NOTE: readOnly prevents mcio_vmcFinish from writing back VMC changes.
+     * We mount read-write so copy/import/delete work. Unmount on exit
+     * prevents corruption. Do NOT manually delete sandbox folders via FTP
+     * while the app is running. */
 
     ret = sceFsMountSaveData(&opt, volumePath, mountPath, decryptedSealedKey);
     if (ret < 0) {
