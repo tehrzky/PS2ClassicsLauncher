@@ -295,10 +295,9 @@ static const char *action_items[] = {
     "Export Save as .PSU",
     "Import Save from .PSU",
     "Backup Full VMC",
-    "Import Full VMC",
     "Format VMC"
 };
-#define ACTION_COUNT 7
+#define ACTION_COUNT 6
 
 static void draw_action_menu(void) {
     int mw = 640, row_h = 58, mh = ACTION_COUNT * row_h + 80;
@@ -324,8 +323,7 @@ static void draw_action_menu(void) {
         if (i == 2 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 3 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
         if (i == 4 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
-        if (i == 5 && slot->state == SLOT_STATE_OFF) enabled = 0;
-        if (i == 6 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 5 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
 
         uint32_t tc = enabled ? COLOR_DIM : 0xFF475569;
         if (i == g_memcard_action_sel && enabled) {
@@ -672,11 +670,17 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
     }
 
     /* === ACTION MENU === */
-    if (g_memcard_action_menu_open) {
-        if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            g_memcard_action_menu_open = 0;
-            return;
-        }
+        if (g_memcard_action_menu_open) {
+            if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                g_memcard_action_menu_open = 0;
+                /* Action menu may have switched mcio to the other slot's VMC
+                 * (e.g., to check overwrite). Restore active slot's VMC. */
+                if (g_slots[g_active_slot].vmc_loaded && g_slots[g_active_slot].loaded_vmc_path[0]) {
+                    memcard_unload_current_vmc();
+                    mcio_vmcInit(g_slots[g_active_slot].loaded_vmc_path);
+                }
+                return;
+            }
         if (pressed & ORBIS_PAD_BUTTON_UP) {
             g_memcard_action_sel = (g_memcard_action_sel - 1 + ACTION_COUNT) % ACTION_COUNT;
         }
@@ -743,39 +747,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 5: /* Import full VMC */
-                    if (slot->state != SLOT_STATE_OFF) {
-                        DIR *usbdir = opendir("/mnt/usb0/PS2VMC");
-                        if (usbdir) {
-                            struct dirent *ent;
-                            char found[512] = {0};
-                            while ((ent = readdir(usbdir)) != NULL) {
-                                int len = strlen(ent->d_name);
-                                if (len < 5) continue;
-                                const char *ext = ent->d_name + len - 4;
-                                if (strcasecmp(ext, ".VM2") == 0 ||
-                                    strcasecmp(ext, ".bin") == 0 ||
-                                    strcasecmp(ext, ".vmc") == 0) {
-                                    snprintf(found, sizeof(found),
-                                             "/mnt/usb0/PS2VMC/%s", ent->d_name);
-                                    break;
-                                }
-                            }
-                            closedir(usbdir);
-                            if (found[0]) {
-                                int ok = memcard_import_vmc_from_usb(g_active_slot, found);
-                                memcard_show_toast(ok ? "VMC imported" : "Import failed");
-                                memcard_refresh_slot(g_active_slot);
-                            } else {
-                                memcard_show_toast("No VMC found on USB");
-                            }
-                        } else {
-                            memcard_show_toast("USB not mounted");
-                        }
-                    }
-                    break;
-
-                case 6: /* Format VMC */
+                case 5: /* Format VMC */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         pending_format_slot = g_active_slot;
                         memcard_show_confirm("CONFIRM FORMAT",
