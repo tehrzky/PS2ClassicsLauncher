@@ -31,9 +31,9 @@
 #define SLOT1_X     SAFE_X
 #define SLOT2_X     (SLOT1_X + PANEL_W + PANEL_GAP)
 
-#define ID_ROW_H    34
+#define ID_ROW_H    38
 #define ID_GAP      6
-#define GRID_TOP    (PANEL_Y + 155)
+#define GRID_TOP    (PANEL_Y + 170)
 #define GRID_COLS   4
 #define GRID_ROWS   4
 #define CELL_GAP    10
@@ -88,11 +88,12 @@ static void truncate_fit(const char *s, char *out, size_t out_len, int max_px, i
 }
 
 static void draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32_t c) {
-    int bw = font_text_width(btn, 20) + 12;
-    draw_rounded_rect(x, y, bw, 30, 4, COLOR_BORDER);
-    draw_rounded_rect(x + 1, y + 1, bw - 2, 28, 3, COLOR_CARD);
-    draw_text(x + 6, y + 3, btn, c, 20);
-    draw_text(x + bw + 8, y + 3, lbl, COLOR_TEXT, 20);
+    int bw = font_text_width(btn, 24) + 16;
+    int bh = 36;
+    draw_rounded_rect(x, y, bw, bh, 6, COLOR_BORDER);
+    draw_rounded_rect(x + 1, y + 1, bw - 2, bh - 2, 5, COLOR_CARD);
+    draw_text(x + 8, y + 6, btn, c, 24);
+    draw_text(x + bw + 14, y + 6, lbl, COLOR_TEXT, 24);
 }
 
 /* ============================================================
@@ -108,10 +109,10 @@ static void draw_slot_bg(int px, int is_active) {
 }
 
 static void draw_slot_label(int px, const char *label, int is_active) {
-    int tw = font_text_width_slot(label, 26, FONT_SLOT_BOLD);
+    int tw = font_text_width_slot(label, 40, FONT_SLOT_BOLD);
     uint32_t c = is_active ? COLOR_GOLD : COLOR_DIM;
-    draw_text_slot(px + (PANEL_W - tw) / 2, PANEL_Y + 10, label, c, 26, FONT_SLOT_BOLD);
-    draw_rect(px + 20, PANEL_Y + 42, PANEL_W - 40, 2, is_active ? COLOR_GOLD : COLOR_BORDER);
+    draw_text_slot(px + (PANEL_W - tw) / 2, PANEL_Y + 12, label, c, 40, FONT_SLOT_BOLD);
+    draw_rect(px + 20, PANEL_Y + 56, PANEL_W - 40, 2, is_active ? COLOR_GOLD : COLOR_BORDER);
 }
 
 /* ============================================================
@@ -124,23 +125,23 @@ static void draw_id_row(int px, int y, const char *label, const char *value,
 
     if (is_focused && is_active) {
         draw_rounded_rect(px + 12, y - 2, PANEL_W - 24, ID_ROW_H + 4, 4, COLOR_CARD_SEL);
-        draw_rect(px + 12, y, 3, ID_ROW_H, COLOR_ACCENT);
+        draw_rect(px + 12, y, 3, ID_ROW_H, COLOR_GOLD);
     }
 
-    draw_text(px + 24, y + 3, label, COLOR_GOLD, 22);
-    int lw = font_text_width(label, 22);
+    draw_text(px + 24, y + 2, label, COLOR_GOLD, 28);
+    int lw = font_text_width(label, 28);
 
     char tbuf[256];
-    truncate_fit(value, tbuf, sizeof(tbuf), PANEL_W - lw - 90, 22);
-    draw_text(px + 24 + lw + 8, y + 3, tbuf, vc, 22);
+    truncate_fit(value, tbuf, sizeof(tbuf), PANEL_W - lw - 90, 36);
+    draw_text(px + 24 + lw + 8, y + 2, tbuf, vc, 36);
 
     if (is_focused && is_active) {
-        draw_text(px + PANEL_W - 36, y + 3, is_dd ? "v" : ">", COLOR_ACCENT, 22);
+        draw_text(px + PANEL_W - 36, y + 2, is_dd ? "v" : ">", COLOR_GOLD, 36);
     }
 }
 
 static void draw_dropdown(int px, int y, const char **items, int count, int sel) {
-    int item_h = 34, vis = count < 6 ? count : 6;
+    int item_h = 40, vis = count < 6 ? count : 6;
     int dh = vis * item_h + 8;
     int dy = y + ID_ROW_H + 4;
     if (dy + dh > PANEL_BOT - 20) dy = PANEL_BOT - 20 - dh;
@@ -154,16 +155,16 @@ static void draw_dropdown(int px, int y, const char **items, int count, int sel)
         int iy = dy + 4 + (i - start) * item_h;
         if (i == sel) {
             draw_rounded_rect(px + 16, iy, PANEL_W - 32, item_h - 2, 4, COLOR_CARD_SEL);
-            draw_rect(px + 16, iy + 2, 3, item_h - 6, COLOR_ACCENT);
-            draw_text(px + 28, iy + 5, items[i], COLOR_GOLD, 20);
+            draw_rect(px + 16, iy + 2, 3, item_h - 6, COLOR_GOLD);
+            draw_text(px + 28, iy + 4, items[i], COLOR_GOLD, 36);
         } else {
-            draw_text(px + 28, iy + 5, items[i], COLOR_DIM, 20);
+            draw_text(px + 28, iy + 4, items[i], COLOR_DIM, 36);
         }
     }
 }
 
 /* ============================================================
-   GRID (NO BORDERS)
+   GRID
    ============================================================ */
 
 static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
@@ -181,9 +182,8 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
         int is_sel = (i == slot->save_idx && slot->focus_element == 2 && is_active);
 
         if (is_sel) {
-            /* Gold glow outline instead of border */
-            draw_rounded_rect(cx - 4, cy - 4, CELL_W + 8, CELL_H + 8, 6, 0x33FFD700);
-            draw_rounded_rect(cx - 2, cy - 2, CELL_W + 4, CELL_H + 4, 5, COLOR_GOLD);
+            draw_rounded_rect(cx - 4, cy - 4, CELL_W + 8, CELL_H + 8, 6, COLOR_CARD_SEL);
+            draw_rect(cx - 2, cy + 2, 4, CELL_H - 4, COLOR_GOLD);
         }
 
         if (i < slot->save_count) {
@@ -210,7 +210,6 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
             draw_text(cx + (CELL_W - bw) / 2, cy + CELL_H - 22, blk,
                       is_sel ? COLOR_GOLD : COLOR_DIM, 13);
         }
-        /* else: blank — no border, no text, no "EMPTY" label */
     }
 }
 
@@ -237,24 +236,24 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
 
     if (slot->state == SLOT_STATE_OFF || slot->state == SLOT_STATE_EMU_SEL) {
         const char *msg = "NO MEMORY CARD SELECTED";
-        int mw = font_text_width(msg, 24);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 24);
+        int mw = font_text_width(msg, 28);
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 28);
         return;
     }
 
     if (slot->save_idx >= 0 && slot->save_idx < slot->save_count && slot->focus_element == 2) {
         VmcSaveEntry *se = &slot->saves[slot->save_idx];
         char tbuf[256];
-        truncate_fit(se->title, tbuf, sizeof(tbuf), PANEL_W - 60, 26);
-        draw_text(px + 24, iy + 8, tbuf, is_active ? COLOR_TEXT : COLOR_DIM, 26);
+        truncate_fit(se->title, tbuf, sizeof(tbuf), PANEL_W - 60, 36);
+        draw_text(px + 24, iy + 6, tbuf, is_active ? COLOR_TEXT : COLOR_DIM, 36);
 
         char info[256];
         snprintf(info, sizeof(info), "DATA SLOT %d  (%s)", se->slot_num, se->dir_name);
-        draw_text(px + 24, iy + 38, info, COLOR_DIM, 18);
+        draw_text(px + 24, iy + 42, info, COLOR_DIM, 22);
     } else {
         const char *msg = "NO SAVE SELECTED";
-        int mw = font_text_width(msg, 22);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 22);
+        int mw = font_text_width(msg, 28);
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 28);
     }
 }
 
@@ -270,13 +269,13 @@ static void draw_stats(int px, MemCardSlot *slot) {
     char u[32], a[32];
     snprintf(u, sizeof(u), "USED: %02d BLOCKS", total);
     snprintf(a, sizeof(a), "AVAIL: %02d BLOCKS", avail);
-    draw_text(px + 24, sy, u, COLOR_DIM, 16);
-    int aw = font_text_width(a, 16);
-    draw_text(px + PANEL_W - aw - 24, sy, a, COLOR_DIM, 16);
+    draw_text(px + 24, sy, u, COLOR_DIM, 18);
+    int aw = font_text_width(a, 18);
+    draw_text(px + PANEL_W - aw - 24, sy, a, COLOR_DIM, 18);
 }
 
 /* ============================================================
-   ACTION MENU (LARGER)
+   ACTION MENU
    ============================================================ */
 
 static const char *action_items[] = {
@@ -291,7 +290,7 @@ static const char *action_items[] = {
 #define ACTION_COUNT 7
 
 static void draw_action_menu(void) {
-    int mw = 640, row_h = 56, mh = ACTION_COUNT * row_h + 70;
+    int mw = 640, row_h = 58, mh = ACTION_COUNT * row_h + 80;
     int mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
 
     draw_rect(0, 0, SCREEN_W, SCREEN_H, 0xE6000000);
@@ -300,16 +299,15 @@ static void draw_action_menu(void) {
     draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
 
     const char *title = "ACTION MENU";
-    int tw = font_text_width_slot(title, 32, FONT_SLOT_BOLD);
-    draw_text_slot(mx + (mw - tw) / 2, my + 18, title, COLOR_GOLD, 32, FONT_SLOT_BOLD);
-    draw_rect(mx + 30, my + 56, mw - 60, 2, COLOR_BORDER);
+    int tw = font_text_width_slot(title, 40, FONT_SLOT_TITLE);
+    draw_text_slot(mx + (mw - tw) / 2, my + 18, title, COLOR_GOLD, 40, FONT_SLOT_TITLE);
+    draw_rect(mx + 30, my + 62, mw - 60, 2, COLOR_BORDER);
 
     MemCardSlot *slot = &g_slots[g_active_slot];
     for (int i = 0; i < ACTION_COUNT; i++) {
-        int ry = my + 68 + i * row_h;
+        int ry = my + 74 + i * row_h;
         int enabled = 1;
 
-        /* Disable items based on state */
         if (i == 0 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 1 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 2 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
@@ -321,10 +319,10 @@ static void draw_action_menu(void) {
         uint32_t tc = enabled ? COLOR_DIM : 0xFF475569;
         if (i == g_memcard_action_sel && enabled) {
             draw_rounded_rect(mx + 20, ry, mw - 40, row_h - 6, 6, COLOR_CARD_SEL);
-            draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_ACCENT);
+            draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_GOLD);
             tc = COLOR_GOLD;
         }
-        draw_text(mx + 36, ry + 14, action_items[i], tc, 24);
+        draw_text(mx + 36, ry + 14, action_items[i], tc, 28);
     }
 }
 
@@ -341,11 +339,11 @@ static void draw_confirm_dialog(void) {
     draw_rounded_rect(mx, my, mw, mh, 12, COLOR_GOLD);
     draw_rounded_rect(mx + 2, my + 2, mw - 4, mh - 4, 10, COLOR_PANEL);
 
-    int tw = font_text_width_slot(g_confirm_title, 32, FONT_SLOT_BOLD);
-    draw_text_slot(mx + (mw - tw) / 2, my + 24, g_confirm_title, COLOR_GOLD, 32, FONT_SLOT_BOLD);
+    int tw = font_text_width_slot(g_confirm_title, 36, FONT_SLOT_BOLD);
+    draw_text_slot(mx + (mw - tw) / 2, my + 22, g_confirm_title, COLOR_GOLD, 36, FONT_SLOT_BOLD);
     draw_rect(mx + 30, my + 62, mw - 60, 2, COLOR_BORDER);
 
-    draw_text(mx + 30, my + 80, g_confirm_msg, COLOR_TEXT, 24);
+    draw_text(mx + 30, my + 80, g_confirm_msg, COLOR_TEXT, 28);
 
     int by = my + mh - 70;
     int no_x = mx + mw / 2 - 160;
@@ -381,18 +379,18 @@ static void draw_footer(void) {
     draw_rect(0, y, SCREEN_W, FOOTER_H, COLOR_PANEL);
     draw_rect(0, y, SCREEN_W, 2, COLOR_ACCENT);
 
-    int hy = y + 18;
+    int hy = y + 16;
     int x = SAFE_X + 20;
 
-    draw_btn_hint(x, hy, "X", "SELECT", COLOR_ACCENT);       x += 180;
-    draw_btn_hint(x, hy, "TRI", "ACTIONS", COLOR_ACCENT);    x += 200;
-    draw_btn_hint(x, hy, "<>", "SWITCH SLOT", COLOR_DIM);   x += 240;
-    draw_btn_hint(x, hy, "^v", "NAVIGATE", COLOR_DIM);       x += 200;
+    draw_btn_hint(x, hy, "X", "SELECT", COLOR_ACCENT);       x += 240;
+    draw_btn_hint(x, hy, "TRI", "ACTIONS", COLOR_ACCENT);    x += 260;
+    draw_btn_hint(x, hy, "<>", "SWITCH SLOT", COLOR_DIM);   x += 260;
+    draw_btn_hint(x, hy, "^v", "NAVIGATE", COLOR_DIM);       x += 240;
     draw_btn_hint(x, hy, "O", "BACK", COLOR_ERROR);
 }
 
 /* ============================================================
-   TOAST NOTIFICATION (LARGER)
+   TOAST NOTIFICATION
    ============================================================ */
 
 static void draw_toast(void)
@@ -403,8 +401,8 @@ static void draw_toast(void)
     int tx = (SCREEN_W - tw) / 2;
     int ty = SCREEN_H - 140;
 
-    draw_rounded_rect(tx - 30, ty - 16, tw + 60, 60, 10, 0xDD000000);
-    draw_rounded_rect(tx - 28, ty - 14, tw + 56, 56, 8, COLOR_GOLD);
+    draw_rounded_rect(tx - 30, ty - 16, tw + 60, 56, 10, 0xDD000000);
+    draw_rounded_rect(tx - 28, ty - 14, tw + 56, 52, 8, COLOR_GOLD);
     draw_text(tx, ty + 2, g_toast_msg, COLOR_TEXT, 28);
 }
 
@@ -432,7 +430,7 @@ static void draw_psu_picker(void)
 
     if (g_psu_file_count == 0) {
         draw_text(mx + 30, my + 80,
-                  "No .PSU files found in /mnt/usb0/PS2SAVES/", COLOR_DIM, 22);
+                  "No .PSU files found in /mnt/usb0/PS2SAVES/", COLOR_DIM, 24);
     } else {
         for (int i = 0; i < g_psu_file_count; i++) {
             int ry = my + 64 + i * row_h;
@@ -441,10 +439,10 @@ static void draw_psu_picker(void)
 
             if (i == g_psu_picker_sel) {
                 draw_rounded_rect(mx + 20, ry, mw - 40, row_h - 6, 6, COLOR_CARD_SEL);
-                draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_ACCENT);
-                draw_text(mx + 36, ry + 12, fname, COLOR_GOLD, 22);
+                draw_rect(mx + 20, ry + 4, 3, row_h - 14, COLOR_GOLD);
+                draw_text(mx + 36, ry + 12, fname, COLOR_GOLD, 24);
             } else {
-                draw_text(mx + 36, ry + 12, fname, COLOR_DIM, 22);
+                draw_text(mx + 36, ry + 12, fname, COLOR_DIM, 24);
             }
         }
     }
@@ -473,10 +471,9 @@ void draw_memcard_ui(void) {
         draw_slot_bg(px, is_active);
         draw_slot_label(px, (si == 0) ? "SLOT 1" : "SLOT 2", is_active);
 
-        int emu_y = PANEL_Y + 56;
+        int emu_y = PANEL_Y + 64;
         int disc_y = emu_y + ID_ROW_H + ID_GAP;
 
-        /* Emulator ID row */
         const char *emu_val = (slot->emulator_idx >= 0 && slot->emulator_idx < g_emulator_count)
                               ? g_emulators[slot->emulator_idx].id : "OFF";
         draw_id_row(px, emu_y, "EMULATOR ID:", emu_val,
@@ -488,7 +485,6 @@ void draw_memcard_ui(void) {
             draw_dropdown(px, emu_y, items, g_emulator_count, slot->dropdown_sel);
         }
 
-        /* PS2 ID row */
         const char *disc_val = "OFF";
         if (slot->state == SLOT_STATE_EMU_SEL || slot->state == SLOT_STATE_VMC_SEL) {
             if (slot->vmc_idx >= 0 && slot->vmc_idx < slot->vmc_count) {
@@ -506,7 +502,6 @@ void draw_memcard_ui(void) {
             draw_dropdown(px, disc_y, items, slot->vmc_count, slot->dropdown_sel);
         }
 
-        /* Grid or INSERT CARD */
         if (slot->in_dropdown == 0) {
             if (slot->state == SLOT_STATE_VMC_SEL) {
                 draw_save_grid(px, slot, is_active);
@@ -546,7 +541,6 @@ static void move_grid_cursor(MemCardSlot *slot, int dx, int dy) {
     slot->save_idx = new_idx;
 }
 
-/* Switch to another slot, preserving grid column if possible */
 static void switch_slot(int new_slot) {
     if (new_slot == g_active_slot) return;
     MemCardSlot *old = &g_slots[g_active_slot];
@@ -556,13 +550,9 @@ static void switch_slot(int new_slot) {
         old_col = old->save_idx % GRID_COLS;
     }
     g_active_slot = new_slot;
-    new->focus_element = 2;  // focus on grid
+    new->focus_element = 2;
     if (new->save_count > 0) {
-        // try to keep same column if possible
-        int target = 0;
-        if (old_col < GRID_COLS) {
-            target = old_col;
-        }
+        int target = old_col;
         if (target >= new->save_count) target = new->save_count - 1;
         new->save_idx = target;
     } else {
@@ -813,7 +803,6 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
             if (slot->save_count > 0 && slot->save_idx >= 0) {
                 int col = slot->save_idx % GRID_COLS;
                 if (col == 0) {
-                    /* At left edge – switch to other slot if possible */
                     if (g_active_slot == 1) {
                         switch_slot(0);
                     }
@@ -822,7 +811,6 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 }
             }
         } else {
-            /* Not in grid – move focus left among rows, or switch slot */
             if (g_active_slot == 1) {
                 switch_slot(0);
             } else if (slot->focus_element > 0) {
@@ -838,7 +826,6 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 int col = slot->save_idx % GRID_COLS;
                 int last_col = (slot->save_count - 1) % GRID_COLS;
                 if (col == last_col || slot->save_idx == slot->save_count - 1) {
-                    /* At right edge – switch to other slot */
                     if (g_active_slot == 0) {
                         switch_slot(1);
                     }
@@ -847,7 +834,6 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 }
             }
         } else {
-            /* Not in grid – move focus right or switch slot */
             if (g_active_slot == 0) {
                 switch_slot(1);
             } else if (slot->focus_element < 2) {
@@ -862,18 +848,15 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
             if (slot->save_count > 0 && slot->save_idx >= 0) {
                 int row = slot->save_idx / GRID_COLS;
                 if (row == 0) {
-                    /* At top row – move focus to PS2 ID row */
                     slot->focus_element = 1;
                 } else {
                     move_grid_cursor(slot, 0, -1);
                 }
             }
         } else {
-            /* Move focus up among rows */
             if (slot->focus_element > 0) {
                 slot->focus_element--;
             } else {
-                /* Already at top, wrap to grid? Actually we can wrap to grid bottom */
                 slot->focus_element = 2;
                 if (slot->save_count > 0) {
                     slot->save_idx = slot->save_count - 1;
@@ -887,20 +870,18 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
         if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
             move_grid_cursor(slot, 0, 1);
         } else {
-            /* Move focus to grid if on a row, or wrap to top */
             if (slot->focus_element < 2) {
                 slot->focus_element = 2;
                 if (slot->save_count > 0 && slot->save_idx < 0) {
                     slot->save_idx = 0;
                 }
             } else {
-                /* Already at grid, wrap to top row (Emulator ID) */
                 slot->focus_element = 0;
             }
         }
     }
 
-    /* CROSS: Open dropdown or select */
+    /* CROSS: Open dropdown */
     if (pressed & ORBIS_PAD_BUTTON_CROSS) {
         if (slot->focus_element == 0) {
             slot->in_dropdown = 1;
