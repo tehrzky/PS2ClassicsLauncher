@@ -644,18 +644,29 @@ void memcard_load_vmc(int slot_idx) {
         char icon_sys_path[128];
         snprintf(icon_sys_path, sizeof(icon_sys_path), "/%s/icon.sys", dirent.name);
         int fd = mcio_mcOpen(icon_sys_path, sceMcFileAttrReadable | sceMcFileAttrFile);
-        if (fd >= 0) {
-            uint8_t icon_data[1024];
-            int n = mcio_mcRead(fd, (void *)icon_data, sizeof(icon_data));
-            mcio_mcClose(fd);
-            if (n >= 964) {
-                ps2icon_parse_title(icon_data, n, se->title, sizeof(se->title));
-            } else {
-                log_debug("memcard: icon.sys too small (%d bytes) for %s", n, dirent.name);
+       if (fd >= 0) {
+    uint8_t icon_data[1024];
+    int n = mcio_mcRead(fd, (void *)icon_data, sizeof(icon_data));
+    mcio_mcClose(fd);
+    if (n >= 64) {  /* Apollo only needs ~260, be generous */
+        ps2icon_parse_title(icon_data, n, se->title, sizeof(se->title));
+        
+        /* Some games use a second title line */
+        uint16_t second_off = icon_data[4] | (icon_data[5] << 8);
+        if (second_off > 0 && second_off < n - 0xC0 && strlen(se->title) < sizeof(se->title) - 4) {
+            char line2[68];
+            ps2icon_parse_title(icon_data + second_off, n - second_off, line2, sizeof(line2));
+            if (line2[0]) {
+                strncat(se->title, " / ", sizeof(se->title) - strlen(se->title) - 1);
+                strncat(se->title, line2, sizeof(se->title) - strlen(se->title) - 1);
             }
-        } else {
-            log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd);
         }
+    } else {
+        log_debug("memcard: icon.sys too small (%d bytes) for %s", n, dirent.name);
+    }
+} else {
+    log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd);
+}
 
         /* Load icon0.ico */
         char icon0_path[128];
