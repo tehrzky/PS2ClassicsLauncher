@@ -589,7 +589,8 @@ static void do_delete_save(void) {
 
 static void do_copy_save(void) {
     if (pending_copy_src >= 0 && pending_copy_dst >= 0) {
-        memcard_copy_save_between_slots(pending_copy_src, pending_copy_dst);
+        int ok = memcard_copy_save_between_slots(pending_copy_src, pending_copy_dst);
+        memcard_show_toast(ok ? "Save copied" : "Copy failed");
         pending_copy_src = -1;
         pending_copy_dst = -1;
     }
@@ -680,8 +681,8 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                                     slot->saves[slot->save_idx].dir_name, other + 1);
                                 memcard_show_confirm("CONFIRM OVERWRITE", msg, do_copy_save, NULL);
                             } else {
-                                memcard_copy_save_between_slots(g_active_slot, other);
-                                memcard_show_toast("Save copied");
+                                int ok = memcard_copy_save_between_slots(g_active_slot, other);
+                                memcard_show_toast(ok ? "Save copied" : "Copy failed");
                             }
                             mcio_vmcFinish();
                         }
