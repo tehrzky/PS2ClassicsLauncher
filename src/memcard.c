@@ -284,7 +284,22 @@ void memcard_scan_vmc_files(int slot_idx) {
         snprintf(scan_path, sizeof(scan_path), "%s/savedata/%s", home, emu->id);
         log_debug("memcard: scanning internal savedata: %s", scan_path);
 
-        memcard_unmount_all();
+        /* Only unmount mounts belonging to this slot so the other slot stays active */
+        char slot_prefix[128];
+        snprintf(slot_prefix, sizeof(slot_prefix), "/data/sandbox/%s_slot%d/", emu->id, slot_idx);
+        for (int i = 0; i < g_mount_count; ) {
+            if (g_mounts[i].active && strncmp(g_mounts[i].mount_path, slot_prefix, strlen(slot_prefix)) == 0) {
+                umountSave(g_mounts[i].mount_path, 0, 0);
+                rmdir(g_mounts[i].mount_path);
+                /* Remove by shifting remaining entries down */
+                for (int j = i; j < g_mount_count - 1; j++) {
+                    g_mounts[j] = g_mounts[j + 1];
+                }
+                g_mount_count--;
+            } else {
+                i++;
+            }
+        }
 
         DIR *sdimg_dir = opendir(scan_path);
         if (!sdimg_dir) {
@@ -716,7 +731,7 @@ static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
         char path[128];
         snprintf(path, sizeof(path), "%s/%s", dir_name, dir->files[i].name);
 
-        int fd = mcio_mcOpen(path, sceMcFileAttrWriteable | sceMcFileAttrFile);
+        int fd = mcio_mcOpen(path, sceMcFileAttrWriteable | sceMcFileCreateFile | sceMcFileAttrFile);
         if (fd < 0) {
             log_debug("memcard: mcOpen failed for write: %s", path);
             return 0;
