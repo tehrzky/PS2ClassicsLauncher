@@ -169,6 +169,7 @@ int main(void) {
                         draw_text(SCREEN_WIDTH/2 - lw/2, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 42);
                         flip();
                         sceKernelSleep(1);
+                        memcard_unmount_all();  /* Unmount saves before launching emulator */
                         launch_emulator(emu_tid);
                     }
                 }
