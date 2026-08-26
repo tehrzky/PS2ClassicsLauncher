@@ -546,6 +546,30 @@ static void move_grid_cursor(MemCardSlot *slot, int dx, int dy) {
     slot->save_idx = new_idx;
 }
 
+/* Switch to another slot, preserving grid column if possible */
+static void switch_slot(int new_slot) {
+    if (new_slot == g_active_slot) return;
+    MemCardSlot *old = &g_slots[g_active_slot];
+    MemCardSlot *new = &g_slots[new_slot];
+    int old_col = 0;
+    if (old->focus_element == 2 && old->save_count > 0 && old->save_idx >= 0) {
+        old_col = old->save_idx % GRID_COLS;
+    }
+    g_active_slot = new_slot;
+    new->focus_element = 2;  // focus on grid
+    if (new->save_count > 0) {
+        // try to keep same column if possible
+        int target = 0;
+        if (old_col < GRID_COLS) {
+            target = old_col;
+        }
+        if (target >= new->save_count) target = new->save_count - 1;
+        new->save_idx = target;
+    } else {
+        new->save_idx = -1;
+    }
+}
+
 /* Confirmation callbacks */
 static int pending_delete_slot = -1;
 static int pending_copy_src = -1;
@@ -783,74 +807,58 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
 
     /* === NORMAL NAVIGATION === */
 
-    /* LEFT: Navigate within grid or switch panels */
+    /* LEFT */
     if (pressed & ORBIS_PAD_BUTTON_LEFT) {
         if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            /* In grid – check if at left edge */
             if (slot->save_count > 0 && slot->save_idx >= 0) {
-                int cols = GRID_COLS;
-                int col = slot->save_idx % cols;
+                int col = slot->save_idx % GRID_COLS;
                 if (col == 0) {
-                    /* At left edge – switch to other slot */
+                    /* At left edge – switch to other slot if possible */
                     if (g_active_slot == 1) {
-                        g_active_slot = 0;
-                        g_slots[0].focus_element = 2;
-                        /* Move to right edge of other slot */
-                        if (g_slots[0].save_count > 0) {
-                            int other_cols = GRID_COLS;
-                            int last_col = (g_slots[0].save_count - 1) % other_cols;
-                            int last_row = (g_slots[0].save_count - 1) / other_cols;
-                            g_slots[0].save_idx = last_row * other_cols + last_col;
-                            if (g_slots[0].save_idx >= g_slots[0].save_count)
-                                g_slots[0].save_idx = g_slots[0].save_count - 1;
-                        }
+                        switch_slot(0);
                     }
                 } else {
                     move_grid_cursor(slot, -1, 0);
                 }
             }
-        } else if (g_active_slot == 1) {
-            /* Not in grid – switch to slot 0 */
-            g_active_slot = 0;
-        } else if (slot->focus_element > 0) {
-            slot->focus_element--;
+        } else {
+            /* Not in grid – move focus left among rows, or switch slot */
+            if (g_active_slot == 1) {
+                switch_slot(0);
+            } else if (slot->focus_element > 0) {
+                slot->focus_element--;
+            }
         }
     }
 
-    /* RIGHT: Navigate within grid or switch panels */
+    /* RIGHT */
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
         if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            /* In grid – check if at right edge */
             if (slot->save_count > 0 && slot->save_idx >= 0) {
-                int cols = GRID_COLS;
-                int col = slot->save_idx % cols;
-                int last_col = (slot->save_count - 1) % cols;
+                int col = slot->save_idx % GRID_COLS;
+                int last_col = (slot->save_count - 1) % GRID_COLS;
                 if (col == last_col || slot->save_idx == slot->save_count - 1) {
                     /* At right edge – switch to other slot */
                     if (g_active_slot == 0) {
-                        g_active_slot = 1;
-                        g_slots[1].focus_element = 2;
-                        /* Move to left edge of other slot */
-                        if (g_slots[1].save_count > 0) {
-                            g_slots[1].save_idx = 0;
-                        }
+                        switch_slot(1);
                     }
                 } else {
                     move_grid_cursor(slot, 1, 0);
                 }
             }
-        } else if (g_active_slot == 0) {
-            /* Not in grid – switch to slot 1 */
-            g_active_slot = 1;
-        } else if (slot->focus_element < 2) {
-            slot->focus_element++;
+        } else {
+            /* Not in grid – move focus right or switch slot */
+            if (g_active_slot == 0) {
+                switch_slot(1);
+            } else if (slot->focus_element < 2) {
+                slot->focus_element++;
+            }
         }
     }
 
-    /* UP: Navigate within grid or move focus up to rows */
+    /* UP */
     if (pressed & ORBIS_PAD_BUTTON_UP) {
         if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            /* In grid – check if at top row */
             if (slot->save_count > 0 && slot->save_idx >= 0) {
                 int row = slot->save_idx / GRID_COLS;
                 if (row == 0) {
@@ -861,23 +869,32 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 }
             }
         } else {
-            slot->focus_element--;
-            if (slot->focus_element < 0) slot->focus_element = 2;
+            /* Move focus up among rows */
+            if (slot->focus_element > 0) {
+                slot->focus_element--;
+            } else {
+                /* Already at top, wrap to grid? Actually we can wrap to grid bottom */
+                slot->focus_element = 2;
+                if (slot->save_count > 0) {
+                    slot->save_idx = slot->save_count - 1;
+                }
+            }
         }
     }
 
-    /* DOWN: Navigate within grid or move focus from rows to grid */
+    /* DOWN */
     if (pressed & ORBIS_PAD_BUTTON_DOWN) {
         if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
             move_grid_cursor(slot, 0, 1);
         } else {
-            /* If focus is on a row, move focus to grid */
+            /* Move focus to grid if on a row, or wrap to top */
             if (slot->focus_element < 2) {
                 slot->focus_element = 2;
-                /* Select the first save if none selected */
-                if (slot->save_idx < 0 && slot->save_count > 0)
+                if (slot->save_count > 0 && slot->save_idx < 0) {
                     slot->save_idx = 0;
+                }
             } else {
+                /* Already at grid, wrap to top row (Emulator ID) */
                 slot->focus_element = 0;
             }
         }
