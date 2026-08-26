@@ -121,23 +121,29 @@ static void draw_slot_label(int px, const char *label, int is_active) {
 
 static void draw_id_row(int px, int y, const char *label, const char *value,
                         int is_focused, int is_dd, int is_active) {
-    uint32_t vc = (is_focused && is_active) ? COLOR_GOLD : COLOR_TEXT;
+    // Dim value if slot is not active, unless focused and active
+    uint32_t vc;
+    if (!is_active) {
+        vc = COLOR_DIM;
+    } else if (is_focused && is_active) {
+        vc = COLOR_GOLD;
+    } else {
+        vc = COLOR_TEXT;
+    }
 
     if (is_focused && is_active) {
         draw_rounded_rect(px + 12, y - 2, PANEL_W - 24, ID_ROW_H + 4, 4, COLOR_CARD_SEL);
         draw_rect(px + 12, y, 3, ID_ROW_H, COLOR_GOLD);
     }
 
-    draw_text(px + 24, y + 2, label, COLOR_GOLD, 28);
+    draw_text(px + 24, y + 2, label, is_active ? COLOR_GOLD : COLOR_DIM, 28);
     int lw = font_text_width(label, 28);
 
     char tbuf[256];
     truncate_fit(value, tbuf, sizeof(tbuf), PANEL_W - lw - 90, 28);
     draw_text(px + 24 + lw + 8, y + 2, tbuf, vc, 28);
 
-    if (is_focused && is_active && is_dd) {
-        draw_text(px + PANEL_W - 36, y + 2, "v", COLOR_GOLD, 28);
-    }
+    // No arrow indicator anymore
 }
 
 static void draw_dropdown(int px, int y, const char **items, int count, int sel) {
@@ -199,17 +205,18 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
                 draw_rounded_rect(ix, iy, iw, ih, 3, COLOR_BG);
             }
 
-            /* Slot number top-left (larger) */
+            /* Slot number top-left */
             char sn[8];
             snprintf(sn, sizeof(sn), "%02d", se->slot_num);
-            draw_text(cx + 4, cy + 2, sn, is_sel ? COLOR_GOLD : COLOR_MUTED, 18);
+            uint32_t num_color = is_active ? (is_sel ? COLOR_GOLD : COLOR_MUTED) : COLOR_DIM;
+            draw_text(cx + 4, cy + 2, sn, num_color, 18);
 
-            /* Blocks bottom-center (larger) */
+            /* Blocks bottom-center */
             char blk[32];
             snprintf(blk, sizeof(blk), "%02d Blocks", se->blocks);
             int bw = font_text_width(blk, 16);
-            draw_text(cx + (CELL_W - bw) / 2, cy + CELL_H - 26, blk,
-                      is_sel ? COLOR_GOLD : COLOR_DIM, 16);
+            uint32_t blk_color = is_active ? (is_sel ? COLOR_GOLD : COLOR_DIM) : COLOR_DIM;
+            draw_text(cx + (CELL_W - bw) / 2, cy + CELL_H - 26, blk, blk_color, 16);
         }
     }
 }
@@ -238,7 +245,7 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
     if (slot->state == SLOT_STATE_OFF || slot->state == SLOT_STATE_EMU_SEL) {
         const char *msg = "NO MEMORY CARD SELECTED";
         int mw = font_text_width(msg, 28);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 28);
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_MUTED : COLOR_DIM, 28);
         return;
     }
 
@@ -250,15 +257,15 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
 
         char info[256];
         snprintf(info, sizeof(info), "DATA SLOT %d  (%s)", se->slot_num, se->dir_name);
-        draw_text(px + 24, iy + 42, info, COLOR_DIM, 22);
+        draw_text(px + 24, iy + 42, info, is_active ? COLOR_DIM : COLOR_DIM, 22);
     } else {
         const char *msg = "NO SAVE SELECTED";
         int mw = font_text_width(msg, 28);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, COLOR_MUTED, 28);
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_MUTED : COLOR_DIM, 28);
     }
 }
 
-static void draw_stats(int px, MemCardSlot *slot) {
+static void draw_stats(int px, MemCardSlot *slot, int is_active) {
     if (slot->state != SLOT_STATE_VMC_SEL) return;
 
     int sy = PANEL_BOT - 32;
@@ -270,9 +277,10 @@ static void draw_stats(int px, MemCardSlot *slot) {
     char u[32], a[32];
     snprintf(u, sizeof(u), "USED: %02d BLOCKS", total);
     snprintf(a, sizeof(a), "AVAIL: %02d BLOCKS", avail);
-    draw_text(px + 24, sy, u, COLOR_DIM, 18);
+    uint32_t c = is_active ? COLOR_DIM : COLOR_DIM; // always dim
+    draw_text(px + 24, sy, u, c, 18);
     int aw = font_text_width(a, 18);
-    draw_text(px + PANEL_W - aw - 24, sy, a, COLOR_DIM, 18);
+    draw_text(px + PANEL_W - aw - 24, sy, a, c, 18);
 }
 
 /* ============================================================
@@ -507,7 +515,7 @@ void draw_memcard_ui(void) {
             if (slot->state == SLOT_STATE_VMC_SEL) {
                 draw_save_grid(px, slot, is_active);
                 draw_info_bar(px, slot, is_active);
-                draw_stats(px, slot);
+                draw_stats(px, slot, is_active);
             } else {
                 draw_insert_card(px, is_active);
                 draw_info_bar(px, slot, is_active);
@@ -542,23 +550,35 @@ static void move_grid_cursor(MemCardSlot *slot, int dx, int dy) {
     slot->save_idx = new_idx;
 }
 
+/* Switch to another slot, preserving column and row as much as possible */
 static void switch_slot(int new_slot, int keep_focus) {
     if (new_slot == g_active_slot) return;
     MemCardSlot *old = &g_slots[g_active_slot];
     MemCardSlot *new = &g_slots[new_slot];
     int old_focus = old->focus_element;
-    int old_col = 0;
+    int old_col = 0, old_row = 0;
     if (old_focus == 2 && old->save_count > 0 && old->save_idx >= 0) {
         old_col = old->save_idx % GRID_COLS;
+        old_row = old->save_idx / GRID_COLS;
     }
     g_active_slot = new_slot;
     if (keep_focus) {
         new->focus_element = old_focus;
         if (old_focus == 2) {
             if (new->save_count > 0) {
-                int target = old_col;
-                if (target >= new->save_count) target = new->save_count - 1;
-                new->save_idx = target;
+                // Find closest save to (old_row, old_col)
+                int best_idx = 0;
+                int best_dist = INT_MAX;
+                for (int i = 0; i < new->save_count; i++) {
+                    int r = i / GRID_COLS;
+                    int c = i % GRID_COLS;
+                    int dist = abs(r - old_row) + abs(c - old_col);
+                    if (dist < best_dist) {
+                        best_dist = dist;
+                        best_idx = i;
+                    }
+                }
+                new->save_idx = best_idx;
             } else {
                 new->save_idx = -1;
             }
@@ -566,7 +586,8 @@ static void switch_slot(int new_slot, int keep_focus) {
     } else {
         new->focus_element = 2;
         if (new->save_count > 0) {
-            new->save_idx = (old_col < new->save_count) ? old_col : new->save_count - 1;
+            // Fallback to first
+            new->save_idx = 0;
         } else {
             new->save_idx = -1;
         }
@@ -589,8 +610,7 @@ static void do_delete_save(void) {
 
 static void do_copy_save(void) {
     if (pending_copy_src >= 0 && pending_copy_dst >= 0) {
-        int ok = memcard_copy_save_between_slots(pending_copy_src, pending_copy_dst);
-        memcard_show_toast(ok ? "Save copied" : "Copy failed");
+        memcard_copy_save_between_slots(pending_copy_src, pending_copy_dst);
         pending_copy_src = -1;
         pending_copy_dst = -1;
     }
@@ -681,8 +701,8 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                                     slot->saves[slot->save_idx].dir_name, other + 1);
                                 memcard_show_confirm("CONFIRM OVERWRITE", msg, do_copy_save, NULL);
                             } else {
-                                int ok = memcard_copy_save_between_slots(g_active_slot, other);
-                                memcard_show_toast(ok ? "Save copied" : "Copy failed");
+                                memcard_copy_save_between_slots(g_active_slot, other);
+                                memcard_show_toast("Save copied");
                             }
                             mcio_vmcFinish();
                         }
@@ -818,7 +838,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 int col = slot->save_idx % GRID_COLS;
                 if (col == 0) {
                     if (g_active_slot == 1) {
-                        switch_slot(0, 1); // keep focus on grid
+                        switch_slot(0, 1); // keep focus on grid, find closest
                     }
                 } else {
                     move_grid_cursor(slot, -1, 0);
@@ -841,7 +861,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                 int last_col = (slot->save_count - 1) % GRID_COLS;
                 if (col == last_col || slot->save_idx == slot->save_count - 1) {
                     if (g_active_slot == 0) {
-                        switch_slot(1, 1); // keep focus on grid
+                        switch_slot(1, 1); // keep focus on grid, find closest
                     }
                 } else {
                     move_grid_cursor(slot, 1, 0);
