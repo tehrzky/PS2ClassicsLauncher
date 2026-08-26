@@ -214,6 +214,11 @@ static void build_vmc_display_name(const char *disc_id, char *out, size_t out_le
 
 void memcard_unmount_all(void)
 {
+    /* CRITICAL: Flush mcio BEFORE unmounting PFS. If we unmount first,
+     * mcio's later vmcFinish() will write stale RAM data to a dead path
+     * or, worse, to a freshly remounted different VMC. */
+    mcio_vmcFinish();
+
     for (int i = 0; i < g_mount_count; i++) {
         if (g_mounts[i].active) {
             umountSave(g_mounts[i].mount_path, 0, 0);
@@ -222,6 +227,18 @@ void memcard_unmount_all(void)
         }
     }
     g_mount_count = 0;
+
+    /* Clear slot state so re-entry doesn't assume old VMCs are still loaded */
+    for (int s = 0; s < 2; s++) {
+        g_slots[s].vmc_count = 0;
+        g_slots[s].vmc_idx = -1;
+        g_slots[s].save_count = 0;
+        g_slots[s].save_idx = -1;
+        g_slots[s].vmc_loaded = 0;
+        g_slots[s].loaded_vmc_path[0] = '\0';
+        g_slots[s].state = SLOT_STATE_OFF;
+        g_slots[s].emulator_idx = -1;
+    }
 }
 
 /* Recursive mkdir helper */
