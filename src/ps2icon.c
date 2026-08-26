@@ -3,7 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-void ps2icon_parse_title(const uint8_t *icon_sys, int icon_sys_size, char *out, int out_len)
+void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
+                         char *out_title, size_t out_len)
 {
     out[0] = '\0';
     if (!icon_sys || icon_sys_size < 0xC0 + 1) return;
