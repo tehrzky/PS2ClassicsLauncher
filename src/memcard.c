@@ -671,13 +671,15 @@ void memcard_load_vmc(int slot_idx) {
             log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd_sys);
         }
 
-                /* Load icon using filename from icon.sys (or fallback icon0.ico) */
+          /* Load icon using filename from icon.sys (or fallback icon0.ico) */
         char icon_path[128];
         snprintf(icon_path, sizeof(icon_path), "/%s/%s", dirent.name, icon_name);
         int fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
         if (fd_icon >= 0) {
             mcio_mcClose(fd_icon);  /* Just check existence, getIconPS2 will re-open */
-            se->icon_rgba = (uint32_t *)getIconPS2(dirent.name, icon_name);
+            char vmc_folder[128];
+snprintf(vmc_folder, sizeof(vmc_folder), "/%s", dirent.name);
+se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder, icon_name);
             se->icon_w = 128;
             se->icon_h = 128;
         } else if (strcmp(icon_name, "icon0.ico") != 0) {
@@ -686,7 +688,9 @@ void memcard_load_vmc(int slot_idx) {
             fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
             if (fd_icon >= 0) {
                 mcio_mcClose(fd_icon);
-                se->icon_rgba = (uint32_t *)getIconPS2(dirent.name, "icon0.ico");
+                char vmc_folder_fb[128];
+snprintf(vmc_folder_fb, sizeof(vmc_folder_fb), "/%s", dirent.name);
+se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder_fb, "icon0.ico");
                 se->icon_w = 128;
                 se->icon_h = 128;
             }
