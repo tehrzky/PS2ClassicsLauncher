@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include "mcio.h"
 
-
+/* Forward declaration */
+static void* ps2IconTexture(const uint8_t* iData);
 
 
 void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
