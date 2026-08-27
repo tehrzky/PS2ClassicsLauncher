@@ -1178,8 +1178,28 @@ void memcard_confirm_no(void) {
    ============================================================ */
 
 void memcard_init(void) {
+    /* Always reload — no static guard, or re-entry breaks */
+    g_emulator_count = 0;
+    memcard_discover_user_home();
+    memcard_load_emulators();
+
+    /* Both slots start OFF */
     memset(g_slots, 0, sizeof(g_slots));
+    g_slots[0].state = SLOT_STATE_OFF;
+    g_slots[0].emulator_idx = -1;
+    g_slots[0].vmc_idx = -1;
+    g_slots[0].save_idx = -1;
+    g_slots[0].focus_element = 0;
+
+    g_slots[1].state = SLOT_STATE_OFF;
+    g_slots[1].emulator_idx = -1;
+    g_slots[1].vmc_idx = -1;
+    g_slots[1].save_idx = -1;
+    g_slots[1].focus_element = 0;
+
     g_active_slot = 0;
+
+    /* Clean global state for re-entry */
     g_mount_count = 0;
     memset(g_mounts, 0, sizeof(g_mounts));
     g_psu_picker_open = 0;
