@@ -214,9 +214,6 @@ static void build_vmc_display_name(const char *disc_id, char *out, size_t out_le
 
 void memcard_unmount_all(void)
 {
-    /* CRITICAL: Flush mcio BEFORE unmounting PFS. If we unmount first,
-     * mcio's later vmcFinish() will write stale RAM data to a dead path
-     * or, worse, to a freshly remounted different VMC. */
     mcio_vmcFinish();
 
     for (int i = 0; i < g_mount_count; i++) {
@@ -228,7 +225,6 @@ void memcard_unmount_all(void)
     }
     g_mount_count = 0;
 
-    /* Clear slot state so re-entry doesn't assume old VMCs are still loaded */
     for (int s = 0; s < 2; s++) {
         g_slots[s].vmc_count = 0;
         g_slots[s].vmc_idx = -1;
@@ -238,6 +234,8 @@ void memcard_unmount_all(void)
         g_slots[s].loaded_vmc_path[0] = '\0';
         g_slots[s].state = SLOT_STATE_OFF;
         g_slots[s].emulator_idx = -1;
+        /* Also clear vmc_files array to prevent stale dropdown entries */
+        memset(g_slots[s].vmc_files, 0, sizeof(g_slots[s].vmc_files));
     }
 }
 
@@ -595,6 +593,16 @@ void memcard_load_vmc(int slot_idx) {
     if (slot_idx < 0 || slot_idx >= 2) return;
     MemCardSlot *slot = &g_slots[slot_idx];
 
+   /* Stale mount detection: if the VMC path no longer exists, clear slot */
+    if (slot->loaded_vmc_path[0] && access(slot->loaded_vmc_path, F_OK) != 0) {
+        log_debug("memcard: stale mount detected for slot %d, clearing", slot_idx);
+        slot->vmc_loaded = 0;
+        slot->loaded_vmc_path[0] = '\0';
+        slot->save_count = 0;
+        slot->save_idx = -1;
+        return;
+    }
+   
     free_slot_icons(slot);
     slot->save_count = 0;
     slot->save_idx = -1;
