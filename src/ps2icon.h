@@ -4,23 +4,44 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Decode a PS2 icon0.ico file to RGBA32 (0xAARRGGBB format).
- * Supports:
- *   - Standard 16x16 4bpp paletted icon (160 bytes)
- *   - 128x128 32bpp raw RGBA icon (65536 bytes)
- * Returns 1 on success, 0 on failure.
- * On success, *out_rgba is malloc'd and must be freed by caller. */
+/* 3D icon structs */
+typedef struct {
+    uint32_t file_id;
+    uint16_t n_vertices;
+    uint16_t animation_shapes;
+    uint16_t texture_type;
+    uint8_t  pad[2];
+} Icon_Header;
+
+typedef struct {
+    uint16_t n_frames;
+    uint8_t  pad[2];
+} Animation_Header;
+
+typedef struct {
+    uint16_t n_keys;
+    uint8_t  pad[2];
+} Frame_Data;
+
+typedef struct {
+    uint32_t key;
+    uint32_t value;
+} Frame_Key;
+
+typedef struct {
+    int16_t x, y, z;
+} Vertex_Coord;
+
+typedef struct {
+    int16_t u, v;
+    uint32_t color;
+} Texture_Data;
+
+/* Functions */
 int ps2icon_decode(const uint8_t *ico_data, size_t ico_size,
                    uint32_t **out_rgba, int *out_w, int *out_h);
-
-/* Parse icon.sys title (offset 0xC0, up to 68 bytes, SJIS).
- * out_title must be at least 128 bytes. */
 void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
                          char *out_title, size_t out_len);
-
-/* Decode a PS2 3D icon file (icon0.ico / wa5icon.ico etc) to 128x128 RGBA.
- * Returns malloc'd buffer (128*128*4 bytes). Caller must free. */
 uint8_t* getIconPS2(const char* folder, const char* iconfile);
-
 
 #endif
