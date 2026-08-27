@@ -671,35 +671,24 @@ void memcard_load_vmc(int slot_idx) {
             log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd_sys);
         }
 
-        /* Load icon using the filename from icon.sys (or fallback to icon0.ico) */
+                /* Load icon using filename from icon.sys (or fallback icon0.ico) */
         char icon_path[128];
         snprintf(icon_path, sizeof(icon_path), "/%s/%s", dirent.name, icon_name);
         int fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
         if (fd_icon >= 0) {
-            uint8_t ico_buf[512];
-            int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
-            mcio_mcClose(fd_icon);
-            if (n_icon >= 160) {
-                ps2icon_decode(ico_buf, n_icon,
-                               &se->icon_rgba, &se->icon_w, &se->icon_h);
-            } else {
-                log_debug("memcard: icon %s too small (%d bytes) for %s", icon_name, n_icon, dirent.name);
-            }
-        } else {
-            log_debug("memcard: no icon %s for %s (fd=%d)", icon_name, dirent.name, fd_icon);
-            /* Try fallback icon0.ico if IconName failed */
-            if (strcmp(icon_name, "icon0.ico") != 0) {
-                snprintf(icon_path, sizeof(icon_path), "/%s/icon0.ico", dirent.name);
-                fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
-                if (fd_icon >= 0) {
-                    uint8_t ico_buf[512];
-                    int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
-                    mcio_mcClose(fd_icon);
-                    if (n_icon >= 160) {
-                        ps2icon_decode(ico_buf, n_icon,
-                                       &se->icon_rgba, &se->icon_w, &se->icon_h);
-                    }
-                }
+            mcio_mcClose(fd_icon);  /* Just check existence, getIconPS2 will re-open */
+            se->icon_rgba = (uint32_t *)getIconPS2(dirent.name, icon_name);
+            se->icon_w = 128;
+            se->icon_h = 128;
+        } else if (strcmp(icon_name, "icon0.ico") != 0) {
+            /* Try fallback icon0.ico */
+            snprintf(icon_path, sizeof(icon_path), "/%s/icon0.ico", dirent.name);
+            fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+            if (fd_icon >= 0) {
+                mcio_mcClose(fd_icon);
+                se->icon_rgba = (uint32_t *)getIconPS2(dirent.name, "icon0.ico");
+                se->icon_w = 128;
+                se->icon_h = 128;
             }
         }
 
