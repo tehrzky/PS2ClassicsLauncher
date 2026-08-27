@@ -22,4 +22,5 @@ void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
  * Returns malloc'd buffer (128*128*4 bytes). Caller must free. */
 uint8_t* getIconPS2(const char* folder, const char* iconfile);
 
+
 #endif
