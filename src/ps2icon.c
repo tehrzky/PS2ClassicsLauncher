@@ -2,6 +2,7 @@
 #include "sjis.h"
 #include <string.h>
 #include <stdlib.h>
+#include "mcio.h"
 
 void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
                          char *out_title, size_t out_len)
@@ -166,3 +167,28 @@ int ps2icon_decode(const uint8_t *ico_data, size_t ico_size,
 
     return 0;
 }
+
+uint8_t* getIconPS2(const char* folder, const char* iconfile)
+{
+    int fd;
+    uint8_t *buf, *out;
+    char filePath[256];
+    struct io_dirent st;
+
+    snprintf(filePath, sizeof(filePath), "%s/%s", folder, iconfile);
+    mcio_mcStat(filePath, &st);
+
+    fd = mcio_mcOpen(filePath, sceMcFileAttrReadable | sceMcFileAttrFile);
+    if (fd < 0)
+        return calloc(128 * 128, sizeof(uint32_t));
+
+    buf = malloc(st.stat.size);
+    mcio_mcRead(fd, buf, st.stat.size);
+    mcio_mcClose(fd);
+
+    out = ps2IconTexture(buf);
+    free(buf);
+
+    return out;
+}
+
