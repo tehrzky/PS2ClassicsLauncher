@@ -18,4 +18,8 @@ int ps2icon_decode(const uint8_t *ico_data, size_t ico_size,
 void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
                          char *out_title, size_t out_len);
 
+/* Decode a PS2 3D icon file (icon0.ico / wa5icon.ico etc) to 128x128 RGBA.
+ * Returns malloc'd buffer (128*128*4 bytes). Caller must free. */
+uint8_t* getIconPS2(const char* folder, const char* iconfile);
+
 #endif
