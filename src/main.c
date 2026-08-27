@@ -182,8 +182,9 @@ int main(void) {
                     settings_sel = 0;
                 }
                 if (pressed & ORBIS_PAD_BUTTON_L1 || pressed & ORBIS_PAD_BUTTON_R1) {
+                    memcard_unmount_all();
+                    memcard_init();  /* Must run BEFORE ui_mode = 2 to clear stale slot data */
                     ui_mode = 2;
-                    memcard_init();
                 }
 
                 if (pressed & ORBIS_PAD_BUTTON_UP) {
