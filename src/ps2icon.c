@@ -9,17 +9,14 @@
 
 static uint32_t TIM2RGBA(const uint8_t *buf)
 {
-	uint8_t RGBA[4];
-	uint16_t lRGB = (int16_t) (buf[1] << 8) | buf[0];
+	uint16_t lRGB = (buf[1] << 8) | buf[0];
+	uint8_t r = ((lRGB >> 10) & 0x1F) << 3;
+	uint8_t g = ((lRGB >>  5) & 0x1F) << 3;
+	uint8_t b = ((lRGB >>  0) & 0x1F) << 3;
 
-	RGBA[3] = 8 * (lRGB & 0x1F);
-	RGBA[2] = 8 * ((lRGB >> 5) & 0x1F);
-	RGBA[1] = 8 * (lRGB >> 10);
-	RGBA[0] = 0xFF;
-
-	return *((uint32_t *) &RGBA);
+	/* ARGB8888 — alpha in high byte, matching draw_icon_rgba and ps2icon_decode */
+	return ((uint32_t)0xFF << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
-
 static void* ps2IconTexture(const uint8_t* iData)
 {
 	int i;
@@ -115,7 +112,9 @@ uint8_t* getIconPS2(const char* folder, const char* iconfile)
 	struct io_dirent st;
 
 	snprintf(filePath, sizeof(filePath), "%s/%s", folder, iconfile);
-	mcio_mcStat(filePath, &st);
+
+	if (mcio_mcStat(filePath, &st) < 0)
+		return calloc(128 * 128, sizeof(uint32_t));
 
 	fd = mcio_mcOpen(filePath, sceMcFileAttrReadable | sceMcFileAttrFile);
 	if (fd < 0)
@@ -125,9 +124,36 @@ uint8_t* getIconPS2(const char* folder, const char* iconfile)
 	mcio_mcRead(fd, buf, st.stat.size);
 	mcio_mcClose(fd);
 
-	out = ps2IconTexture(buf);
-	free(buf);
+	/* Try 3D icon first (large files, > 1KB) */
+	if (st.stat.size > 1024) {
+		out = ps2IconTexture(buf);
+	} else {
+		out = NULL;
+	}
 
+	/* If 3D parse failed or file is small, try standard 16x16 icon */
+	if (!out || ((uint32_t*)out)[0] == 0) {
+		uint32_t *rgba = NULL;
+		int w = 0, h = 0;
+		if (ps2icon_decode(buf, st.stat.size, &rgba, &w, &h)) {
+			free(out);  /* free failed 3D attempt */
+			/* Upscale 16x16 to 128x128 for consistent rendering */
+			out = calloc(128 * 128, sizeof(uint32_t));
+			uint32_t *dst = (uint32_t *)out;
+			for (int y = 0; y < 128; y++) {
+				for (int x = 0; x < 128; x++) {
+					int sx = x * w / 128;
+					int sy = y * h / 128;
+					dst[y * 128 + x] = rgba[sy * w + sx];
+				}
+			}
+			free(rgba);
+		} else if (!out) {
+			out = calloc(128 * 128, sizeof(uint32_t));
+		}
+	}
+
+	free(buf);
 	return out;
 }
 
