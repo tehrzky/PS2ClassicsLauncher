@@ -7,59 +7,106 @@ void ps2icon_parse_title(const uint8_t *icon_sys, size_t icon_sys_size,
                          char *out_title, size_t out_len)
 {
     out_title[0] = '\0';
-    if (!icon_sys || icon_sys_size < 0xC0 + 1) return;
-
-    /* Verify magic */
+    if (!icon_sys || icon_sys_size < 0xC1) return;
     if (memcmp(icon_sys, "PS2D", 4) != 0) return;
 
-    /* Title is at offset 0xC0, max 68 bytes, null-terminated S-JIS */
-    const uint8_t *title_src = icon_sys + 0xC0;
-    int max_title = 68;
-    if (icon_sys_size < 0xC0 + (size_t)max_title)
-        max_title = (int)(icon_sys_size - 0xC0);
+    const uint8_t *src = icon_sys + 0xC0;
+    int max = 68;
+    if (icon_sys_size < 0xC0 + (size_t)max)
+        max = (int)(icon_sys_size - 0xC0);
 
     int j = 0;
-    for (int i = 0; i < max_title && j < (int)out_len - 1; i++) {
-        uint8_t c = title_src[i];
+    for (int i = 0; i < max && j < (int)out_len - 1; i++) {
+        uint8_t c = src[i];
         if (c == '\0') break;
 
         if (c < 0x80) {
-            /* Direct ASCII (half-width) */
-            out_title[j++] = c;
-        } else if (i + 1 < max_title) {
-            /* S-JIS full-width -> ASCII conversion */
-            uint16_t sjis = (c << 8) | title_src[i + 1];
-            if (sjis >= 0x8140 && sjis <= 0x817E) {
-                out_title[j++] = (char)(sjis - 0x8140 + 0x20);        /* ! through ~ */
-            } else if (sjis >= 0x8180 && sjis <= 0x818E) {
-                out_title[j++] = (char)(sjis - 0x8180 + 0x7F);        /* DEL area */
-            } else if (sjis >= 0x824F && sjis <= 0x8258) {
-                out_title[j++] = (char)(sjis - 0x824F + '0');         /* 0-9 */
-            } else if (sjis >= 0x8260 && sjis <= 0x8279) {
-                out_title[j++] = (char)(sjis - 0x8260 + 'A');         /* A-Z */
-            } else if (sjis >= 0x8281 && sjis <= 0x829A) {
-                out_title[j++] = (char)(sjis - 0x8281 + 'a');         /* a-z */
-            } else if (sjis == 0x8140) {
-                out_title[j++] = ' ';                          /* full-width space */
-            } else if (sjis == 0x8143) {
-                out_title[j++] = '-';                          /* full-width dash */
-            } else if (sjis == 0x8144) {
-                out_title[j++] = '-';                          /* full-width minus */
-            } else if (sjis == 0x8146) {
-                out_title[j++] = ':';                          /* full-width colon */
-            } else if (sjis == 0x8147) {
-                out_title[j++] = ';';                          /* full-width semicolon */
-            } else if (sjis == 0x8148) {
-                out_title[j++] = '?';                          /* full-width question */
-            } else if (sjis == 0x8149) {
-                out_title[j++] = '!';                          /* full-width exclamation */
-            } else if (sjis == 0x814A) {
-                out_title[j++] = '/';                          /* full-width slash */
-            } else if (sjis == 0x815E) {
-                out_title[j++] = '/';                          /* full-width divide */
-            } else {
-                out_title[j++] = '?';                          /* unknown S-JIS */
-            }
+            /* Half-width ASCII / katakana / control — pass through */
+            out_title[j++] = (char)c;
+        } else if (i + 1 < max) {
+            uint16_t sjis = ((uint16_t)c << 8) | src[i + 1];
+            char ascii = '?';
+
+            /* Fullwidth numbers ０-９ */
+            if (sjis >= 0x824F && sjis <= 0x8258)
+                ascii = (char)('0' + (sjis - 0x824F));
+            /* Fullwidth A-Z */
+            else if (sjis >= 0x8260 && sjis <= 0x8279)
+                ascii = (char)('A' + (sjis - 0x8260));
+            /* Fullwidth a-z */
+            else if (sjis >= 0x8281 && sjis <= 0x829A)
+                ascii = (char)('a' + (sjis - 0x8281));
+            /* Fullwidth space */
+            else if (sjis == 0x8140)
+                ascii = ' ';
+            /* Fullwidth period ． */
+            else if (sjis == 0x8144)
+                ascii = '.';
+            /* Fullwidth comma ， */
+            else if (sjis == 0x8143)
+                ascii = ',';
+            /* Fullwidth colon ： */
+            else if (sjis == 0x8146)
+                ascii = ':';
+            /* Fullwidth semicolon ； */
+            else if (sjis == 0x8147)
+                ascii = ';';
+            /* Fullwidth slash ／ */
+            else if (sjis == 0x814A)
+                ascii = '/';
+            /* Fullwidth dash － */
+            else if (sjis == 0x815F)
+                ascii = '-';
+            /* Fullwidth tilde ～ */
+            else if (sjis == 0x814B)
+                ascii = '~';
+            /* Fullwidth exclamation ！ */
+            else if (sjis == 0x8149)
+                ascii = '!';
+            /* Fullwidth question ？ */
+            else if (sjis == 0x8148)
+                ascii = '?';
+            /* Fullwidth left paren （ */
+            else if (sjis == 0x8152)
+                ascii = '(';
+            /* Fullwidth right paren ） */
+            else if (sjis == 0x8153)
+                ascii = ')';
+            /* Fullwidth plus ＋ */
+            else if (sjis == 0x815E)
+                ascii = '+';
+            /* Fullwidth equals ＝ */
+            else if (sjis == 0x8160)
+                ascii = '=';
+            /* Fullwidth less ＜ */
+            else if (sjis == 0x8161)
+                ascii = '<';
+            /* Fullwidth greater ＞ */
+            else if (sjis == 0x8162)
+                ascii = '>';
+            /* Fullwidth yen ￥ */
+            else if (sjis == 0x8163)
+                ascii = '\\';
+            /* Fullwidth dollar ＄ */
+            else if (sjis == 0x8164)
+                ascii = '$';
+            /* Fullwidth percent ％ */
+            else if (sjis == 0x8165)
+                ascii = '%';
+            /* Fullwidth hash ＃ */
+            else if (sjis == 0x8166)
+                ascii = '#';
+            /* Fullwidth ampersand ＆ */
+            else if (sjis == 0x8167)
+                ascii = '&';
+            /* Fullwidth asterisk ＊ */
+            else if (sjis == 0x8168)
+                ascii = '*';
+            /* Fullwidth at ＠ */
+            else if (sjis == 0x8169)
+                ascii = '@';
+
+            out_title[j++] = ascii;
             i++; /* consumed 2 bytes */
         }
     }
