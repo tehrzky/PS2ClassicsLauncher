@@ -3,12 +3,16 @@
 
 #include <stddef.h>
 
+#define SETTINGS_ITEMS 12
+
 typedef struct {
     int auto_download_covers;
     int auto_download_gameindex;
     int cover_type;
     int font_body;
     int font_title;
+    int panel_opacity;        /* 0-100, default 85 */
+    int wallpaper_brightness; /* 0-100, default 100 */
     char scraper_base_url[256];
     char work_path[256];
     char master_config[64];
