@@ -41,7 +41,7 @@
 #define COVER_X (RIGHT_PANE_X + COVER_PADDING)
 #define COVER_Y (PANEL_Y + 70)
 #define COVER_W 360
-#define COVER_H (int)(PANEL_H * 0.72f)
+#define COVER_H (int)(PANEL_H * 0.55f)
 
 #define SCROLLBAR_WIDTH      4
 #define SCROLLBAR_PADDING   12
@@ -51,7 +51,49 @@
 #define PANEL_BORDER         2
 #define SETTINGS_ROW_H      58
 #define SETTINGS_PW        760
-#define SETTINGS_PH        640
+#define SETTINGS_PH        860
+
+static uint32_t get_panel_color(void) {
+    int a = g_settings.panel_opacity * 255 / 100;
+    return (a << 24) | (COLOR_PANEL & 0x00FFFFFF);
+}
+
+static void draw_wrapped_text(int x, int y, int max_w, int max_h, const char *text, uint32_t color, int size) {
+    if (!text || !text[0]) return;
+    int line_h = size + 6;
+    int max_lines = max_h / line_h;
+    if (max_lines < 1) max_lines = 1;
+
+    char buf[1024];
+    strncpy(buf, text, sizeof(buf)-1);
+    buf[sizeof(buf)-1] = '\0';
+
+    char line[512] = "";
+    char *word = strtok(buf, " \n\r\t");
+    int cy = y;
+    int lines = 0;
+
+    while (word && lines < max_lines) {
+        char test[512];
+        if (line[0]) snprintf(test, sizeof(test), "%s %s", line, word);
+        else snprintf(test, sizeof(test), "%s", word);
+
+        if (font_text_width(test, size) <= max_w) {
+            snprintf(line, sizeof(line), "%s", test);
+        } else {
+            if (line[0]) {
+                draw_text(x, cy, line, color, size);
+                cy += line_h;
+                lines++;
+            }
+            snprintf(line, sizeof(line), "%s", word);
+        }
+        word = strtok(NULL, " \n\r\t");
+    }
+    if (line[0] && lines < max_lines) {
+        draw_text(x, cy, line, color, size);
+    }
+}
 
 static void truncate_to_fit(const char *s, char *out, size_t out_len, int max_px, int size) {
     int full_width = font_text_width(s, size);
@@ -104,11 +146,8 @@ static void draw_game_list(int sel, int count) {
             draw_rounded_rect(LEFT_PANE_X + 12, yy, LEFT_PANE_W - 24, ITEM_H, 4, COLOR_CARD_SEL);
             draw_rect(LEFT_PANE_X + 12, yy + 2, 4, ITEM_H - 4, COLOR_GOLD);
 
-            char buf[512];
-            snprintf(buf, sizeof(buf), "> %s", games[i].display_name);
             char tbuf[512];
-            // Removed ~12 characters worth of pixel width (approx 260px)
-            truncate_to_fit(buf, tbuf, sizeof(tbuf), LEFT_PANE_W - 290, 38);
+            truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 290, 38);
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
             char tbuf[512];
@@ -170,6 +209,34 @@ static void draw_game_details(int sel, int total_games) {
     ty += line_gap;
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 36);
+
+    /* ---- compact metadata row below cover ---- */
+    int by = COVER_Y + COVER_H + 20;
+    int bx = COVER_X;
+    int bw = RIGHT_PANE_W - 56;
+
+    char info[512], info_buf[512];
+
+    snprintf(info, sizeof(info), "RELEASE: %s  |  GENRE: %s",
+             g->release_date[0] ? g->release_date : "N/A",
+             g->genre[0] ? g->genre : "N/A");
+    truncate_to_fit(info, info_buf, sizeof(info_buf), bw, 24);
+    draw_text(bx, by, info_buf, COLOR_DIM, 24);
+    by += 28;
+
+    snprintf(info, sizeof(info), "DEV: %s  |  PUB: %s",
+             g->developer[0] ? g->developer : "N/A",
+             g->publisher[0] ? g->publisher : "N/A");
+    truncate_to_fit(info, info_buf, sizeof(info_buf), bw, 24);
+    draw_text(bx, by, info_buf, COLOR_DIM, 24);
+    by += 32;
+
+    /* ---- description (smaller font, bottom space) ---- */
+    if (g->description[0]) {
+        draw_text_slot(bx, by, "DESCRIPTION", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+        by += 24;
+        draw_wrapped_text(bx, by, bw, PANEL_BOT - by - 16, g->description, COLOR_TEXT, 20);
+    }
 }
 
 static void draw_header(void) {
@@ -205,6 +272,10 @@ static void draw_footer(int in_settings) {
 void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games) {
     if (g_settings.wallpaper[0]) {
         cover_draw_wallpaper();
+        if (g_settings.wallpaper_brightness < 100) {
+            int alpha = (100 - g_settings.wallpaper_brightness) * 255 / 100;
+            draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (alpha << 24));
+        }
     } else {
         memset(framebuffer[current_buf], 0, FB_SIZE);
         draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
@@ -213,10 +284,12 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
     draw_header();
 
     draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
-    draw_rounded_rect(LEFT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, LEFT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, COLOR_PANEL);
+        uint32_t panel_col = get_panel_color();
+
+    draw_rounded_rect(LEFT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, LEFT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, panel_col);
 
     draw_rounded_rect(RIGHT_PANE_X, PANEL_Y, RIGHT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
-    draw_rounded_rect(RIGHT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, RIGHT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, COLOR_PANEL);
+    draw_rounded_rect(RIGHT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, RIGHT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, panel_col);
 
     draw_game_list(selected_idx, game_count_visible);
     draw_game_details(selected_idx, total_games);
@@ -252,7 +325,9 @@ static const char *settings_labels[SETTINGS_ITEMS] = {
     "Body Font",
     "Title Font",
     "Force Download GameIndex",
-    "Force Download All Covers"
+    "Force Download All Covers",
+    "Panel Opacity",
+    "Wallpaper Brightness"
 };
 
 void draw_settings_ui(int selected_item, int in_per_game) {
@@ -313,11 +388,13 @@ void draw_settings_ui(int selected_item, int in_per_game) {
         }
         else if (i == 8) snprintf(value, sizeof(value), "Press X");
         else if (i == 9) snprintf(value, sizeof(value), "Press X");
+        else if (i == 10) snprintf(value, sizeof(value), "%d%%", g_settings.panel_opacity);
+        else if (i == 11) snprintf(value, sizeof(value), "%d%%", g_settings.wallpaper_brightness);
 
         int vw = font_text_width(value, 26);
         uint32_t vc = COLOR_DIM;
         if (i == 3 || i == 4 || i == 5) vc = COLOR_MUTED;
-        else if (i >= 8) vc = is_sel ? COLOR_SUCCESS : COLOR_MUTED;
+        else if (i == 8 || i == 9) vc = is_sel ? COLOR_SUCCESS : COLOR_MUTED;
         else vc = is_sel ? COLOR_ACCENT : COLOR_DIM;
         draw_text(px + pw - 40 - vw, ry + 12, value, vc, 26);
     }
