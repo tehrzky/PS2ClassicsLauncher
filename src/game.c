@@ -138,6 +138,10 @@ void scan_games(void) {
         // Pull GameDB + LaunchBox metadata
         GameDBInfo info;
         if (scraper_get_game_info(games[game_count].id, games[game_count].display_name, &info) == 0) {
+            if (info.title[0]) {
+                strncpy(games[game_count].display_name, info.title, sizeof(games[game_count].display_name) - 1);
+                games[game_count].display_name[sizeof(games[game_count].display_name) - 1] = '\0';
+            }
             strncpy(games[game_count].description, info.description, sizeof(games[game_count].description) - 1);
             strncpy(games[game_count].developer, info.developer, sizeof(games[game_count].developer) - 1);
             strncpy(games[game_count].publisher, info.publisher, sizeof(games[game_count].publisher) - 1);
