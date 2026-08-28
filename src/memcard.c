@@ -665,28 +665,61 @@ void memcard_load_vmc(int slot_idx) {
             log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd_sys);
         }
 
-          /* Load icon using filename from icon.sys (or fallback icon0.ico) */
+                  /* Load icon — try 3D TIM2 first, fallback to 16x16 paletted */
         char icon_path[128];
         snprintf(icon_path, sizeof(icon_path), "/%s/%s", dirent.name, icon_name);
+        
+        se->icon_rgba = NULL;
+        se->icon_w = 0;
+        se->icon_h = 0;
+
+        /* Try 3D icon (128x128 TIM2 texture) */
         int fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
         if (fd_icon >= 0) {
-            mcio_mcClose(fd_icon);  /* Just check existence, getIconPS2 will re-open */
-            char vmc_folder[128];
-            snprintf(vmc_folder, sizeof(vmc_folder), "/%s", dirent.name);
-            se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder, icon_name);
-            se->icon_w = 128;
-            se->icon_h = 128;
-        } else if (strcmp(icon_name, "icon0.ico") != 0) {
-            /* Try fallback icon0.ico */
+            mcio_mcClose(fd_icon);
+            uint32_t *tex3d = (uint32_t *)getIconPS2(vmc_folder, icon_name);
+            if (tex3d) {
+                /* Check if it's all transparent (means file wasn't a 3D icon) */
+                int has_pixels = 0;
+                for (int p = 0; p < 128*128 && !has_pixels; p++) {
+                    if ((tex3d[p] >> 24) != 0) has_pixels = 1;
+                }
+                if (has_pixels) {
+                    se->icon_rgba = tex3d;
+                    se->icon_w = 128;
+                    se->icon_h = 128;
+                } else {
+                    free(tex3d);
+                }
+            }
+        }
+
+        /* Fallback: standard 16x16 paletted icon */
+        if (!se->icon_rgba) {
+            fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+            if (fd_icon >= 0) {
+                uint8_t ico_buf[512];
+                int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
+                mcio_mcClose(fd_icon);
+                if (n_icon >= 160) {
+                    ps2icon_decode(ico_buf, n_icon,
+                                   &se->icon_rgba, &se->icon_w, &se->icon_h);
+                }
+            }
+        }
+
+        /* Final fallback: icon0.ico if IconName failed */
+        if (!se->icon_rgba && strcmp(icon_name, "icon0.ico") != 0) {
             snprintf(icon_path, sizeof(icon_path), "/%s/icon0.ico", dirent.name);
             fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
             if (fd_icon >= 0) {
+                uint8_t ico_buf[512];
+                int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
                 mcio_mcClose(fd_icon);
-                char vmc_folder_fb[128];
-                snprintf(vmc_folder_fb, sizeof(vmc_folder_fb), "/%s", dirent.name);
-                se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder_fb, "icon0.ico");
-                se->icon_w = 128;
-                se->icon_h = 128;
+                if (n_icon >= 160) {
+                    ps2icon_decode(ico_buf, n_icon,
+                                   &se->icon_rgba, &se->icon_w, &se->icon_h);
+                }
             }
         }
 
