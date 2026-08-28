@@ -665,7 +665,7 @@ void memcard_load_vmc(int slot_idx) {
             log_debug("memcard: no icon.sys for %s (fd=%d)", dirent.name, fd_sys);
         }
 
-                  /* Load icon — try 3D TIM2 first, fallback to 16x16 paletted */
+        /* Load icon — try 3D TIM2 first, fallback to 16x16 paletted */
         char icon_path[128];
         snprintf(icon_path, sizeof(icon_path), "/%s/%s", dirent.name, icon_name);
         
@@ -677,6 +677,8 @@ void memcard_load_vmc(int slot_idx) {
         int fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
         if (fd_icon >= 0) {
             mcio_mcClose(fd_icon);
+            char vmc_folder[128];
+            snprintf(vmc_folder, sizeof(vmc_folder), "/%s", dirent.name);
             uint32_t *tex3d = (uint32_t *)getIconPS2(vmc_folder, icon_name);
             if (tex3d) {
                 /* Check if it's all transparent (means file wasn't a 3D icon) */
@@ -690,6 +692,35 @@ void memcard_load_vmc(int slot_idx) {
                     se->icon_h = 128;
                 } else {
                     free(tex3d);
+                }
+            }
+        }
+
+        /* Fallback: standard 16x16 paletted icon */
+        if (!se->icon_rgba) {
+            fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+            if (fd_icon >= 0) {
+                uint8_t ico_buf[512];
+                int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
+                mcio_mcClose(fd_icon);
+                if (n_icon >= 160) {
+                    ps2icon_decode(ico_buf, n_icon,
+                                   &se->icon_rgba, &se->icon_w, &se->icon_h);
+                }
+            }
+        }
+
+        /* Final fallback: icon0.ico if IconName failed */
+        if (!se->icon_rgba && strcmp(icon_name, "icon0.ico") != 0) {
+            snprintf(icon_path, sizeof(icon_path), "/%s/icon0.ico", dirent.name);
+            fd_icon = mcio_mcOpen(icon_path, sceMcFileAttrReadable | sceMcFileAttrFile);
+            if (fd_icon >= 0) {
+                uint8_t ico_buf[512];
+                int n_icon = mcio_mcRead(fd_icon, ico_buf, sizeof(ico_buf));
+                mcio_mcClose(fd_icon);
+                if (n_icon >= 160) {
+                    ps2icon_decode(ico_buf, n_icon,
+                                   &se->icon_rgba, &se->icon_w, &se->icon_h);
                 }
             }
         }
