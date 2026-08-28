@@ -31,6 +31,9 @@ void settings_load(void) {
     snprintf(config_dir,   sizeof(config_dir),   "%s/config", g_settings.work_path);
     snprintf(settings_path, sizeof(settings_path), "%s/config/launcher_settings.txt", g_settings.work_path);
     mkdir(config_dir, 0777);
+    char vmc_dir[512];
+    snprintf(vmc_dir, sizeof(vmc_dir), "%s/VMC", g_settings.work_path);
+    mkdir(vmc_dir, 0777);
     FILE *fp = fopen(settings_path, "r");
     if (!fp) {
         settings_save();
@@ -77,6 +80,9 @@ void settings_save(void) {
     snprintf(config_dir,   sizeof(config_dir),   "%s/config", g_settings.work_path);
     snprintf(settings_path, sizeof(settings_path), "%s/config/launcher_settings.txt", g_settings.work_path);
     mkdir(config_dir, 0777);
+    char vmc_dir[512];
+    snprintf(vmc_dir, sizeof(vmc_dir), "%s/VMC", g_settings.work_path);
+    mkdir(vmc_dir, 0777);
     FILE *fp = fopen(settings_path, "w");
     if (!fp) return;
     fprintf(fp, "auto_download_covers=%d\n", g_settings.auto_download_covers);
