@@ -141,5 +141,6 @@ void memcard_scan_psu_files(void);
 const char *memcard_get_user_home(void);
 int memcard_is_vmc_file_size_valid(size_t sz);
 void memcard_extract_disc_id(const char *filename, char *out, size_t out_len);
+int memcard_mkdirs(const char *path);
 
 #endif
