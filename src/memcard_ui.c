@@ -300,12 +300,14 @@ static void draw_stats(int px, MemCardSlot *slot, int is_active) {
 static const char *action_items[] = {
     "Copy Save to Other Slot",
     "Delete Save",
-    "Export Save as .PSU",
+    "Export Save as .PSU to USB",
+    "Export Save as .PSU to HDD",
     "Import Save from .PSU",
-    "Backup Full VMC",
+    "Backup Full VMC to USB",
+    "Backup Full VMC to HDD",
     "Format VMC"
 };
-#define ACTION_COUNT 6
+#define ACTION_COUNT 8
 
 static void draw_action_menu(void) {
     int mw = 640, row_h = 58, mh = ACTION_COUNT * row_h + 80;
@@ -329,9 +331,11 @@ static void draw_action_menu(void) {
         if (i == 0 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 1 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 2 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
-        if (i == 3 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 3 && (slot->state != SLOT_STATE_VMC_SEL || slot->save_idx < 0)) enabled = 0;
         if (i == 4 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
         if (i == 5 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 6 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
+        if (i == 7 && slot->state != SLOT_STATE_VMC_SEL) enabled = 0;
 
         uint32_t tc = enabled ? COLOR_DIM : 0xFF475569;
         if (i == g_memcard_action_sel && enabled) {
@@ -730,14 +734,24 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 2:
+                                case 2: /* Export .PSU to USB */
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
                         int ok = memcard_export_save_psu(g_active_slot, "/mnt/usb0");
                         memcard_show_toast(ok ? "Exported to USB" : "Export failed");
                     }
                     break;
 
-                case 3:
+                case 3: /* Export .PSU to HDD */
+                    if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
+                        char hdd_path[512];
+                        snprintf(hdd_path, sizeof(hdd_path), "%s/VMC", g_settings.work_path);
+                        memcard_mkdirs(hdd_path);
+                        int ok = memcard_export_save_psu(g_active_slot, hdd_path);
+                        memcard_show_toast(ok ? "Exported to HDD" : "Export failed");
+                    }
+                    break;
+
+                case 4: /* Import Save from .PSU */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         memcard_scan_psu_files();
                         g_psu_picker_open = 1;
@@ -745,14 +759,24 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 4:
+                case 5: /* Backup full VMC to USB */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         int ok = memcard_backup_vmc_to_usb(g_active_slot, "/mnt/usb0");
-                        memcard_show_toast(ok ? "VMC backed up" : "Backup failed");
+                        memcard_show_toast(ok ? "VMC backed up to USB" : "Backup failed");
                     }
                     break;
 
-                case 5:
+                case 6: /* Backup full VMC to HDD */
+                    if (slot->state == SLOT_STATE_VMC_SEL) {
+                        char hdd_path[512];
+                        snprintf(hdd_path, sizeof(hdd_path), "%s/VMC", g_settings.work_path);
+                        memcard_mkdirs(hdd_path);
+                        int ok = memcard_backup_vmc_to_usb(g_active_slot, hdd_path);
+                        memcard_show_toast(ok ? "VMC backed up to HDD" : "Backup failed");
+                    }
+                    break;
+
+                case 7: /* Format VMC */
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         pending_format_slot = g_active_slot;
                         memcard_show_confirm("CONFIRM FORMAT",
