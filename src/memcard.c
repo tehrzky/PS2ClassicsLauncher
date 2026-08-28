@@ -249,7 +249,7 @@ void memcard_unmount_all(void)
 }
 
 /* Recursive mkdir helper */
-static int memcard_mkdirs(const char *path)
+int memcard_mkdirs(const char *path)
 {
     char tmp[512];
     char *p = NULL;
