@@ -3,6 +3,7 @@
 #include "goodnames.h"
 #include "config.h"
 #include "settings.h"
+#include "scraper.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
