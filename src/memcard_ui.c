@@ -198,13 +198,26 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
         if (i < slot->save_count) {
             VmcSaveEntry *se = &slot->saves[i];
 
-            /* Icon area */
-            int ix = cx + 6, iy = cy + 6;
-            int iw = CELL_W - 12, ih = CELL_H - 36;
-            if (se->icon_rgba && se->icon_w > 0 && se->icon_h > 0) {
-                draw_icon_rgba(ix, iy, iw, ih, se->icon_rgba, se->icon_w, se->icon_h);
+            /* Icon area — preserve 1:1 aspect ratio and center */
+            int icon_area_w = CELL_W - 12;
+            int icon_area_h = CELL_H - 36;
+            int draw_w, draw_h, ix, iy;
+
+            if (icon_area_w < icon_area_h) {
+                draw_w = icon_area_w;
+                draw_h = icon_area_w;  /* square, limited by width */
             } else {
-                draw_rounded_rect(ix, iy, iw, ih, 3, COLOR_BG);
+                draw_w = icon_area_h;  /* square, limited by height */
+                draw_h = icon_area_h;
+            }
+            ix = cx + (CELL_W - draw_w) / 2;
+            iy = cy + 6 + (icon_area_h - draw_h) / 2;
+
+            if (se->icon_rgba && se->icon_w > 0 && se->icon_h > 0) {
+                draw_icon_rgba(ix, iy, draw_w, draw_h,
+                               se->icon_rgba, se->icon_w, se->icon_h);
+            } else {
+                draw_rounded_rect(ix, iy, draw_w, draw_h, 3, COLOR_BG);
             }
 
             /* Slot number top-left */
