@@ -7,29 +7,32 @@
 /* 3D icon structs */
 typedef struct {
     uint32_t file_id;
-    uint16_t n_vertices;
-    uint16_t animation_shapes;
-    uint16_t texture_type;
-    uint8_t  pad[2];
+    uint32_t animation_shapes;
+    uint32_t texture_type;
+    uint32_t reserved;
+    uint32_t n_vertices;
 } Icon_Header;
 
 typedef struct {
-    uint16_t n_frames;
-    uint8_t  pad[2];
+    uint32_t id_tag;
+    uint32_t frame_length;
+    float    anim_speed;
+    uint32_t play_offset;
+    uint32_t n_frames;
 } Animation_Header;
 
 typedef struct {
-    uint16_t n_keys;
-    uint8_t  pad[2];
+    uint32_t shape_id;
+    uint32_t n_keys;
 } Frame_Data;
 
 typedef struct {
-    uint32_t key;
-    uint32_t value;
+    float time;
+    float value;
 } Frame_Key;
 
 typedef struct {
-    int16_t x, y, z;
+    int16_t x, y, z, unknown;
 } Vertex_Coord;
 
 typedef struct {
