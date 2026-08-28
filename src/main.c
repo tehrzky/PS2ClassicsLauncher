@@ -82,6 +82,7 @@ int main(void) {
     font_init();
 
     scraper_download_gameindex();
+    scraper_init();
     load_good_names();
 
     scan_games();
