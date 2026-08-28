@@ -21,6 +21,11 @@ static int net_initialized = 0;
 char g_download_status[128] = {0};
 int  g_download_active = 0;
 
+static char *g_gamedb_data = NULL;
+static size_t g_gamedb_size = 0;
+static char *g_metadata_data = NULL;
+static size_t g_metadata_size = 0;
+
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -132,6 +137,20 @@ static int download_file(const char *url, const char *path)
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
 
+    // WORKING DNS BYPASS: resolve manually with gethostbyname (proven working)
+    struct hostent *server = gethostbyname(host);
+    if (!server) {
+        log_debug("gethostbyname failed for: %s", host);
+        g_download_active = 0;
+        return -1;
+    }
+
+    struct in_addr **addr_list = (struct in_addr **)server->h_addr_list;
+    char ip_str[32];
+    strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
+    ip_str[sizeof(ip_str) - 1] = '\0';
+    log_debug("Resolved %s -> %s", host, ip_str);
+
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
         log_debug("sceSslInit failed: 0x%08X", sslId);
@@ -159,18 +178,14 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // CRITICAL FIX: Use WithURL for connection so PS4 stores hostname for TLS SNI.
-    // This bypasses Sony DNS (blocked by GoldHen) because it uses system resolver.
-    connId = sceHttpCreateConnectionWithURL(tmplId, url, 0);
+    // Connect by resolved IP — bypasses sceHttp DNS entirely
+    connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
-        log_debug("sceHttpCreateConnectionWithURL failed: 0x%08X", connId);
+        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateConnectionWithURL ok: %d", connId);
+    log_debug("sceHttpCreateConnection ok: %d", connId);
 
-    // Use regular request with just the path (NOT WithURL) so GitHub gets correct format:
-    // GET /xlenore/.../SLUS-12345.jpg HTTP/1.1
-    // NOT: GET https://raw.githubusercontent.com/xlenore/... HTTP/1.1
     reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
     if (reqId < 0) {
         log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
@@ -178,6 +193,7 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
+    // Force correct Host header (required for GitHub CDN / HTTPS virtual hosting)
     ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
     if (ret < 0) {
         log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
@@ -238,6 +254,236 @@ cleanup:
     return -1;
 }
 
+/* ------------------------------------------------------------------ */
+/*  String normalization for fuzzy title matching                      */
+/* ------------------------------------------------------------------ */
+static void normalize_string(const char *src, char *dst, size_t dst_len)
+{
+    size_t j = 0;
+    for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
+        char c = src[i];
+        if (c == ' ' || c == ':' || c == '-' || c == '_' || c == '.' ||
+            c == '\'' || c == '\"' || c == '!' || c == '?' || c == '&' ||
+            c == '/' || c == '\\' || c == '(' || c == ')' || c == '[' ||
+            c == ']' || c == ',' || c == ';')
+            continue;
+        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+        dst[j++] = c;
+    }
+    dst[j] = '\0';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Lightweight JSON helpers                                          */
+/* ------------------------------------------------------------------ */
+static char *file_load(const char *path, size_t *out_size)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    if (size <= 0 || size > 16 * 1024 * 1024) { fclose(fp); return NULL; }
+    char *buf = malloc(size + 1);
+    if (!buf) { fclose(fp); return NULL; }
+    fseek(fp, 0, SEEK_SET);
+    fread(buf, 1, size, fp);
+    buf[size] = '\0';
+    fclose(fp);
+    if (out_size) *out_size = (size_t)size;
+    return buf;
+}
+
+static const char *json_find_object_end(const char *start)
+{
+    int depth = 0;
+    const char *p = start;
+    while (*p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {
+            depth--;
+            if (depth == 0) return p;
+        } else if (*p == '"') {
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '\\' && *(p+1)) p++;
+                p++;
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+static int json_get_string(const char *obj, const char *key, char *out, size_t out_len)
+{
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *p = strstr(obj, pattern);
+    if (!p) return -1;
+    p += strlen(pattern);
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ':') p++;
+    if (*p != '"') return -1;
+    p++;
+    size_t i = 0;
+    while (*p && *p != '"' && i < out_len - 1) {
+        if (*p == '\\' && *(p+1)) {
+            p++;
+            out[i++] = *p++;
+        } else {
+            out[i++] = *p++;
+        }
+    }
+    out[i] = '\0';
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  GameDB-PS2 lookup (by serial)                                     */
+/* ------------------------------------------------------------------ */
+static int gamedb_lookup_serial(const char *serial,
+                                char *title, size_t title_len,
+                                char *developer, size_t dev_len,
+                                char *publisher, size_t pub_len,
+                                char *genre, size_t genre_len,
+                                char *release_date, size_t date_len)
+{
+    if (!g_gamedb_data || !serial) return -1;
+
+    char needle[64];
+    snprintf(needle, sizeof(needle), "\"%s\"", serial);
+
+    const char *found = strstr(g_gamedb_data, needle);
+    if (!found) return -1;
+
+    const char *obj_start = strchr(found, '{');
+    if (!obj_start) return -1;
+
+    const char *obj_end = json_find_object_end(obj_start);
+    if (!obj_end) return -1;
+
+    size_t obj_len = (size_t)(obj_end - obj_start + 1);
+    char *obj = malloc(obj_len + 1);
+    if (!obj) return -1;
+    memcpy(obj, obj_start, obj_len);
+    obj[obj_len] = '\0';
+
+    if (title)       json_get_string(obj, "title", title, title_len);
+    if (developer)   json_get_string(obj, "developer", developer, dev_len);
+    if (publisher)   json_get_string(obj, "publisher", publisher, pub_len);
+    if (genre)       json_get_string(obj, "genre", genre, genre_len);
+    if (release_date) {
+        if (json_get_string(obj, "release_date", release_date, date_len) < 0)
+            if (json_get_string(obj, "date", release_date, date_len) < 0)
+                json_get_string(obj, "release", release_date, date_len);
+    }
+
+    free(obj);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  LaunchBox metadata fuzzy lookup (by normalized title)             */
+/* ------------------------------------------------------------------ */
+static int metadata_find_description(const char *normalized_title,
+                                     char *out_desc, size_t out_len)
+{
+    if (!g_metadata_data || !normalized_title || !normalized_title[0])
+        return -1;
+
+    const char *p = g_metadata_data;
+    while ((p = strstr(p, "\"name\"")) != NULL) {
+        p += 6;
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ':') p++;
+        if (*p != '"') continue;
+        p++;
+
+        char name_buf[256];
+        size_t i = 0;
+        while (*p && *p != '"' && i < sizeof(name_buf) - 1) {
+            if (*p == '\\' && *(p+1)) { p++; name_buf[i++] = *p++; }
+            else name_buf[i++] = *p++;
+        }
+        name_buf[i] = '\0';
+
+        char norm_name[256];
+        normalize_string(name_buf, norm_name, sizeof(norm_name));
+
+        if (strcmp(norm_name, normalized_title) == 0) {
+            const char *desc_p = strstr(p, "\"description\"");
+            if (desc_p) {
+                desc_p += 13;
+                while (*desc_p == ' ' || *desc_p == '\t' || *desc_p == '\n' || *desc_p == '\r' || *desc_p == ':') desc_p++;
+                if (*desc_p == '"') {
+                    desc_p++;
+                    size_t j = 0;
+                    while (*desc_p && *desc_p != '"' && j < out_len - 1) {
+                        if (*desc_p == '\\' && *(desc_p+1)) { desc_p++; out_desc[j++] = *desc_p++; }
+                        else out_desc[j++] = *desc_p++;
+                    }
+                    out_desc[j] = '\0';
+                    return 0;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Public API                                                        */
+/* ------------------------------------------------------------------ */
+void scraper_init(void)
+{
+    char path[512];
+
+    // Load PS2.data.json into memory
+    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
+    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
+    g_gamedb_data = file_load(path, &g_gamedb_size);
+    if (g_gamedb_data)
+        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
+    else
+        log_debug("PS2.data.json not found at %s", path);
+
+    // Load ps2_metadata.json into memory (user-supplied LaunchBox data)
+    snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
+    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
+    g_metadata_data = file_load(path, &g_metadata_size);
+    if (g_metadata_data)
+        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
+    else
+        log_debug("ps2_metadata.json not found at %s (descriptions disabled)", path);
+}
+
+int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out)
+{
+    if (!out) return -1;
+    memset(out, 0, sizeof(GameDBInfo));
+
+    if (!serial || !serial[0]) return -1;
+
+    // 1) Lookup GameDB by serial
+    gamedb_lookup_serial(serial,
+                         out->title, sizeof(out->title),
+                         out->developer, sizeof(out->developer),
+                         out->publisher, sizeof(out->publisher),
+                         out->genre, sizeof(out->genre),
+                         out->release_date, sizeof(out->release_date));
+
+    // 2) Fuzzy-match LaunchBox description by normalized title
+    const char *match_title = (out->title[0]) ? out->title : fallback_title;
+    if (match_title && match_title[0]) {
+        char normalized[256];
+        normalize_string(match_title, normalized, sizeof(normalized));
+        metadata_find_description(normalized, out->description, sizeof(out->description));
+    }
+
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cover scraper (unchanged logic, working download core)            */
+/* ------------------------------------------------------------------ */
 static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d)
 {
     const char *base = g_settings.scraper_base_url;
@@ -246,11 +492,6 @@ static void build_cover_url(char *out, size_t out_len, const char *serial, int i
     } else {
         snprintf(out, out_len, "%s/covers/default/%s.jpg", base, serial);
     }
-}
-
-static void build_gameindex_url(char *out, size_t out_len)
-{
-    snprintf(out, out_len, "%s/tools/GameIndex.yaml", g_settings.scraper_base_url);
 }
 
 static void mark_no_cover(const char *serial)
@@ -346,12 +587,15 @@ void scraper_force_download_cover(const char *serial)
     download_file(url, cover_path);
 }
 
+/* ------------------------------------------------------------------ */
+/*  GameDB-PS2 database download (replaces GameIndex.yaml)            */
+/* ------------------------------------------------------------------ */
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
 
     char config_dir[512];
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
@@ -359,27 +603,25 @@ void scraper_download_gameindex(void)
 
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 100) {
-        log_debug("GameIndex.yaml already exists (%ld bytes)", st.st_size);
+        log_debug("PS2.data.json already exists (%ld bytes)", st.st_size);
         return;
     }
 
-    char url[512];
-    build_gameindex_url(url, sizeof(url));
-    log_debug("Downloading GameIndex.yaml...");
+    const char *url = "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json";
+    log_debug("Downloading PS2.data.json...");
     download_file(url, path);
 }
 
 void scraper_force_download_gameindex(void)
 {
     char path[512];
-    snprintf(path, sizeof(path), "%s/config/GameIndex.yaml", g_settings.work_path);
+    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
 
     char config_dir[512];
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
 
-    char url[512];
-    build_gameindex_url(url, sizeof(url));
-    log_debug("Force downloading GameIndex.yaml...");
+    const char *url = "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json";
+    log_debug("Force downloading PS2.data.json...");
     download_file(url, path);
 }
