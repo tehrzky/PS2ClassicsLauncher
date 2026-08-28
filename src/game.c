@@ -134,6 +134,16 @@ void scan_games(void) {
                                    games[game_count].emulator_id,
                                    sizeof(games[game_count].emulator_id));
 
+        // Pull GameDB + LaunchBox metadata
+        GameDBInfo info;
+        if (scraper_get_game_info(games[game_count].id, games[game_count].display_name, &info) == 0) {
+            strncpy(games[game_count].description, info.description, sizeof(games[game_count].description) - 1);
+            strncpy(games[game_count].developer, info.developer, sizeof(games[game_count].developer) - 1);
+            strncpy(games[game_count].publisher, info.publisher, sizeof(games[game_count].publisher) - 1);
+            strncpy(games[game_count].genre, info.genre, sizeof(games[game_count].genre) - 1);
+            strncpy(games[game_count].release_date, info.release_date, sizeof(games[game_count].release_date) - 1);
+        }
+
         game_count++;
     }
     closedir(dir);
