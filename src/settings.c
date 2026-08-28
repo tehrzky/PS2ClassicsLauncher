@@ -10,6 +10,8 @@ void settings_reset(void) {
     g_settings.auto_download_covers = 0;      // OFF by default
     g_settings.auto_download_gameindex = 0;   // OFF by default
     g_settings.cover_type = 0;
+    g_settings.panel_opacity = 85;
+    g_settings.wallpaper_brightness = 100;
     strncpy(g_settings.scraper_base_url,
             "https://raw.githubusercontent.com/xlenore/ps2-covers/main",
             sizeof(g_settings.scraper_base_url) - 1);
@@ -52,6 +54,8 @@ void settings_load(void) {
         }
         else if (strcmp(key, "font_body") == 0) g_settings.font_body = atoi(val);
         else if (strcmp(key, "font_title") == 0) g_settings.font_title = atoi(val);
+        else if (strcmp(key, "panel_opacity") == 0) g_settings.panel_opacity = atoi(val);
+        else if (strcmp(key, "wallpaper_brightness") == 0) g_settings.wallpaper_brightness = atoi(val);
         else if (strcmp(key, "work_path") == 0) {
             strncpy(g_settings.work_path, val, sizeof(g_settings.work_path) - 1);
             g_settings.work_path[sizeof(g_settings.work_path) - 1] = '\0';
@@ -83,6 +87,8 @@ void settings_save(void) {
     fprintf(fp, "font_title=%d\n", g_settings.font_title);
     fprintf(fp, "work_path=%s\n", g_settings.work_path);
     fprintf(fp, "master_config=%s\n", g_settings.master_config);
+    fprintf(fp, "panel_opacity=%d\n", g_settings.panel_opacity);
+    fprintf(fp, "wallpaper_brightness=%d\n", g_settings.wallpaper_brightness);
     fprintf(fp, "wallpaper=%s\n", g_settings.wallpaper);
     fclose(fp);
 }
