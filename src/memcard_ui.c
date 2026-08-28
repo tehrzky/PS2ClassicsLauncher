@@ -16,7 +16,6 @@
 #include <dirent.h>
 #include <limits.h>
 
-
 #define SCREEN_W    1920
 #define SCREEN_H    1080
 #define SAFE_X      64
@@ -107,7 +106,7 @@ static void draw_slot_bg(int px, int is_active) {
     draw_rounded_rect(px, PANEL_Y, PANEL_W, PANEL_H, RADIUS, bc);
     draw_rounded_rect(px + BORDER_W, PANEL_Y + BORDER_W,
                       PANEL_W - BORDER_W * 2, PANEL_H - BORDER_W * 2,
-                      RADIUS - 1, COLOR_PANEL);
+                      RADIUS - 1, is_active ? COLOR_PANEL : 0xFF121824);
 }
 
 static void draw_slot_label(int px, const char *label, int is_active) {
@@ -123,7 +122,6 @@ static void draw_slot_label(int px, const char *label, int is_active) {
 
 static void draw_id_row(int px, int y, const char *label, const char *value,
                         int is_focused, int is_dd, int is_active) {
-    // Dim value if slot is not active, unless focused and active
     uint32_t vc;
     if (!is_active) {
         vc = COLOR_DIM;
@@ -144,8 +142,6 @@ static void draw_id_row(int px, int y, const char *label, const char *value,
     char tbuf[256];
     truncate_fit(value, tbuf, sizeof(tbuf), PANEL_W - lw - 90, 28);
     draw_text(px + 24 + lw + 8, y + 2, tbuf, vc, 28);
-
-    // No arrow indicator anymore
 }
 
 static void draw_dropdown(int px, int y, const char **items, int count, int sel) {
@@ -154,9 +150,10 @@ static void draw_dropdown(int px, int y, const char **items, int count, int sel)
     int dy = y + ID_ROW_H + 4;
     if (dy + dh > PANEL_BOT - 20) dy = PANEL_BOT - 20 - dh;
 
-    draw_rounded_rect(px + 12, dy, PANEL_W - 24, dh, 6, COLOR_BG);
+    /* Opaque background to avoid text bleed through */
+    draw_rounded_rect(px + 12, dy, PANEL_W - 24, dh, 6, 0xFF0D1117);
     draw_rounded_rect(px + 12, dy, PANEL_W - 24, dh, 6, COLOR_GOLD);
-    draw_rounded_rect(px + 13, dy + 1, PANEL_W - 26, dh - 2, 5, COLOR_PANEL);
+    draw_rounded_rect(px + 14, dy + 2, PANEL_W - 28, dh - 4, 5, 0xFF161B22);
 
     int start = (sel >= vis) ? sel - vis + 1 : 0;
     for (int i = start; i < count && i < start + vis; i++) {
@@ -190,24 +187,24 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
         int is_sel = (i == slot->save_idx && slot->focus_element == 2 && is_active);
 
         if (is_sel) {
-            // Gold border with dark background
             draw_rounded_rect(cx - 4, cy - 4, CELL_W + 8, CELL_H + 8, 6, COLOR_GOLD);
             draw_rounded_rect(cx - 2, cy - 2, CELL_W + 4, CELL_H + 4, 5, COLOR_CARD_SEL);
+        } else {
+            draw_rounded_rect(cx, cy, CELL_W, CELL_H, 4, is_active ? COLOR_CARD : 0xFF18202C);
         }
 
         if (i < slot->save_count) {
             VmcSaveEntry *se = &slot->saves[i];
 
-            /* Icon area — preserve 1:1 aspect ratio and center */
             int icon_area_w = CELL_W - 12;
             int icon_area_h = CELL_H - 36;
             int draw_w, draw_h, ix, iy;
 
             if (icon_area_w < icon_area_h) {
                 draw_w = icon_area_w;
-                draw_h = icon_area_w;  /* square, limited by width */
+                draw_h = icon_area_w;
             } else {
-                draw_w = icon_area_h;  /* square, limited by height */
+                draw_w = icon_area_h;
                 draw_h = icon_area_h;
             }
             ix = cx + (CELL_W - draw_w) / 2;
@@ -220,13 +217,11 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
                 draw_rounded_rect(ix, iy, draw_w, draw_h, 3, COLOR_BG);
             }
 
-            /* Slot number top-left */
             char sn[8];
             snprintf(sn, sizeof(sn), "%02d", se->slot_num);
             uint32_t num_color = is_active ? (is_sel ? COLOR_GOLD : COLOR_MUTED) : COLOR_DIM;
             draw_text(cx + 4, cy + 2, sn, num_color, 18);
 
-            /* Blocks bottom-center */
             char blk[32];
             snprintf(blk, sizeof(blk), "%02d Blocks", se->blocks);
             int bw = font_text_width(blk, 16);
@@ -243,7 +238,7 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
 static void draw_insert_card(int px, int is_active) {
     const char *txt = "INSERT CARD";
     int tw = font_text_width_slot(txt, 48, FONT_SLOT_BOLD);
-    uint32_t c = is_active ? 0xFF4A6B8A : 0xFF1E293B;
+    uint32_t c = is_active ? 0xFF4A6B8A : 0xFF283446;
     int tx = px + (PANEL_W - tw) / 2;
     int ty = PANEL_Y + PANEL_H / 2 - 24;
     draw_text_slot(tx, ty, txt, c, 48, FONT_SLOT_BOLD);
@@ -255,7 +250,7 @@ static void draw_insert_card(int px, int is_active) {
 
 static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
     int iy = PANEL_BOT - 110;
-    draw_rect(px + 20, iy - 4, PANEL_W - 40, 2, COLOR_BORDER);
+    draw_rect(px + 20, iy - 4, PANEL_W - 40, 2, is_active ? COLOR_BORDER : 0xFF1F2937);
 
     if (slot->state == SLOT_STATE_OFF || slot->state == SLOT_STATE_EMU_SEL) {
         const char *msg = "NO MEMORY CARD SELECTED";
@@ -272,7 +267,7 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
 
         char info[256];
         snprintf(info, sizeof(info), "DATA SLOT %d  (%s)", se->slot_num, se->dir_name);
-        draw_text(px + 24, iy + 42, info, is_active ? COLOR_DIM : COLOR_DIM, 22);
+        draw_text(px + 24, iy + 42, info, COLOR_DIM, 22);
     } else {
         const char *msg = "NO SAVE SELECTED";
         int mw = font_text_width(msg, 28);
@@ -292,7 +287,7 @@ static void draw_stats(int px, MemCardSlot *slot, int is_active) {
     char u[32], a[32];
     snprintf(u, sizeof(u), "USED: %02d BLOCKS", total);
     snprintf(a, sizeof(a), "AVAIL: %02d BLOCKS", avail);
-    uint32_t c = is_active ? COLOR_DIM : COLOR_DIM; // always dim
+    uint32_t c = is_active ? COLOR_DIM : 0xFF475569;
     draw_text(px + 24, sy, u, c, 18);
     int aw = font_text_width(a, 18);
     draw_text(px + PANEL_W - aw - 24, sy, a, c, 18);
@@ -501,12 +496,6 @@ void draw_memcard_ui(void) {
         draw_id_row(px, emu_y, "EMULATOR ID:", emu_val,
                     slot->focus_element == 0, slot->in_dropdown == 1, is_active);
 
-        if (slot->in_dropdown == 1 && is_active) {
-            const char *items[MAX_EMULATORS];
-            for (int i = 0; i < g_emulator_count; i++) items[i] = g_emulators[i].id;
-            draw_dropdown(px, emu_y, items, g_emulator_count, slot->dropdown_sel);
-        }
-
         const char *disc_val = "OFF";
         if (slot->state == SLOT_STATE_EMU_SEL || slot->state == SLOT_STATE_VMC_SEL) {
             if (slot->vmc_idx >= 0 && slot->vmc_idx < slot->vmc_count) {
@@ -518,12 +507,6 @@ void draw_memcard_ui(void) {
         draw_id_row(px, disc_y, "PS2 ID:", disc_val,
                     slot->focus_element == 1, slot->in_dropdown == 2, is_active);
 
-        if (slot->in_dropdown == 2 && is_active) {
-            const char *items[MAX_VMC_FILES];
-            for (int i = 0; i < slot->vmc_count; i++) items[i] = slot->vmc_files[i].display_name;
-            draw_dropdown(px, disc_y, items, slot->vmc_count, slot->dropdown_sel);
-        }
-
         if (slot->in_dropdown == 0) {
             if (slot->state == SLOT_STATE_VMC_SEL) {
                 draw_save_grid(px, slot, is_active);
@@ -533,6 +516,19 @@ void draw_memcard_ui(void) {
                 draw_insert_card(px, is_active);
                 draw_info_bar(px, slot, is_active);
             }
+        }
+
+        /* Draw dropdowns last so they render above grid elements */
+        if (slot->in_dropdown == 1 && is_active) {
+            const char *items[MAX_EMULATORS];
+            for (int i = 0; i < g_emulator_count; i++) items[i] = g_emulators[i].id;
+            draw_dropdown(px, emu_y, items, g_emulator_count, slot->dropdown_sel);
+        }
+
+        if (slot->in_dropdown == 2 && is_active) {
+            const char *items[MAX_VMC_FILES];
+            for (int i = 0; i < slot->vmc_count; i++) items[i] = slot->vmc_files[i].display_name;
+            draw_dropdown(px, disc_y, items, slot->vmc_count, slot->dropdown_sel);
         }
     }
 
@@ -553,57 +549,55 @@ static void move_grid_cursor(MemCardSlot *slot, int dx, int dy) {
     int cols = GRID_COLS;
     int row = slot->save_idx / cols;
     int col = slot->save_idx % cols;
+
     row += dy;
     col += dx;
+
     if (col < 0) col = 0;
     if (col >= cols) col = cols - 1;
+
     int new_idx = row * cols + col;
+    if (new_idx >= slot->save_count) {
+        new_idx = slot->save_count - 1;
+    }
     if (new_idx < 0) new_idx = 0;
-    if (new_idx >= slot->save_count) new_idx = slot->save_count - 1;
+
     slot->save_idx = new_idx;
 }
 
-/* Switch to another slot, preserving column and row as much as possible */
+/* Switch panel, snapping edge-to-edge when in grid view */
 static void switch_slot(int new_slot, int keep_focus) {
     if (new_slot == g_active_slot) return;
     MemCardSlot *old = &g_slots[g_active_slot];
     MemCardSlot *new = &g_slots[new_slot];
     int old_focus = old->focus_element;
-    int old_col = 0, old_row = 0;
+    int old_row = 0;
+
     if (old_focus == 2 && old->save_count > 0 && old->save_idx >= 0) {
-        old_col = old->save_idx % GRID_COLS;
         old_row = old->save_idx / GRID_COLS;
     }
+
     g_active_slot = new_slot;
     if (keep_focus) {
         new->focus_element = old_focus;
         if (old_focus == 2) {
             if (new->save_count > 0) {
-                // Find closest save to (old_row, old_col)
-                int best_idx = 0;
-                int best_dist = INT_MAX;
-                for (int i = 0; i < new->save_count; i++) {
-                    int r = i / GRID_COLS;
-                    int c = i % GRID_COLS;
-                    int dist = abs(r - old_row) + abs(c - old_col);
-                    if (dist < best_dist) {
-                        best_dist = dist;
-                        best_idx = i;
-                    }
+                // If coming from left panel (0 -> 1), snap to column 0 (left edge)
+                // If coming from right panel (1 -> 0), snap to column 3 (right edge)
+                int target_col = (new_slot == 1) ? 0 : (GRID_COLS - 1);
+                int target_idx = old_row * GRID_COLS + target_col;
+
+                if (target_idx >= new->save_count) {
+                    target_idx = new->save_count - 1;
                 }
-                new->save_idx = best_idx;
+                new->save_idx = target_idx;
             } else {
                 new->save_idx = -1;
             }
         }
     } else {
         new->focus_element = 2;
-        if (new->save_count > 0) {
-            // Fallback to first
-            new->save_idx = 0;
-        } else {
-            new->save_idx = -1;
-        }
+        new->save_idx = (new->save_count > 0) ? 0 : -1;
     }
 }
 
@@ -683,17 +677,15 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
     }
 
     /* === ACTION MENU === */
-        if (g_memcard_action_menu_open) {
-            if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-                g_memcard_action_menu_open = 0;
-                /* Action menu may have switched mcio to the other slot's VMC
-                 * (e.g., to check overwrite). Restore active slot's VMC. */
-                if (g_slots[g_active_slot].vmc_loaded && g_slots[g_active_slot].loaded_vmc_path[0]) {
-                    memcard_unload_current_vmc();
-                    mcio_vmcInit(g_slots[g_active_slot].loaded_vmc_path);
-                }
-                return;
+    if (g_memcard_action_menu_open) {
+        if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+            g_memcard_action_menu_open = 0;
+            if (g_slots[g_active_slot].vmc_loaded && g_slots[g_active_slot].loaded_vmc_path[0]) {
+                memcard_unload_current_vmc();
+                mcio_vmcInit(g_slots[g_active_slot].loaded_vmc_path);
             }
+            return;
+        }
         if (pressed & ORBIS_PAD_BUTTON_UP) {
             g_memcard_action_sel = (g_memcard_action_sel - 1 + ACTION_COUNT) % ACTION_COUNT;
         }
@@ -705,7 +697,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
             MemCardSlot *other_slot = &g_slots[other];
 
             switch (g_memcard_action_sel) {
-                case 0: /* Copy to other slot */
+                case 0:
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0 &&
                         other_slot->state == SLOT_STATE_VMC_SEL) {
                         memcard_unload_current_vmc();
@@ -728,7 +720,7 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 1: /* Delete save */
+                case 1:
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
                         pending_delete_slot = g_active_slot;
                         char msg[128];
@@ -738,14 +730,14 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 2: /* Export .PSU */
+                case 2:
                     if (slot->state == SLOT_STATE_VMC_SEL && slot->save_idx >= 0) {
                         int ok = memcard_export_save_psu(g_active_slot, "/mnt/usb0");
                         memcard_show_toast(ok ? "Exported to USB" : "Export failed");
                     }
                     break;
 
-                case 3: /* Import Save from .PSU */
+                case 3:
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         memcard_scan_psu_files();
                         g_psu_picker_open = 1;
@@ -753,14 +745,14 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
                     }
                     break;
 
-                case 4: /* Backup full VMC */
+                case 4:
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         int ok = memcard_backup_vmc_to_usb(g_active_slot, "/mnt/usb0");
                         memcard_show_toast(ok ? "VMC backed up" : "Backup failed");
                     }
                     break;
 
-                case 5: /* Format VMC */
+                case 5:
                     if (slot->state == SLOT_STATE_VMC_SEL) {
                         pending_format_slot = g_active_slot;
                         memcard_show_confirm("CONFIRM FORMAT",
@@ -820,20 +812,18 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
 
     /* LEFT */
     if (pressed & ORBIS_PAD_BUTTON_LEFT) {
-        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            if (slot->save_count > 0 && slot->save_idx >= 0) {
-                int col = slot->save_idx % GRID_COLS;
-                if (col == 0) {
-                    if (g_active_slot == 1) {
-                        switch_slot(0, 1); // keep focus on grid, find closest
-                    }
-                } else {
-                    move_grid_cursor(slot, -1, 0);
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0) {
+            int col = slot->save_idx % GRID_COLS;
+            if (col == 0) {
+                if (g_active_slot == 1) {
+                    switch_slot(0, 1);
                 }
+            } else {
+                move_grid_cursor(slot, -1, 0);
             }
         } else {
             if (g_active_slot == 1) {
-                switch_slot(0, 1); // keep same focus element
+                switch_slot(0, 1);
             } else if (slot->focus_element > 0) {
                 slot->focus_element--;
             }
@@ -842,21 +832,18 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
 
     /* RIGHT */
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
-        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            if (slot->save_count > 0 && slot->save_idx >= 0) {
-                int col = slot->save_idx % GRID_COLS;
-                int last_col = (slot->save_count - 1) % GRID_COLS;
-                if (col == last_col || slot->save_idx == slot->save_count - 1) {
-                    if (g_active_slot == 0) {
-                        switch_slot(1, 1); // keep focus on grid, find closest
-                    }
-                } else {
-                    move_grid_cursor(slot, 1, 0);
+        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0) {
+            int col = slot->save_idx % GRID_COLS;
+            if (col == GRID_COLS - 1 || slot->save_idx == slot->save_count - 1) {
+                if (g_active_slot == 0) {
+                    switch_slot(1, 1);
                 }
+            } else {
+                move_grid_cursor(slot, 1, 0);
             }
         } else {
             if (g_active_slot == 0) {
-                switch_slot(1, 1); // keep same focus element
+                switch_slot(1, 1);
             } else if (slot->focus_element < 2) {
                 slot->focus_element++;
             }
@@ -865,43 +852,55 @@ void memcard_ui_handle_input(unsigned int pressed, unsigned int buttons) {
 
     /* UP */
     if (pressed & ORBIS_PAD_BUTTON_UP) {
-        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            if (slot->save_count > 0 && slot->save_idx >= 0) {
+        if (slot->focus_element == 2) {
+            if (slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0 && slot->save_idx >= 0) {
                 int row = slot->save_idx / GRID_COLS;
                 if (row == 0) {
-                    slot->focus_element = 1; // go to PS2 ID
+                    slot->focus_element = 1;
                 } else {
                     move_grid_cursor(slot, 0, -1);
                 }
-            }
-        } else {
-            if (slot->focus_element > 0) {
-                slot->focus_element--;
             } else {
-                // wrap to bottom of grid
+                slot->focus_element = 1;
+            }
+        } else if (slot->focus_element > 0) {
+            slot->focus_element--;
+        } else {
+            if (slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0) {
                 slot->focus_element = 2;
-                if (slot->save_count > 0) {
-                    slot->save_idx = slot->save_count - 1;
-                }
+                slot->save_idx = slot->save_count - 1;
+            } else {
+                slot->focus_element = 1;
             }
         }
     }
 
     /* DOWN */
     if (pressed & ORBIS_PAD_BUTTON_DOWN) {
-        if (slot->focus_element == 2 && slot->state == SLOT_STATE_VMC_SEL) {
-            move_grid_cursor(slot, 0, 1);
-        } else {
-            if (slot->focus_element < 2) {
-                slot->focus_element++; // move to next row (Emu->PS2, PS2->grid)
-                if (slot->focus_element == 2) {
-                    if (slot->save_count > 0 && slot->save_idx < 0) {
-                        slot->save_idx = 0;
-                    }
+        if (slot->focus_element == 2) {
+            if (slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0) {
+                int row = slot->save_idx / GRID_COLS;
+                int max_row = (slot->save_count - 1) / GRID_COLS;
+                if (row == max_row) {
+                    slot->focus_element = 0;
+                } else {
+                    move_grid_cursor(slot, 0, 1);
                 }
             } else {
-                // already at grid, wrap to top
                 slot->focus_element = 0;
+            }
+        } else {
+            if (slot->focus_element < 2) {
+                if (slot->focus_element == 1) {
+                    if (slot->state == SLOT_STATE_VMC_SEL && slot->save_count > 0) {
+                        slot->focus_element = 2;
+                        if (slot->save_idx < 0) slot->save_idx = 0;
+                    } else {
+                        slot->focus_element = 0;
+                    }
+                } else {
+                    slot->focus_element = 1;
+                }
             }
         }
     }
