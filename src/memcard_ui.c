@@ -44,9 +44,10 @@
 #define RADIUS      8
 #define BORDER_W    2
 
-/* Simple nearest-neighbor RGBA blit to framebuffer */
+/* Simple nearest-neighbor RGBA blit to framebuffer.
+   dim: 0 = full brightness, 1 = darken to match an unfocused panel. */
 static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
-                           const uint32_t *rgba, int src_w, int src_h)
+                           const uint32_t *rgba, int src_w, int src_h, int dim)
 {
     if (!rgba || src_w <= 0 || src_h <= 0) return;
     uint32_t *fb = (uint32_t *)framebuffer[current_buf];
@@ -59,6 +60,13 @@ static void draw_icon_rgba(int x, int y, int dst_w, int dst_h,
             if (sx >= src_w) sx = src_w - 1;
             uint32_t c = rgba[sy * src_w + sx];
             if (((c >> 24) & 0xFF) > 0x40) {
+                if (dim) {
+                    uint8_t r = (uint8_t)(((c >> 16) & 0xFF) * 55 / 100);
+                    uint8_t g = (uint8_t)(((c >>  8) & 0xFF) * 55 / 100);
+                    uint8_t b = (uint8_t)(( c        & 0xFF) * 55 / 100);
+                    c = ((uint32_t)0xFF << 24) | ((uint32_t)r << 16) |
+                        ((uint32_t)g << 8) | (uint32_t)b;
+                }
                 int px = x + dx;
                 int py = y + dy;
                 if (px >= 0 && px < SCREEN_W && py >= 0 && py < SCREEN_H)
@@ -106,7 +114,7 @@ static void draw_slot_bg(int px, int is_active) {
     draw_rounded_rect(px, PANEL_Y, PANEL_W, PANEL_H, RADIUS, bc);
     draw_rounded_rect(px + BORDER_W, PANEL_Y + BORDER_W,
                       PANEL_W - BORDER_W * 2, PANEL_H - BORDER_W * 2,
-                      RADIUS - 1, is_active ? COLOR_PANEL : 0xFF121824);
+                      RADIUS - 1, is_active ? COLOR_PANEL : 0xFF0A0E15);
 }
 
 static void draw_slot_label(int px, const char *label, int is_active) {
@@ -212,7 +220,7 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
 
             if (se->icon_rgba && se->icon_w > 0 && se->icon_h > 0) {
                 draw_icon_rgba(ix, iy, draw_w, draw_h,
-                               se->icon_rgba, se->icon_w, se->icon_h);
+                               se->icon_rgba, se->icon_w, se->icon_h, !is_active);
             } else {
                 draw_rounded_rect(ix, iy, draw_w, draw_h, 3, COLOR_BG);
             }
