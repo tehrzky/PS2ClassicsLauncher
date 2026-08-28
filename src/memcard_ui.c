@@ -184,14 +184,14 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
         int cx = start_x + col * (CELL_W + CELL_GAP);
         int cy = start_y + row * (CELL_H + CELL_GAP);
 
+        // Highlight active cursor box ONLY on the selected item in the active slot
         int is_sel = (i == slot->save_idx && slot->focus_element == 2 && is_active);
 
         if (is_sel) {
             draw_rounded_rect(cx - 4, cy - 4, CELL_W + 8, CELL_H + 8, 6, COLOR_GOLD);
             draw_rounded_rect(cx - 2, cy - 2, CELL_W + 4, CELL_H + 4, 5, COLOR_CARD_SEL);
-        } else {
-            draw_rounded_rect(cx, cy, CELL_W, CELL_H, 4, is_active ? COLOR_CARD : 0xFF18202C);
         }
+        // Background rect drawing removed completely per request
 
         if (i < slot->save_count) {
             VmcSaveEntry *se = &slot->saves[i];
@@ -217,15 +217,17 @@ static void draw_save_grid(int px, MemCardSlot *slot, int is_active) {
                 draw_rounded_rect(ix, iy, draw_w, draw_h, 3, COLOR_BG);
             }
 
+            // Highlight slot number ONLY on selected item
             char sn[8];
             snprintf(sn, sizeof(sn), "%02d", se->slot_num);
-            uint32_t num_color = is_active ? (is_sel ? COLOR_GOLD : COLOR_MUTED) : COLOR_DIM;
+            uint32_t num_color = is_sel ? COLOR_GOLD : (is_active ? COLOR_MUTED : COLOR_DIM);
             draw_text(cx + 4, cy + 2, sn, num_color, 18);
 
+            // Highlight blocks label ONLY on selected item
             char blk[32];
             snprintf(blk, sizeof(blk), "%02d Blocks", se->blocks);
             int bw = font_text_width(blk, 16);
-            uint32_t blk_color = is_active ? (is_sel ? COLOR_GOLD : COLOR_DIM) : COLOR_DIM;
+            uint32_t blk_color = is_sel ? COLOR_GOLD : COLOR_DIM;
             draw_text(cx + (CELL_W - bw) / 2, cy + CELL_H - 26, blk, blk_color, 16);
         }
     }
@@ -255,7 +257,7 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
     if (slot->state == SLOT_STATE_OFF || slot->state == SLOT_STATE_EMU_SEL) {
         const char *msg = "NO MEMORY CARD SELECTED";
         int mw = font_text_width(msg, 28);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_MUTED : COLOR_DIM, 28);
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_TEXT : COLOR_DIM, 28);
         return;
     }
 
@@ -267,11 +269,12 @@ static void draw_info_bar(int px, MemCardSlot *slot, int is_active) {
 
         char info[256];
         snprintf(info, sizeof(info), "DATA SLOT %d  (%s)", se->slot_num, se->dir_name);
-        draw_text(px + 24, iy + 42, info, COLOR_DIM, 22);
+        draw_text(px + 24, iy + 42, info, is_active ? COLOR_GOLD : COLOR_DIM, 22);
     } else {
         const char *msg = "NO SAVE SELECTED";
         int mw = font_text_width(msg, 28);
-        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_MUTED : COLOR_DIM, 28);
+        // Corrected contrast: Lighted when is_active is true
+        draw_text(px + (PANEL_W - mw) / 2, iy + 20, msg, is_active ? COLOR_TEXT : COLOR_DIM, 28);
     }
 }
 
