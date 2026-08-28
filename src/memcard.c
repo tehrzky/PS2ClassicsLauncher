@@ -114,6 +114,7 @@ void memcard_load_emulators(void) {
         snprintf(g_emulators[0].id, sizeof(g_emulators[0].id), "PCSX20042");
         snprintf(g_emulators[0].name, sizeof(g_emulators[0].name), "Default");
         g_emulators[0].is_usb = 0;
+        g_emulators[0].is_hdd = 0;
         g_emulator_count = 1;
         memcard_save_emulators();
     } else {
@@ -136,6 +137,7 @@ void memcard_load_emulators(void) {
                 snprintf(g_emulators[g_emulator_count].name, 64, "Emu %d", g_emulator_count + 1);
             }
             g_emulators[g_emulator_count].is_usb = 0;
+            g_emulators[g_emulator_count].is_hdd = 0;
             g_emulator_count++;
         }
         fclose(fp);
@@ -145,6 +147,14 @@ void memcard_load_emulators(void) {
     snprintf(g_emulators[g_emulator_count].id, sizeof(g_emulators[g_emulator_count].id), "USB");
     snprintf(g_emulators[g_emulator_count].name, sizeof(g_emulators[g_emulator_count].name), "USB Drive");
     g_emulators[g_emulator_count].is_usb = 1;
+    g_emulators[g_emulator_count].is_hdd = 0;
+    g_emulator_count++;
+
+    /* Always append HDD as the last virtual emulator */
+    snprintf(g_emulators[g_emulator_count].id, sizeof(g_emulator_count].id), "HDD");
+    snprintf(g_emulators[g_emulator_count].name, sizeof(g_emulator_count].name), "Internal HDD");
+    g_emulators[g_emulator_count].is_usb = 0;
+    g_emulators[g_emulator_count].is_hdd = 1;
     g_emulator_count++;
 }
 
@@ -153,11 +163,10 @@ void memcard_save_emulators(void) {
     FILE *fp = fopen(path, "w");
     if (!fp) return;
 
-    /* Don't write the virtual USB entry to file */
+     /* Don't write the virtual USB/HDD entries to file */
     int count = g_emulator_count;
-    if (count > 0 && g_emulators[count - 1].is_usb) {
-        count--;
-    }
+    if (count > 0 && g_emulators[count - 1].is_hdd) count--;
+    if (count > 0 && g_emulators[count - 1].is_usb) count--;
 
     for (int i = 0; i < count; i++) {
         fprintf(fp, "%s,%s\n", g_emulators[i].id, g_emulators[i].name);
@@ -276,8 +285,10 @@ void memcard_scan_vmc_files(int slot_idx) {
     EmulatorEntry *emu = &g_emulators[slot->emulator_idx];
     char scan_path[512];
 
-    if (emu->is_usb) {
+     if (emu->is_usb) {
         snprintf(scan_path, sizeof(scan_path), "/mnt/usb0/PS2VMC");
+    } else if (emu->is_hdd) {
+        snprintf(scan_path, sizeof(scan_path), "%s/VMC", g_settings.work_path);
       } else {
         const char *home = memcard_get_user_home();
         if (!home) {
