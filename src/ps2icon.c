@@ -10,9 +10,11 @@
 static uint32_t TIM2RGBA(const uint8_t *buf)
 {
 	uint16_t lRGB = (buf[1] << 8) | buf[0];
-	uint8_t r = ((lRGB >> 10) & 0x1F) << 3;
+	/* PS2 GS 16-bit pixel format is A1-B5-G5-R5: red is the LOW 5 bits,
+	   blue is bits 10-14. The previous version read them swapped. */
+	uint8_t r = ((lRGB >>  0) & 0x1F) << 3;
 	uint8_t g = ((lRGB >>  5) & 0x1F) << 3;
-	uint8_t b = ((lRGB >>  0) & 0x1F) << 3;
+	uint8_t b = ((lRGB >> 10) & 0x1F) << 3;
 
 	/* ARGB8888 — alpha in high byte, matching draw_icon_rgba and ps2icon_decode */
 	return ((uint32_t)0xFF << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
@@ -273,9 +275,9 @@ int ps2icon_decode(const uint8_t *ico_data, size_t ico_size,
 
             uint16_t p = palette[nibble];
 
-            uint8_t r = ((p >> 10) & 0x1F) << 3;
+			uint8_t r = ((p >>  0) & 0x1F) << 3;
             uint8_t g = ((p >>  5) & 0x1F) << 3;
-            uint8_t b = ((p >>  0) & 0x1F) << 3;
+            uint8_t b = ((p >> 10) & 0x1F) << 3;
             uint8_t a = (p & 0x8000) ? 0xFF : 0x00;
 
             r |= (r >> 5);
