@@ -285,11 +285,11 @@ void memcard_scan_vmc_files(int slot_idx) {
     EmulatorEntry *emu = &g_emulators[slot->emulator_idx];
     char scan_path[512];
 
-     if (emu->is_usb) {
+    if (emu->is_usb) {
         snprintf(scan_path, sizeof(scan_path), "/mnt/usb0/PS2VMC");
     } else if (emu->is_hdd) {
         snprintf(scan_path, sizeof(scan_path), "%s/VMC", g_settings.work_path);
-      } else {
+    } else {
         const char *home = memcard_get_user_home();
         if (!home) {
             log_debug("memcard: no user home, aborting scan");
@@ -512,71 +512,54 @@ void memcard_scan_vmc_files(int slot_idx) {
         return;
     }
 
+    /* Shared VMC file scanning for USB and HDD */
     DIR *dir = opendir(scan_path);
     if (!dir) {
-        log_debug("memcard: cannot open VMC dir: %s", scan_path);
+        log_debug("memcard: cannot open %s", scan_path);
         return;
     }
 
     struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && slot->vmc_count < MAX_VMC_FILES) {
-        if (entry->d_name[0] == '.') continue;
-        if (strncmp(entry->d_name, "sce_bu_", 7) == 0) continue; /* Skip Sony backups */
-        if (!is_vmc_file(entry->d_name)) continue;
-
-        char full_path[768];
-        snprintf(full_path, sizeof(full_path), "%s/%s", scan_path, entry->d_name);
-
-        struct stat st;
-        if (stat(full_path, &st) != 0) continue;
-        if (!S_ISREG(st.st_mode)) continue;
-
-         if (st.st_size < 0x100000) {  /* Less than 1MB = not a real VMC */
-            log_debug("memcard: skipping %s (size %zu too small)", entry->d_name, st.st_size);
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        }
+        if (!is_vmc_file(entry->d_name))
+            continue;
 
-        /* Extract disc ID from filename */
-        char disc_id[32];
-        if (strncmp(entry->d_name, "sdimg_", 6) == 0) {
-            /* PS4 savedata format: sdimg_SCUS-97402 */
-            strncpy(disc_id, entry->d_name + 6, sizeof(disc_id) - 1);
-            disc_id[sizeof(disc_id) - 1] = '\0';
-        } else if (emu->is_usb) {
-            const char *underscore = strchr(entry->d_name, '_');
-            if (underscore) {
-                size_t id_len = underscore - entry->d_name;
-                if (id_len < sizeof(disc_id)) {
-                    strncpy(disc_id, underscore + 1, sizeof(disc_id) - 1);
-                    char *dot = strrchr(disc_id, '.');
-                    if (dot) *dot = '\0';
-                } else {
-                    memcard_extract_disc_id(entry->d_name, disc_id, sizeof(disc_id));
-                }
-            } else {
-                memcard_extract_disc_id(entry->d_name, disc_id, sizeof(disc_id));
-            }
-        } else {
-            memcard_extract_disc_id(entry->d_name, disc_id, sizeof(disc_id));
-        }
+        char vmc_path[512];
+        int n = snprintf(vmc_path, sizeof(vmc_path), "%s/%s", scan_path, entry->d_name);
+        if (n < 0 || (size_t)n >= sizeof(vmc_path)) continue;
 
-        VmcFile *vf = &slot->vmc_files[slot->vmc_count];
+        struct stat vmc_st;
+        if (stat(vmc_path, &vmc_st) != 0) continue;
+        if (!S_ISREG(vmc_st.st_mode)) continue;
+        if (vmc_st.st_size < 0x100000) continue;
+
+        MemCardSlot *s = slot;
+        if (s->vmc_count >= MAX_VMC_FILES) break;
+
+        VmcFile *vf = &s->vmc_files[s->vmc_count];
         memset(vf, 0, sizeof(VmcFile));
-        strncpy(vf->filename, entry->d_name, sizeof(vf->filename) - 1);
-        strncpy(vf->disc_id, disc_id, sizeof(vf->disc_id) - 1);
-        strncpy(vf->full_path, full_path, sizeof(vf->full_path) - 1);
-        vf->file_size = st.st_size;
-        build_vmc_display_name(disc_id, vf->display_name, sizeof(vf->display_name));
 
-        slot->vmc_count++;
+        size_t path_len = strlen(vmc_path);
+        if (path_len >= sizeof(vf->full_path)) path_len = sizeof(vf->full_path) - 1;
+        memcpy(vf->full_path, vmc_path, path_len);
+        vf->full_path[path_len] = '\0';
+
+        /* Extract display name from filename */
+        char display_base[256];
+        build_vmc_display_name(entry->d_name, display_base, sizeof(display_base));
+        snprintf(vf->display_name, sizeof(vf->display_name), "%s", display_base);
+
+        vf->file_size = vmc_st.st_size;
+
+        s->vmc_count++;
     }
     closedir(dir);
 
-    if (slot->vmc_idx >= slot->vmc_count) {
-        slot->vmc_idx = (slot->vmc_count > 0) ? 0 : -1;
-    }
-
-    log_debug("memcard: slot %d scanned %d VMC files in %s", slot_idx, slot->vmc_count, scan_path);
+    log_debug("memcard: slot %d scanned %d VMC files in %s",
+              slot_idx, slot->vmc_count, scan_path);
+    return;
 }
 
 /* ============================================================
@@ -689,8 +672,8 @@ void memcard_load_vmc(int slot_idx) {
         if (fd_icon >= 0) {
             mcio_mcClose(fd_icon);  /* Just check existence, getIconPS2 will re-open */
             char vmc_folder[128];
-snprintf(vmc_folder, sizeof(vmc_folder), "/%s", dirent.name);
-se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder, icon_name);
+            snprintf(vmc_folder, sizeof(vmc_folder), "/%s", dirent.name);
+            se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder, icon_name);
             se->icon_w = 128;
             se->icon_h = 128;
         } else if (strcmp(icon_name, "icon0.ico") != 0) {
@@ -700,8 +683,8 @@ se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder, icon_name);
             if (fd_icon >= 0) {
                 mcio_mcClose(fd_icon);
                 char vmc_folder_fb[128];
-snprintf(vmc_folder_fb, sizeof(vmc_folder_fb), "/%s", dirent.name);
-se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder_fb, "icon0.ico");
+                snprintf(vmc_folder_fb, sizeof(vmc_folder_fb), "/%s", dirent.name);
+                se->icon_rgba = (uint32_t *)getIconPS2(vmc_folder_fb, "icon0.ico");
                 se->icon_w = 128;
                 se->icon_h = 128;
             }
@@ -820,7 +803,7 @@ static void free_save_directory(SaveDirectory *dir) {
 }
 
 static int write_save_directory(const char *dir_name, SaveDirectory *dir) {
-        if (mcio_mcMkDir(dir_name) < 0) {
+    if (mcio_mcMkDir(dir_name) < 0) {
         log_debug("memcard: mcMkDir failed for %s", dir_name);
         return 0;
     }
@@ -989,22 +972,16 @@ int memcard_backup_vmc_to_usb(int slot_idx, const char *usb_base) {
     MemCardSlot *slot = &g_slots[slot_idx];
     if (slot->loaded_vmc_path[0] == '\0') return 0;
 
+    EmulatorEntry *emu = &g_emulators[slot->emulator_idx];
+    if (emu->is_usb || emu->is_hdd) return 0; /* Can't backup USB/HDD to USB */
+
     char dst_dir[512];
     snprintf(dst_dir, sizeof(dst_dir), "%s/PS2VMC", usb_base);
     mkdir(dst_dir, 0777);
 
-    EmulatorEntry *emu = &g_emulators[slot->emulator_idx];
     char dst_name[256];
-    if (emu->is_usb) {
-        /* USB→USB backup: keep original name */
-        const char *base = strrchr(slot->loaded_vmc_path, '/');
-        if (!base) base = slot->loaded_vmc_path;
-        else base++;
-        snprintf(dst_name, sizeof(dst_name), "%s", base);
-    } else {
-        snprintf(dst_name, sizeof(dst_name), "%s_%s.VM2",
-                 emu->id, slot->vmc_files[slot->vmc_idx].disc_id);
-    }
+    snprintf(dst_name, sizeof(dst_name), "%s_%s.VM2",
+             emu->id, slot->vmc_files[slot->vmc_idx].disc_id);
 
     char dst_path[768];
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_dir, dst_name);
@@ -1019,13 +996,17 @@ int memcard_import_vmc_from_usb(int slot_idx, const char *usb_path) {
     if (slot->emulator_idx < 0) return 0;
 
     EmulatorEntry *emu = &g_emulators[slot->emulator_idx];
-    if (emu->is_usb) return 0; /* Can't import TO USB */
+    if (!emu->is_usb && !emu->is_hdd) return 0; /* Only import TO USB or HDD */
 
     const char *home = memcard_get_user_home();
     if (!home) return 0;
 
     char dst_dir[512];
-    snprintf(dst_dir, sizeof(dst_dir), "%s/savedata/%s", home, emu->id);
+    if (emu->is_usb) {
+        snprintf(dst_dir, sizeof(dst_dir), "%s/PS2VMC", usb_path);
+    } else {
+        snprintf(dst_dir, sizeof(dst_dir), "%s/VMC", g_settings.work_path);
+    }
     mkdir(dst_dir, 0777);
 
     const char *src_name = strrchr(usb_path, '/');
