@@ -151,8 +151,8 @@ void memcard_load_emulators(void) {
     g_emulator_count++;
 
     /* Always append HDD as the last virtual emulator */
-    snprintf(g_emulators[g_emulator_count].id, sizeof(g_emulator_count].id), "HDD");
-    snprintf(g_emulators[g_emulator_count].name, sizeof(g_emulator_count].name), "Internal HDD");
+    snprintf(g_emulators[g_emulator_count].id, sizeof(g_emulators[g_emulator_count].id), "HDD");
+    snprintf(g_emulators[g_emulator_count].name, sizeof(g_emulators[g_emulator_count].name), "Internal HDD");
     g_emulators[g_emulator_count].is_usb = 0;
     g_emulators[g_emulator_count].is_hdd = 1;
     g_emulator_count++;
