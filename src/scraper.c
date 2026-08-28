@@ -607,7 +607,7 @@ void scraper_download_gameindex(void)
         return;
     }
 
-    const char *url = "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json";
+    const char *url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
     log_debug("Downloading PS2.data.json...");
     download_file(url, path);
 }
@@ -621,7 +621,7 @@ void scraper_force_download_gameindex(void)
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
 
-    const char *url = "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json";
+    const char *url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
     log_debug("Force downloading PS2.data.json...");
     download_file(url, path);
 }
