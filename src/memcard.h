@@ -20,6 +20,7 @@ typedef struct {
     char id[32];        /* PS4 Title ID, e.g. "PCSX20042" */
     char name[64];      /* Display name */
     int is_usb;         /* 1 = virtual USB emulator */
+    int is_hdd;         /* 1 = virtual HDD emulator */
 } EmulatorEntry;
 
 /* A VMC file discovered in savedata or USB */
