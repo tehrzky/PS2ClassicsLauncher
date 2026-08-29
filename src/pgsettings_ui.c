@@ -4,6 +4,7 @@
 #include "colors.h"
 #include "settings.h"
 #include <string.h>
+#include <orbis/Pad.h>
 #include <stdio.h>
 
 #define PG_PW        1200
