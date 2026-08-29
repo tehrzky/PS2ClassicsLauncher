@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "scraper.h"
+#include "pgsettings_ui.h"
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
@@ -263,6 +264,7 @@ static void draw_footer(int in_settings) {
         draw_btn_hint(x, hy, "O", "Close", COLOR_ERROR);
     } else {
         draw_btn_hint(x, hy, "X", "LAUNCH", COLOR_ACCENT); x += 240;
+        draw_btn_hint(x, hy, "SQU", "GAME CFG", COLOR_ACCENT); x += 260;
         draw_btn_hint(x, hy, "TRI", "SETTINGS", COLOR_ACCENT); x += 260;
         draw_btn_hint(x, hy, "^v", "SCROLL", COLOR_DIM); x += 240;
         draw_btn_hint(x, hy, "HOLD L2", "FAST SCROLL", COLOR_DIM);
