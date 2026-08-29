@@ -1,6 +1,7 @@
 #ifndef PGSETTINGS_H
 #define PGSETTINGS_H
 
+#include <stddef.h>
 #include "schema.h"
 
 #define PGSETTINGS_MAX_VALUES 512
@@ -10,8 +11,9 @@
 typedef struct {
     char field_id[SCHEMA_MAX_FIELD_ID_LEN];
     char value_str[PGSETTINGS_MAX_VALUE_LEN];
-    int value_int;      /* for bool / int values */
-    int is_set;         /* 1 = loaded from JSON, 0 = schema default */
+    double value_double;  /* for slider float values */
+    int value_int;        /* for bool / int values */
+    int is_set;           /* 1 = loaded from JSON, 0 = schema default */
 } SettingValue;
 
 typedef struct {
@@ -40,8 +42,10 @@ int pgsettings_generate_commands(const GameSettings *settings, const Schema *sch
 /* Getters / setters */
 const char *pgsettings_get_str(const GameSettings *gs, const char *field_id);
 int pgsettings_get_int(const GameSettings *gs, const char *field_id);
+double pgsettings_get_double(const GameSettings *gs, const char *field_id);
 void pgsettings_set_str(GameSettings *gs, const char *field_id, const char *value);
 void pgsettings_set_int(GameSettings *gs, const char *field_id, int value);
+void pgsettings_set_double(GameSettings *gs, const char *field_id, double value);
 
 /* Check if a value differs from its schema default. */
 int pgsettings_is_modified(const GameSettings *gs, const Schema *schema, const char *field_id);
