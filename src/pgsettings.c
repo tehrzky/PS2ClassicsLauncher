@@ -188,7 +188,7 @@ int pgsettings_generate_commands(const GameSettings *settings, const Schema *sch
         }
         else if (sf->type == FIELD_TOGGLE || sf->type == FIELD_CHECKBOX) {
             int j, src_count;
-            char (*src)[SCHEMA_MAX_COMMAND_LEN];
+            const char (*src)[SCHEMA_MAX_COMMAND_LEN];
             if (sv->value_int) {
                 src = sf->enabled_commands;
                 src_count = sf->enabled_count;
