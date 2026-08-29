@@ -62,6 +62,8 @@ static int parse_field(JsonValue *obj, SchemaField *f) {
     strncpy(f->description, desc, SCHEMA_MAX_DESC_LEN - 1);
     f->description[SCHEMA_MAX_DESC_LEN - 1] = '\0';
 
+    f->show_description = json_object_get_bool(obj, "show_description", 1);
+
     if (f->type == FIELD_SELECT) {
         JsonValue *opts = json_object_get(obj, "options");
         f->option_count = parse_options(opts, f->options, SCHEMA_MAX_OPTIONS_PER_FIELD);
@@ -77,10 +79,10 @@ static int parse_field(JsonValue *obj, SchemaField *f) {
         f->disabled_count = parse_commands(dis, f->disabled_commands, SCHEMA_MAX_COMMANDS_PER_OPTION);
     }
     else if (f->type == FIELD_SLIDER) {
-        f->min = json_object_get_int(obj, "min", 0);
-        f->max = json_object_get_int(obj, "max", 100);
-        f->step = json_object_get_int(obj, "step", 1);
-        f->default_bool = json_object_get_int(obj, "default", f->min); /* reuse default_bool for default int */
+        f->min_f = json_object_get_double(obj, "min", 0.0);
+        f->max_f = json_object_get_double(obj, "max", 100.0);
+        f->step_f = json_object_get_double(obj, "step", 1.0);
+        f->default_f = json_object_get_double(obj, "default", f->min_f);
         const char *tmpl = json_object_get_string(obj, "command_template", "");
         strncpy(f->command_template, tmpl, SCHEMA_MAX_TEMPLATE_LEN - 1);
         f->command_template[SCHEMA_MAX_TEMPLATE_LEN - 1] = '\0';
@@ -142,6 +144,73 @@ int schema_load(const char *path, Schema *out) {
     return 0;
 }
 
+/* ---------- merge override ---------- */
+static SchemaTab *find_tab_mut(Schema *s, const char *tab_id) {
+    int i;
+    for (i = 0; i < s->tab_count; i++) {
+        if (strcmp(s->tabs[i].id, tab_id) == 0)
+            return &s->tabs[i];
+    }
+    return NULL;
+}
+
+static SchemaField *find_field_mut(SchemaTab *t, const char *field_id) {
+    int i;
+    for (i = 0; i < t->field_count; i++) {
+        if (strcmp(t->fields[i].id, field_id) == 0)
+            return &t->fields[i];
+    }
+    return NULL;
+}
+
+static void merge_tab(Schema *master, const SchemaTab *override) {
+    SchemaTab *mt = find_tab_mut(master, override->id);
+    if (!mt) {
+        /* Append new tab */
+        if (master->tab_count >= SCHEMA_MAX_TABS) return;
+        mt = &master->tabs[master->tab_count++];
+        memcpy(mt, override, sizeof(SchemaTab));
+        return;
+    }
+    /* Merge fields into existing tab */
+    int i;
+    for (i = 0; i < override->field_count; i++) {
+        const SchemaField *of = &override->fields[i];
+        SchemaField *mf = find_field_mut(mt, of->id);
+        if (!mf) {
+            /* Append new field */
+            if (mt->field_count >= SCHEMA_MAX_FIELDS_PER_TAB) continue;
+            mf = &mt->fields[mt->field_count++];
+        }
+        /* Replace field data */
+        memcpy(mf, of, sizeof(SchemaField));
+    }
+}
+
+int schema_merge_game_override(Schema *master, const char *disc_id, const char *work_path) {
+    if (!master || !disc_id || !work_path) return -1;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/gamesettings/%s_schema.json", work_path, disc_id);
+
+    JsonValue *root = json_parse_file(path);
+    if (!root) return 0; /* no override file = no error */
+    if (root->type != JSON_OBJECT) { json_free(root); return -1; }
+
+    JsonValue *tabs = json_object_get(root, "tabs");
+    if (tabs && tabs->type == JSON_ARRAY) {
+        int i;
+        for (i = 0; i < tabs->u.array.count; i++) {
+            SchemaTab tmp;
+            memset(&tmp, 0, sizeof(SchemaTab));
+            if (parse_tab(tabs->u.array.items[i], &tmp) == 0)
+                merge_tab(master, &tmp);
+        }
+    }
+    json_free(root);
+    return 0;
+}
+
+/* ---------- lookup ---------- */
 const SchemaField *schema_find_field(const Schema *s, const char *field_id) {
     if (!s || !field_id) return NULL;
     int t, f;
@@ -174,16 +243,31 @@ void schema_get_default_str(const SchemaField *f, char *out, size_t out_size) {
     } else if (f->type == FIELD_TOGGLE || f->type == FIELD_CHECKBOX) {
         strncpy(out, f->default_bool ? "true" : "false", out_size - 1);
     } else if (f->type == FIELD_SLIDER) {
-        snprintf(out, out_size, "%d", f->default_bool);
+        /* Use %.1f for float, %.0f for integer-like */
+        if (f->step_f < 1.0)
+            snprintf(out, out_size, "%.1f", f->default_f);
+        else
+            snprintf(out, out_size, "%.0f", f->default_f);
     }
     out[out_size - 1] = '\0';
 }
 
 int schema_get_default_int(const SchemaField *f) {
     if (!f) return 0;
-    if (f->type == FIELD_TOGGLE || f->type == FIELD_CHECKBOX || f->type == FIELD_SLIDER)
+    if (f->type == FIELD_TOGGLE || f->type == FIELD_CHECKBOX)
         return f->default_bool;
+    if (f->type == FIELD_SLIDER)
+        return (int)(f->default_f + 0.5);
     return 0;
+}
+
+double schema_get_default_double(const SchemaField *f) {
+    if (!f) return 0.0;
+    if (f->type == FIELD_SLIDER)
+        return f->default_f;
+    if (f->type == FIELD_TOGGLE || f->type == FIELD_CHECKBOX)
+        return f->default_bool ? 1.0 : 0.0;
+    return 0.0;
 }
 
 int schema_total_fields(const Schema *s) {
@@ -207,8 +291,10 @@ void schema_flat_index(const Schema *s, int flat_idx, int *tab_idx, int *field_i
         }
         cum += s->tabs[t].field_count;
     }
-    *tab_idx = s->tab_count - 1;
-    *field_idx = s->tabs[*tab_idx].field_count - 1;
+    if (s->tab_count > 0) {
+        *tab_idx = s->tab_count - 1;
+        *field_idx = s->tabs[*tab_idx].field_count - 1;
+    }
 }
 
 int schema_flat_index_from_tab_field(const Schema *s, int tab_idx, int field_idx) {
