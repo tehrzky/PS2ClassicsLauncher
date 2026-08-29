@@ -1,6 +1,5 @@
 #ifndef PGSETTINGS_UI_H
 #define PGSETTINGS_UI_H
-#include <stddef.h>
 
 #include "schema.h"
 #include "pgsettings.h"
@@ -14,6 +13,12 @@ typedef struct {
     int dirty;               /* 1 = unsaved changes */
     int show_confirm;        /* 1 = showing save/discard dialog */
     int confirm_sel;         /* 0=Save, 1=Discard, 2=Cancel */
+
+    /* Dropdown overlay */
+    int dropdown_active;     /* 1 = dropdown menu is open */
+    int dropdown_sel;        /* selected option in dropdown */
+    int dropdown_scroll;     /* scroll offset in dropdown */
+
     char game_name[256];
     char disc_id[32];
 } PGSettingsUIState;
