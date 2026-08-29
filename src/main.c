@@ -25,6 +25,9 @@ void _fini(void) {}
 #include "sandbox.h"
 #include "sd.h"
 #include "memcard_ui.h"
+#include "schema.h"
+#include "pgsettings.h"
+#include "pgsettings_ui.h"
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
@@ -46,6 +49,12 @@ const char *embedded_default =
 
 #define REPEAT_DELAY_BASE 2
 #define REPEAT_DELAY_FAST 1
+#define UI_MODE_PGSETTINGS 3
+
+Schema g_schema;
+int g_schema_loaded = 0;
+GameSettings g_pgsettings;
+PGSettingsUIState g_pg_ui_state;
 
 int main(void) {
     log_debug("=== START ===");
@@ -168,7 +177,7 @@ int main(void) {
                 }
             } else if (ui_mode == 2) {
                 if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-                    memcard_unmount_all();  /* Clean up mounts before leaving memcard UI */
+                    memcard_unmount_all();
                     ui_mode = 0;
                 }
                 memcard_ui_handle_input(pressed, buttons);
@@ -182,7 +191,7 @@ int main(void) {
                         draw_text(SCREEN_WIDTH/2 - lw/2, SCREEN_HEIGHT/2, "LAUNCHING...", 0xFFFFD700, 42);
                         flip();
                         sceKernelSleep(1);
-                        memcard_unmount_all();  /* Unmount saves before launching emulator */
+                        memcard_unmount_all();
                         launch_emulator(emu_tid);
                     }
                 }
@@ -196,8 +205,23 @@ int main(void) {
                 }
                 if (pressed & ORBIS_PAD_BUTTON_L1 || pressed & ORBIS_PAD_BUTTON_R1) {
                     memcard_unmount_all();
-                    memcard_init();  /* Must run BEFORE ui_mode = 2 to clear stale slot data */
+                    memcard_init();
                     ui_mode = 2;
+                }
+                if (pressed & ORBIS_PAD_BUTTON_SQUARE) {
+                    if (!g_schema_loaded) {
+                        char schema_path[512];
+                        snprintf(schema_path, sizeof(schema_path),
+                                 "%s/config/schema.json", g_settings.work_path);
+                        g_schema_loaded = (schema_load(schema_path, &g_schema) == 0);
+                    }
+                    if (g_schema_loaded && game_count > 0 && selected >= 0) {
+                        pgsettings_load(games[selected].id, &g_schema, &g_pgsettings);
+                        pgsettings_ui_init(&g_pg_ui_state,
+                                            games[selected].display_name,
+                                            games[selected].id);
+                        ui_mode = UI_MODE_PGSETTINGS;
+                    }
                 }
 
                 if (pressed & ORBIS_PAD_BUTTON_UP) {
@@ -235,6 +259,12 @@ int main(void) {
             draw_settings_ui(settings_sel, 0);
         } else if (ui_mode == 2) {
             draw_memcard_ui();
+        } else if (ui_mode == UI_MODE_PGSETTINGS) {
+            draw_launcher_ui(game_count, selected, game_count);
+            draw_pgsettings_ui(&g_schema, &g_pgsettings, &g_pg_ui_state);
+            pgsettings_ui_handle_input(pressed, buttons, &g_schema,
+                                        &g_pgsettings, &g_pg_ui_state);
+            if (!g_pg_ui_state.active) ui_mode = 0;
         } else {
             draw_launcher_ui(game_count, selected, game_count);
         }
