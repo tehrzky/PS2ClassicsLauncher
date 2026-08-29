@@ -63,6 +63,11 @@ int main(void) {
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_VIDEO_OUT);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_PAD);
+    /* Required for sceLncUtilLaunchApp / sceSystemServiceLoadExec to actually
+     * resolve at runtime. Linking -lSceLncUtil only gives us the stub table;
+     * the real code lives in libSceSystemService.sprx and has to be loaded
+     * into this process explicitly, or launch_emulator() silently fails. */
+    sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
     
     if (!sandbox_bypass()) {
         log_debug("SANDBOX BYPASS FAILED");
