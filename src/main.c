@@ -3,6 +3,7 @@ void _fini(void) {}
 
 #include <string.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <orbis/libkernel.h>
 #include <orbis/Sysmodule.h>
 #include <orbis/SystemService.h>
@@ -181,6 +182,13 @@ int main(void) {
                     ui_mode = 0;
                 }
                 memcard_ui_handle_input(pressed, buttons);
+            } else if (ui_mode == UI_MODE_PGSETTINGS) {
+                if (pgsettings_ui_handle_input(pressed, buttons, &g_schema,
+                                                &g_pgsettings, &g_pg_ui_state)) {
+                    if (!g_pg_ui_state.active) {
+                        ui_mode = 0;
+                    }
+                }
             } else {
                 if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                     char emu_tid[32] = {0};
@@ -262,9 +270,6 @@ int main(void) {
         } else if (ui_mode == UI_MODE_PGSETTINGS) {
             draw_launcher_ui(game_count, selected, game_count);
             draw_pgsettings_ui(&g_schema, &g_pgsettings, &g_pg_ui_state);
-            pgsettings_ui_handle_input(pressed, buttons, &g_schema,
-                                        &g_pgsettings, &g_pg_ui_state);
-            if (!g_pg_ui_state.active) ui_mode = 0;
         } else {
             draw_launcher_ui(game_count, selected, game_count);
         }
