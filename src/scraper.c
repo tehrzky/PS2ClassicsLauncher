@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <orbis/libkernel.h>
 #include <orbis/Http.h>
 #include <orbis/_types/http.h>
 #include <orbis/Ssl.h>
@@ -105,7 +106,6 @@ static int download_file(const char *url, const char *path)
     int32_t tmplId = -1, connId = -1, reqId = -1;
     FILE *fp = NULL;
     int32_t statusCode = 0;
-    uint64_t contentLength = 0;
 
     log_debug("download_file: %s -> %s", url, path);
 
@@ -184,7 +184,8 @@ static int download_file(const char *url, const char *path)
     if (ret < 0 || statusCode != 200) goto cleanup;
 
     int is_exist = 0;
-    sceHttpGetContentLength(reqId, &is_exist, &contentLength);
+    uint64_t contentLength = 0;
+    sceHttpGetResponseContentLength(reqId, &is_exist, &contentLength);
 
     fp = fopen(path, "wb");
     if (!fp) goto cleanup;
@@ -348,7 +349,7 @@ static int gamedb_lookup_serial(const char *serial,
 }
 
 static int metadata_find_description(const char *normalized_title,
-                                     char *out_desc, size_t out_len)
+                                      char *out_desc, size_t out_len)
 {
     if (!g_metadata_data || !normalized_title || !normalized_title[0])
         return -1;
