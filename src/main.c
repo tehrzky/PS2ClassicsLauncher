@@ -96,9 +96,12 @@ int main(void) {
     scraper_init();
     load_good_names();
 
+        log_debug("ENTER scan_games()");
     scan_games();
+    log_debug("LEAVE scan_games(), count=%d", game_count);
 
     if (game_count == 0) {
+        log_debug("NO GAMES FOUND, EXITING");
         draw_launcher_ui(0, 0, 0);
         flip();
         sceKernelSleep(5);
@@ -114,9 +117,15 @@ int main(void) {
     int ui_mode = 0;
     int settings_sel = 0;
 
+        log_debug("ENTER memcard_init()");
     memcard_init();
+    log_debug("LEAVE memcard_init()");
 
+    int frame_counter = 0;
     while (1) {
+        if ((++frame_counter & 0x7F) == 0)
+            log_debug("MAIN LOOP frame=%d ui_mode=%d", frame_counter, ui_mode);
+
         if (pad >= 0) {
             scePadReadState(pad, &pad_data);
             unsigned int buttons = pad_data.buttons;
@@ -274,7 +283,9 @@ int main(void) {
         } else {
             draw_launcher_ui(game_count, selected, game_count);
         }
+        log_debug("BEFORE flip");
         flip();
+        log_debug("AFTER flip");
         sceKernelUsleep(16666);
     }
 
