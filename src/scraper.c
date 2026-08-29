@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #include <orbis/Http.h>
 #include <orbis/_types/http.h>
 #include <orbis/Ssl.h>
@@ -104,6 +105,7 @@ static int download_file(const char *url, const char *path)
     int32_t tmplId = -1, connId = -1, reqId = -1;
     FILE *fp = NULL;
     int32_t statusCode = 0;
+    uint64_t contentLength = 0;
 
     log_debug("download_file: %s -> %s", url, path);
 
@@ -131,13 +133,11 @@ static int download_file(const char *url, const char *path)
         log_debug("Failed to parse URL: %s", url);
         return -1;
     }
-    log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
 
-    snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
-             strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
+    const char *file_name = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
+    snprintf(g_download_status, sizeof(g_download_status), "Downloading %s... 0%%", file_name);
     g_download_active = 1;
 
-    // WORKING DNS BYPASS: resolve manually with gethostbyname (proven working)
     struct hostent *server = gethostbyname(host);
     if (!server) {
         log_debug("gethostbyname failed for: %s", host);
@@ -149,95 +149,70 @@ static int download_file(const char *url, const char *path)
     char ip_str[32];
     strncpy(ip_str, inet_ntoa(*addr_list[0]), sizeof(ip_str) - 1);
     ip_str[sizeof(ip_str) - 1] = '\0';
-    log_debug("Resolved %s -> %s", host, ip_str);
 
     sslId = sceSslInit(SSL_POOLSIZE);
     if (sslId < 0) {
-        log_debug("sceSslInit failed: 0x%08X", sslId);
         g_download_active = 0;
         return -1;
     }
-    log_debug("sceSslInit ok: %d", sslId);
 
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
     if (httpCtx < 0) {
-        log_debug("sceHttpInit failed: 0x%08X", httpCtx);
         sceSslTerm();
         g_download_active = 0;
         return -1;
     }
-    log_debug("sceHttpInit ok: %d", httpCtx);
 
     tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0",
                                    ORBIS_HTTP_VERSION_1_1, 0);
-    if (tmplId < 0) {
-        log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
-        goto cleanup;
-    }
-    log_debug("sceHttpCreateTemplate ok: %d", tmplId);
+    if (tmplId < 0) goto cleanup;
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // Connect by resolved IP — bypasses sceHttp DNS entirely
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
-    if (connId < 0) {
-        log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
-        goto cleanup;
-    }
-    log_debug("sceHttpCreateConnection ok: %d", connId);
+    if (connId < 0) goto cleanup;
 
     reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
-    if (reqId < 0) {
-        log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
-        goto cleanup;
-    }
-    log_debug("sceHttpCreateRequest ok: %d", reqId);
+    if (reqId < 0) goto cleanup;
 
-    // Force correct Host header (required for GitHub CDN / HTTPS virtual hosting)
-    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
-    }
+    sceHttpAddRequestHeader(reqId, "Host", host, 0);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
-    if (ret < 0) {
-        log_debug("sceHttpSendRequest failed: 0x%08X", ret);
-        goto cleanup;
-    }
-    log_debug("sceHttpSendRequest ok");
+    if (ret < 0) goto cleanup;
 
     ret = sceHttpGetStatusCode(reqId, &statusCode);
-    if (ret < 0) {
-        log_debug("sceHttpGetStatusCode failed: 0x%08X", ret);
-        goto cleanup;
-    }
-    log_debug("HTTP status code: %d", statusCode);
+    if (ret < 0 || statusCode != 200) goto cleanup;
 
-    if (statusCode != 200) {
-        log_debug("HTTP error: status=%d", statusCode);
-        goto cleanup;
-    }
+    int is_exist = 0;
+    sceHttpGetContentLength(reqId, &is_exist, &contentLength);
 
     fp = fopen(path, "wb");
-    if (!fp) {
-        log_debug("Failed to create file: %s", path);
-        goto cleanup;
-    }
+    if (!fp) goto cleanup;
 
     char buf[4096];
     size_t total = 0;
     while ((ret = sceHttpReadData(reqId, buf, sizeof(buf))) > 0) {
         fwrite(buf, 1, ret, fp);
         total += ret;
+
+        if (contentLength > 0) {
+            int pct = (int)((total * 100) / contentLength);
+            snprintf(g_download_status, sizeof(g_download_status), "Downloading %s... %d%%", file_name, pct);
+        } else {
+            snprintf(g_download_status, sizeof(g_download_status), "Downloading %s... %zu KB", file_name, total / 1024);
+        }
     }
     fclose(fp);
-    log_debug("Downloaded %zu bytes: %s", total, path);
+    fp = NULL;
 
     sceHttpDeleteRequest(reqId);
     sceHttpDeleteConnection(connId);
     sceHttpDeleteTemplate(tmplId);
     sceHttpTerm(httpCtx);
     sceSslTerm();
+
+    snprintf(g_download_status, sizeof(g_download_status), "Download Complete!");
+    sceKernelUsleep(500000);
     g_download_active = 0;
     g_download_status[0] = '\0';
     return 0;
@@ -250,13 +225,10 @@ cleanup:
     if (connId >= 0) sceHttpDeleteConnection(connId);
     if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
     if (httpCtx >= 0) sceHttpTerm(httpCtx);
-    sceSslTerm();
+    if (sslId >= 0) sceSslTerm();
     return -1;
 }
 
-/* ------------------------------------------------------------------ */
-/*  String normalization for fuzzy title matching                      */
-/* ------------------------------------------------------------------ */
 static void normalize_string(const char *src, char *dst, size_t dst_len)
 {
     size_t j = 0;
@@ -273,9 +245,6 @@ static void normalize_string(const char *src, char *dst, size_t dst_len)
     dst[j] = '\0';
 }
 
-/* ------------------------------------------------------------------ */
-/*  Lightweight JSON helpers                                          */
-/* ------------------------------------------------------------------ */
 static char *file_load(const char *path, size_t *out_size)
 {
     FILE *fp = fopen(path, "rb");
@@ -337,9 +306,6 @@ static int json_get_string(const char *obj, const char *key, char *out, size_t o
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/*  GameDB-PS2 lookup (by serial)                                     */
-/* ------------------------------------------------------------------ */
 static int gamedb_lookup_serial(const char *serial,
                                 char *title, size_t title_len,
                                 char *developer, size_t dev_len,
@@ -381,9 +347,6 @@ static int gamedb_lookup_serial(const char *serial,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/*  LaunchBox metadata fuzzy lookup (by normalized title)             */
-/* ------------------------------------------------------------------ */
 static int metadata_find_description(const char *normalized_title,
                                      char *out_desc, size_t out_len)
 {
@@ -429,30 +392,17 @@ static int metadata_find_description(const char *normalized_title,
     return -1;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Public API                                                        */
-/* ------------------------------------------------------------------ */
 void scraper_init(void)
 {
     char path[512];
 
-    // Load PS2.data.json into memory
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
     if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
     g_gamedb_data = file_load(path, &g_gamedb_size);
-    if (g_gamedb_data)
-        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
-    else
-        log_debug("PS2.data.json not found at %s", path);
 
-    // Load ps2_metadata.json into memory (user-supplied LaunchBox data)
     snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
     if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
     g_metadata_data = file_load(path, &g_metadata_size);
-    if (g_metadata_data)
-        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
-    else
-        log_debug("ps2_metadata.json not found at %s (descriptions disabled)", path);
 }
 
 int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out)
@@ -462,7 +412,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
 
     if (!serial || !serial[0]) return -1;
 
-    // 1) Lookup GameDB by serial
     gamedb_lookup_serial(serial,
                          out->title, sizeof(out->title),
                          out->developer, sizeof(out->developer),
@@ -470,7 +419,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
                          out->genre, sizeof(out->genre),
                          out->release_date, sizeof(out->release_date));
 
-    // 2) Fuzzy-match LaunchBox description by normalized title
     const char *match_title = (out->title[0]) ? out->title : fallback_title;
     if (match_title && match_title[0]) {
         char normalized[256];
@@ -481,9 +429,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Cover scraper (unchanged logic, working download core)            */
-/* ------------------------------------------------------------------ */
 static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d)
 {
     const char *base = g_settings.scraper_base_url;
@@ -532,26 +477,22 @@ void scraper_download_cover(const char *serial)
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 1);
-            log_debug("Downloading 3D cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 0);
-            log_debug("Downloading default cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
     } else {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 0);
-            log_debug("Downloading default cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) != 0) {
             build_cover_url(url, sizeof(url), serial, 1);
-            log_debug("Downloading 3D cover: %s", url);
             if (download_file(url, cover_path) < 0) mark_no_cover(serial);
         }
     }
@@ -578,18 +519,13 @@ void scraper_force_download_cover(const char *serial)
 
     snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
     build_cover_url(url, sizeof(url), serial, 0);
-    log_debug("Force downloading default cover: %s", url);
     download_file(url, cover_path);
 
     snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
     build_cover_url(url, sizeof(url), serial, 1);
-    log_debug("Force downloading 3D cover: %s", url);
     download_file(url, cover_path);
 }
 
-/* ------------------------------------------------------------------ */
-/*  GameDB-PS2 database download (replaces GameIndex.yaml)            */
-/* ------------------------------------------------------------------ */
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
@@ -602,13 +538,9 @@ void scraper_download_gameindex(void)
     mkdir(config_dir, 0777);
 
     struct stat st;
-    if (stat(path, &st) == 0 && st.st_size > 100) {
-        log_debug("PS2.data.json already exists (%ld bytes)", st.st_size);
-        return;
-    }
+    if (stat(path, &st) == 0 && st.st_size > 100) return;
 
     const char *url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
-    log_debug("Downloading PS2.data.json...");
     download_file(url, path);
 }
 
@@ -622,6 +554,35 @@ void scraper_force_download_gameindex(void)
     mkdir(config_dir, 0777);
 
     const char *url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
-    log_debug("Force downloading PS2.data.json...");
     download_file(url, path);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Asynchronous Threading Support                                    */
+/* ------------------------------------------------------------------ */
+static void *async_cover_thread(void *arg) {
+    char *serial = (char*)arg;
+    scraper_download_cover(serial);
+    free(serial);
+    return NULL;
+}
+
+void scraper_download_cover_async(const char *serial) {
+    if (!serial || !serial[0]) return;
+    pthread_t t;
+    char *arg = strdup(serial);
+    pthread_create(&t, NULL, async_cover_thread, arg);
+    pthread_detach(t);
+}
+
+static void *async_gameindex_thread(void *arg) {
+    (void)arg;
+    scraper_download_gameindex();
+    return NULL;
+}
+
+void scraper_download_gameindex_async(void) {
+    pthread_t t;
+    pthread_create(&t, NULL, async_gameindex_thread, NULL);
+    pthread_detach(t);
 }
