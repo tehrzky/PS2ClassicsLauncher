@@ -76,7 +76,7 @@ static void pg_draw_slider(int x, int y, int w, int h, double min, double max, d
     int track_w = w - 20;
 
     /* Track background */
-    draw_rounded_rect(x, track_y, track_w, 4, 2, is_sel ? COLOR_BORDER : 0xFF2A2A2A);
+    draw_rounded_rect(x, track_y, track_w, 4, 2, is_sel ? COLOR_BORDER : COLOR_BORDER);
 
     /* Fill */
     if (max > min) {
@@ -111,7 +111,7 @@ static void pg_draw_field(const SchemaField *f, const GameSettings *gs,
         draw_rounded_rect(x, y, w, PG_ROW_H, 6, COLOR_CARD_SEL);
         draw_rect(x, y + 4, 3, PG_ROW_H - 8, COLOR_ACCENT);
     } else if (is_modified) {
-        draw_rounded_rect(x, y, w, PG_ROW_H, 6, 0xFF1A2B3C);
+        draw_rounded_rect(x, y, w, PG_ROW_H, 6, COLOR_CARD);
     }
 
     /* Label */
@@ -164,7 +164,7 @@ static void pg_draw_field(const SchemaField *f, const GameSettings *gs,
 static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
     if (!f || !f->description[0] || !f->show_description) return;
 
-    draw_rounded_rect(x, y, w, PG_DESC_H, 6, 0xFF1A2530);
+    draw_rounded_rect(x, y, w, PG_DESC_H, 6, COLOR_PANEL);
     draw_text(x + 12, y + 8, "\xF0\x9F\x92\xA1", COLOR_GOLD, 20);
 
     /* Simple word wrap */
@@ -354,6 +354,9 @@ static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
 void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
                         PGSettingsUIState *st) {
     if (!schema || !settings || !st || !st->active) return;
+
+    /* Full-screen background clear */
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
 
     pg_draw_header(st->game_name);
     pg_draw_tabs(schema, st->selected_tab);

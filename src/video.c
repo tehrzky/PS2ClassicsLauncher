@@ -1,7 +1,7 @@
 #include "video.h"
 #include "debug.h"
 #include <orbis/VideoOut.h>
-#include <orbis/libkernel.h>   // <-- ADD THIS for sceKernel functions
+#include <orbis/libkernel.h>
 #include <sys/mman.h>
 #include <string.h>
 
@@ -64,9 +64,30 @@ void flip(void) {
     current_buf ^= 1;
 }
 
+static inline uint32_t blend_pixel(uint32_t dst, uint32_t src) {
+    uint8_t a = (src >> 24) & 0xFF;
+    if (a == 255) return (0xFFu << 24) | (src & 0x00FFFFFF);
+    if (a == 0) return dst;
+
+    uint8_t sr = (src >> 16) & 0xFF;
+    uint8_t sg = (src >> 8) & 0xFF;
+    uint8_t sb = src & 0xFF;
+
+    uint8_t dr = (dst >> 16) & 0xFF;
+    uint8_t dg = (dst >> 8) & 0xFF;
+    uint8_t db = dst & 0xFF;
+
+    uint8_t r = (sr * a + dr * (255 - a)) / 255;
+    uint8_t g = (sg * a + dg * (255 - a)) / 255;
+    uint8_t b = (sb * a + db * (255 - a)) / 255;
+
+    return (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
 void draw_pixel(int x, int y, uint32_t color) {
     if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
-    framebuffer[current_buf][y * SCREEN_WIDTH + x] = color;
+    uint32_t *dst = &framebuffer[current_buf][y * SCREEN_WIDTH + x];
+    *dst = blend_pixel(*dst, color);
 }
 
 void draw_rect(int x, int y, int w, int h, uint32_t color) {
@@ -76,9 +97,17 @@ void draw_rect(int x, int y, int w, int h, uint32_t color) {
     if (y + h > SCREEN_HEIGHT) h = SCREEN_HEIGHT - y;
     if (w <= 0 || h <= 0) return;
 
+    uint8_t alpha = (color >> 24) & 0xFF;
     uint32_t *dst = &framebuffer[current_buf][y * SCREEN_WIDTH + x];
+
     for (int yy = 0; yy < h; yy++) {
-        for (int xx = 0; xx < w; xx++) dst[xx] = color;
+        for (int xx = 0; xx < w; xx++) {
+            if (alpha == 255) {
+                dst[xx] = color;
+            } else if (alpha > 0) {
+                dst[xx] = blend_pixel(dst[xx], color);
+            }
+        }
         dst += SCREEN_WIDTH;
     }
 }
@@ -119,14 +148,8 @@ void draw_image_rgba(int x, int y, int w, int h, const unsigned char *rgba, int 
             if (alpha == 255) {
                 dst[dx] = (0xFFu << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
             } else if (alpha > 0) {
-                uint32_t dst_col = dst[dx];
-                uint8_t dr = (dst_col >> 16) & 0xFF;
-                uint8_t dg = (dst_col >> 8) & 0xFF;
-                uint8_t db = dst_col & 0xFF;
-                uint8_t r = (p[0] * alpha + dr * (255 - alpha)) / 255;
-                uint8_t g = (p[1] * alpha + dg * (255 - alpha)) / 255;
-                uint8_t b = (p[2] * alpha + db * (255 - alpha)) / 255;
-                dst[dx] = (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                uint32_t src_col = (alpha << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
+                dst[dx] = blend_pixel(dst[dx], src_col);
             }
         }
     }

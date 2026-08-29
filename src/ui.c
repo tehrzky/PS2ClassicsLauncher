@@ -54,6 +54,9 @@
 #define SETTINGS_PW        760
 #define SETTINGS_PH        860
 
+static GameDBInfo g_cached_info;
+static int g_last_selected_info = -1;
+
 static uint32_t get_panel_color(void) {
     int a = g_settings.panel_opacity * 255 / 100;
     return (a << 24) | (COLOR_PANEL & 0x00FFFFFF);
@@ -152,7 +155,6 @@ static void draw_game_list(int sel, int count) {
             draw_text(LEFT_PANE_X + 24, yy + (ITEM_H - 38) / 2, tbuf, COLOR_GOLD, 38);
         } else {
             char tbuf[512];
-            // Removed ~12 characters worth of pixel width (approx 260px)
             truncate_to_fit(games[i].display_name, tbuf, sizeof(tbuf), LEFT_PANE_W - 290, 38);
             draw_text(LEFT_PANE_X + 44, yy + (ITEM_H - 38) / 2, tbuf, COLOR_TEXT, 38);
         }
@@ -181,6 +183,12 @@ static void draw_game_details(int sel, int total_games) {
     if (sel < 0 || sel >= game_count) return;
     Game *g = &games[sel];
 
+    if (sel != g_last_selected_info) {
+        scraper_get_game_info(g->id, g->display_name, &g_cached_info);
+        scraper_download_cover_async(g->id);
+        g_last_selected_info = sel;
+    }
+
     cover_draw_fit(COVER_X, COVER_Y, COVER_W, COVER_H, g->id);
 
     int tx = COVER_X + COVER_W + 28;
@@ -190,7 +198,6 @@ static void draw_game_details(int sel, int total_games) {
     draw_text_slot(tx, ty, "TITLE:", COLOR_GOLD, 28, FONT_SLOT_BOLD);
     ty += line_gap;
     char tbuf[512];
-    // Removed ~8 characters worth of pixel width (approx 170px)
     truncate_to_fit(g->display_name, tbuf, sizeof(tbuf), RIGHT_PANE_W - 470, 36);
     draw_text(tx, ty, tbuf, COLOR_TEXT, 36);
     ty += line_gap + 16;
@@ -211,32 +218,32 @@ static void draw_game_details(int sel, int total_games) {
     const char *emu_id = g->emulator_id[0] ? g->emulator_id : EMULATOR_TID;
     draw_text(tx, ty, emu_id, COLOR_TEXT, 36);
 
-    /* ---- compact metadata row below cover ---- */
     int by = COVER_Y + COVER_H + 20;
     int bx = COVER_X;
     int bw = RIGHT_PANE_W - 56;
 
     char info[512], info_buf[512];
 
-    snprintf(info, sizeof(info), "RELEASE: %s  |  GENRE: %s",
-             g->release_date[0] ? g->release_date : "N/A",
-             g->genre[0] ? g->genre : "N/A");
+    const char *rel = g_cached_info.release_date[0] ? g_cached_info.release_date : (g->release_date[0] ? g->release_date : "N/A");
+    const char *gnr = g_cached_info.genre[0] ? g_cached_info.genre : (g->genre[0] ? g->genre : "N/A");
+    const char *dev = g_cached_info.developer[0] ? g_cached_info.developer : (g->developer[0] ? g->developer : "N/A");
+    const char *pub = g_cached_info.publisher[0] ? g_cached_info.publisher : (g->publisher[0] ? g->publisher : "N/A");
+
+    snprintf(info, sizeof(info), "RELEASE: %s  |  GENRE: %s", rel, gnr);
     truncate_to_fit(info, info_buf, sizeof(info_buf), bw, 24);
     draw_text(bx, by, info_buf, COLOR_DIM, 24);
     by += 28;
 
-    snprintf(info, sizeof(info), "DEV: %s  |  PUB: %s",
-             g->developer[0] ? g->developer : "N/A",
-             g->publisher[0] ? g->publisher : "N/A");
+    snprintf(info, sizeof(info), "DEV: %s  |  PUB: %s", dev, pub);
     truncate_to_fit(info, info_buf, sizeof(info_buf), bw, 24);
     draw_text(bx, by, info_buf, COLOR_DIM, 24);
     by += 32;
 
-    /* ---- description (smaller font, bottom space) ---- */
-    if (g->description[0]) {
+    const char *desc = g_cached_info.description[0] ? g_cached_info.description : g->description;
+    if (desc && desc[0]) {
         draw_text_slot(bx, by, "DESCRIPTION", COLOR_GOLD, 22, FONT_SLOT_BOLD);
         by += 24;
-        draw_wrapped_text(bx, by, bw, PANEL_BOT - by - 16, g->description, COLOR_TEXT, 20);
+        draw_wrapped_text(bx, by, bw, PANEL_BOT - by - 16, desc, COLOR_TEXT, 20);
     }
 }
 
@@ -276,7 +283,7 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
         cover_draw_wallpaper();
         if (g_settings.wallpaper_brightness < 100) {
             int alpha = (100 - g_settings.wallpaper_brightness) * 255 / 100;
-            draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (alpha << 24));
+            draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (uint32_t)(alpha << 24));
         }
     } else {
         memset(framebuffer[current_buf], 0, FB_SIZE);
@@ -285,9 +292,9 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
 
     draw_header();
 
-    draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
-        uint32_t panel_col = get_panel_color();
+    uint32_t panel_col = get_panel_color();
 
+    draw_rounded_rect(LEFT_PANE_X, PANEL_Y, LEFT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
     draw_rounded_rect(LEFT_PANE_X + PANEL_BORDER, PANEL_Y + PANEL_BORDER, LEFT_PANE_W - PANEL_BORDER * 2, PANEL_H - PANEL_BORDER * 2, ROUND_RADIUS_SMALL, panel_col);
 
     draw_rounded_rect(RIGHT_PANE_X, PANEL_Y, RIGHT_PANE_W, PANEL_H, ROUND_RADIUS, COLOR_GOLD);
@@ -306,12 +313,11 @@ void draw_launcher_ui(int game_count_visible, int selected_idx, int total_games)
         draw_text(SCREEN_WIDTH / 2 - w2 / 2, SCREEN_HEIGHT / 2 + 30, m2, COLOR_DIM, 24);
     }
 
-    // Download notification toast
     if (g_download_active && g_download_status[0]) {
         int tw = font_text_width(g_download_status, 22);
         int tx = SCREEN_WIDTH / 2 - tw / 2 - 20;
         int ty = SCREEN_HEIGHT - FOOTER_H - 50;
-        draw_rounded_rect(tx, ty, tw + 40, 36, 8, COLOR_PANEL);
+        draw_rounded_rect(tx, ty, tw + 40, 36, 8, get_panel_color());
         draw_rounded_rect(tx + 1, ty + 1, tw + 38, 34, 7, COLOR_BG);
         draw_text(tx + 20, ty + 6, g_download_status, COLOR_ACCENT, 22);
     }
@@ -343,7 +349,7 @@ void draw_settings_ui(int selected_item, int in_per_game) {
     draw_rect(0, py, px, ph, 0xE60B141F);
     draw_rect(px + pw, py, SCREEN_WIDTH - px - pw, ph, 0xE60B141F);
 
-    draw_rounded_rect(px, py, pw, ph, ROUND_RADIUS_LARGE, COLOR_PANEL);
+    draw_rounded_rect(px, py, pw, ph, ROUND_RADIUS_LARGE, get_panel_color());
     draw_rounded_rect(px + PANEL_BORDER, py + PANEL_BORDER, pw - PANEL_BORDER * 2, ph - PANEL_BORDER * 2, ROUND_RADIUS_LARGE - PANEL_BORDER, COLOR_BG);
 
     const char *title = in_per_game ? "PER-GAME SETTINGS" : "SETTINGS";

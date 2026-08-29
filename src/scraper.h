@@ -23,4 +23,8 @@ void scraper_force_download_cover(const char *serial);
 void scraper_download_gameindex(void);
 void scraper_force_download_gameindex(void);
 
+// Non-blocking async scraper calls
+void scraper_download_cover_async(const char *serial);
+void scraper_download_gameindex_async(void);
+
 #endif
