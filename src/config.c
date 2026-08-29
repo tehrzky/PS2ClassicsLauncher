@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include "schema.h"
+#include "pgsettings.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -304,8 +306,24 @@ int set_active_game(const char *iso_path, const char *disc_id,
         log_debug("set_active_game: could not read %s", game_config_path);
     }
 
-    n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
+     n = snprintf(line_buf, sizeof(line_buf), "--image=\"%s\"\n", iso_path);
     write(fd, line_buf, n);
+    
+    extern Schema g_schema;
+    extern int g_schema_loaded;
+    if (g_schema_loaded) {
+        GameSettings gs;
+        if (pgsettings_load(disc_id, &g_schema, &gs) == 0) {
+            char gen[4096];
+            int gen_len = pgsettings_generate_commands(&gs, &g_schema, gen, sizeof(gen));
+            if (gen_len > 0) {
+                write(fd, "\n# --- Schema-generated settings ---\n", 38);
+                write(fd, gen, gen_len);
+                write(fd, "\n", 1);
+            }
+        }
+    }
+    
     close(fd);
 
     char buf[32768];
