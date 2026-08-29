@@ -52,10 +52,6 @@ static void apply_json_overrides(JsonValue *values_obj, GameSettings *gs) {
         SettingValue *sv = find_value(gs, key);
         if (!sv) continue;
 
-        const SchemaField *sf = schema_find_field(NULL, key); /* sf needed for type check */
-        /* We need schema context — caller passes schema, but here we just store raw.
-         * The type check happens at load time via schema_find_field. */
-
         if (val->type == JSON_STRING) {
             strncpy(sv->value_str, val->u.str_val, PGSETTINGS_MAX_VALUE_LEN - 1);
             sv->value_str[PGSETTINGS_MAX_VALUE_LEN - 1] = '\0';
