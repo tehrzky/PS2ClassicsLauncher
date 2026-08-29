@@ -1,5 +1,6 @@
 #ifndef SCHEMA_H
 #define SCHEMA_H
+#include <stddef.h>
 
 #define SCHEMA_MAX_TABS 16
 #define SCHEMA_MAX_FIELDS_PER_TAB 32
