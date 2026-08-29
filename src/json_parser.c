@@ -211,6 +211,13 @@ int json_object_get_int(JsonValue *obj, const char *key, int def) {
     return def;
 }
 
+double json_object_get_double(JsonValue *obj, const char *key, double def) {
+    JsonValue *v = json_object_get(obj, key);
+    if (v && v->type == JSON_NUMBER) return v->u.num_val;
+    if (v && v->type == JSON_BOOL) return v->u.bool_val ? 1.0 : 0.0;
+    return def;
+}
+
 int json_object_get_bool(JsonValue *obj, const char *key, int def) {
     JsonValue *v = json_object_get(obj, key);
     if (v && v->type == JSON_BOOL) return v->u.bool_val;
@@ -272,7 +279,13 @@ static void serialize_value(JsonValue *v, char **out, size_t *len, size_t *cap) 
         case JSON_NULL: append_str(out, len, cap, "null"); break;
         case JSON_BOOL: append_str(out, len, cap, v->u.bool_val ? "true" : "false"); break;
         case JSON_NUMBER:
-            snprintf(buf, sizeof(buf), "%.0f", v->u.num_val);
+            snprintf(buf, sizeof(buf), "%.2f", v->u.num_val);
+            /* trim trailing zeros */
+            {
+                char *p = buf + strlen(buf) - 1;
+                while (p > buf && *p == '0') *p-- = '\0';
+                if (p > buf && *p == '.') *p = '\0';
+            }
             append_str(out, len, cap, buf);
             break;
         case JSON_STRING:
