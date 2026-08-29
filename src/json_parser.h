@@ -40,6 +40,7 @@ JsonValue *json_object_get(JsonValue *obj, const char *key);
 const char *json_object_get_string(JsonValue *obj, const char *key, const char *def);
 int json_object_get_int(JsonValue *obj, const char *key, int def);
 int json_object_get_bool(JsonValue *obj, const char *key, int def);
+double json_object_get_double(JsonValue *obj, const char *key, double def);
 
 JsonValue *json_array_get(JsonValue *arr, int index);
 int json_array_len(JsonValue *arr);
