@@ -57,11 +57,19 @@ int launch_emulator(const char *override_tid)
     log_debug("=== LAUNCH EMULATOR ===");
     log_debug("Title ID: %s", title_id);
 
-    /* Defensive reload — sandbox/jailbreak calls earlier in the process
-     * lifetime can leave this unloaded even if main() loaded it at boot.
-     * Safe to call repeatedly (checks if already loaded internally). */
-    int32_t sysmod_ret = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
-    log_debug("sceSysmoduleLoadModuleInternal(SYSTEM_SERVICE): 0x%08X", sysmod_ret);
+    /* IMPORTANT: sceLncUtilInitialize / sceLncUtilLaunchApp are declared as
+     * raw extern functions (no dlsym). They only resolve if the actual
+     * module backing them is mapped into this process via a raw path load —
+     * sceSysmoduleLoadModuleInternal(SYSTEM_SERVICE) can return success
+     * (0x0) without this happening, which is why that alone still crashed.
+     * This is the exact call Itemzflow uses right before its own
+     * sceLncUtilLaunchApp, and it gates the launch on a valid handle. */
+    int32_t libcmi = sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
+    log_debug("sceKernelLoadStartModule(libSceSystemService.sprx): %d", libcmi);
+    if (libcmi <= 0) {
+        log_debug("Launch aborted: libSceSystemService.sprx failed to load (%d)", libcmi);
+        return -8;
+    }
 
     /* Initialize LncUtil (safe to call multiple times) */
     int32_t ir = sceLncUtilInitialize();
