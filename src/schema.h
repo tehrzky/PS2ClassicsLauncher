@@ -1,5 +1,6 @@
 #ifndef SCHEMA_H
 #define SCHEMA_H
+
 #include <stddef.h>
 
 #define SCHEMA_MAX_TABS 16
@@ -33,6 +34,7 @@ typedef struct {
     char label[SCHEMA_MAX_LABEL_LEN];
     FieldType type;
     char description[SCHEMA_MAX_DESC_LEN];
+    int show_description;  /* 1 = show description box under field */
 
     /* select */
     SchemaOption options[SCHEMA_MAX_OPTIONS_PER_FIELD];
@@ -46,8 +48,9 @@ typedef struct {
     char disabled_commands[SCHEMA_MAX_COMMANDS_PER_OPTION][SCHEMA_MAX_COMMAND_LEN];
     int disabled_count;
 
-    /* slider */
-    int min, max, step;
+    /* slider — now double for float support */
+    double min_f, max_f, step_f;
+    double default_f;
     char command_template[SCHEMA_MAX_TEMPLATE_LEN];
 
     /* text */
@@ -69,8 +72,13 @@ typedef struct {
     int tab_count;
 } Schema;
 
-/* Load schema from JSON file. Returns 0 on success, -1 on error. */
+/* Load master schema from JSON file. */
 int schema_load(const char *path, Schema *out);
+
+/* Merge a per-game schema override into the master schema.
+ * Override file has same structure as master schema.
+ * New tabs are appended; existing tabs get new/updated fields. */
+int schema_merge_game_override(Schema *master, const char *disc_id, const char *work_path);
 
 /* Find a field anywhere in the schema by its id. */
 const SchemaField *schema_find_field(const Schema *s, const char *field_id);
@@ -81,8 +89,11 @@ const SchemaTab *schema_find_tab(const Schema *s, const char *tab_id);
 /* Get the default value for a field as a string (into out_buf). */
 void schema_get_default_str(const SchemaField *f, char *out, size_t out_size);
 
-/* Get the default value for a field as an int. */
+/* Get the default value for a field as an int (bool/checkbox/slider rounded). */
 int schema_get_default_int(const SchemaField *f);
+
+/* Get the default value for a field as double (slider). */
+double schema_get_default_double(const SchemaField *f);
 
 /* Count total fields across all tabs. */
 int schema_total_fields(const Schema *s);
