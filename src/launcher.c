@@ -6,6 +6,7 @@
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 #include <orbis/UserService.h>
+#include <orbis/Sysmodule.h>
 
 /* -----------------------------------------------------------------------
  * LncAppParam and sceLncUtilLaunchApp are in libSceLncUtil, not
@@ -55,6 +56,12 @@ int launch_emulator(const char *override_tid)
 
     log_debug("=== LAUNCH EMULATOR ===");
     log_debug("Title ID: %s", title_id);
+
+    /* Defensive reload — sandbox/jailbreak calls earlier in the process
+     * lifetime can leave this unloaded even if main() loaded it at boot.
+     * Safe to call repeatedly (checks if already loaded internally). */
+    int32_t sysmod_ret = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
+    log_debug("sceSysmoduleLoadModuleInternal(SYSTEM_SERVICE): 0x%08X", sysmod_ret);
 
     /* Initialize LncUtil (safe to call multiple times) */
     int32_t ir = sceLncUtilInitialize();
