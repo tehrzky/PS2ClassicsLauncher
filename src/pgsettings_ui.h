@@ -1,5 +1,6 @@
 #ifndef PGSETTINGS_UI_H
 #define PGSETTINGS_UI_H
+#include <stddef.h>
 
 #include "schema.h"
 #include "pgsettings.h"
