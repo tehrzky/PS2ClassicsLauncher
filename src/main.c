@@ -179,7 +179,9 @@ int main(void) {
                     if (settings_sel == 7) font_cycle_slot(FONT_SLOT_TITLE, 1);
                     if (settings_sel == 8) scraper_force_download_gameindex();
                     if (settings_sel == 9) {
-                        for (int i = 0; i < game_count; i++) scraper_force_download_cover(games[i].id);
+                        // Queue all games for cover download – non‑blocking, only missing ones
+                        for (int i = 0; i < game_count; i++) {
+                            scraper_queue_cover_download(games[i].id);
                     }
                 }
             } else if (ui_mode == 2) {
