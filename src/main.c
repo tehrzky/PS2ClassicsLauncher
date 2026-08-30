@@ -4,6 +4,7 @@ void _fini(void) {}
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
+#include "daemon.h"
 #include <orbis/libkernel.h>
 #include <orbis/Sysmodule.h>
 #include <orbis/SystemService.h>
@@ -57,7 +58,7 @@ int g_schema_loaded = 0;
 GameSettings g_pgsettings;
 PGSettingsUIState g_pg_ui_state;
 
-int main(void) {
+int main(int argc, char *argv[]) {
     log_debug("=== START ===");
 
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
@@ -77,6 +78,27 @@ int main(void) {
         log_debug("PRIV LIBS LOADED");
     }
 
+        /* Elevation trampoline. A normal sandboxed install can't reliably call
+     * sceLncUtilLaunchApp -- it crashes the process. So on first boot each
+     * run, the sandboxed copy installs (or updates) an elevated copy of
+     * itself into a system-app slot and hands off to it. The elevated
+     * copy sees --elevated in argv and skips straight past this block. */
+    int elevated = daemon_is_elevated(argc, argv);
+    log_debug("Process mode: %s", elevated ? "ELEVATED (vsh)" : "SANDBOXED (gd)");
+
+    if (!elevated) {
+        if (daemon_needs_install()) {
+            if (!daemon_install()) {
+                log_debug("Elevated install failed - continuing sandboxed, "
+                          "emulator launch may still crash");
+            }
+        }
+        int ret = daemon_launch_elevated();
+        /* Only reached if elevation failed outright - fall through and
+         * run the old sandboxed UI so the launcher is still usable. */
+        log_debug("Elevation failed (0x%08X) - continuing sandboxed", ret);
+    }
+    
     if (init_video() < 0) {
         log_debug("VIDEO FAIL");
         return -1;
