@@ -107,6 +107,7 @@ int main(void) {
         flip();
         sceKernelSleep(5);
         memcard_unmount_all();
+        scraper_cleanup();
         return 0;
     }
 
@@ -210,6 +211,7 @@ int main(void) {
                 }
                 if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
                     memcard_unmount_all();
+                    scraper_cleanup();
                     return 0;
                 }
                 if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
@@ -285,6 +287,7 @@ int main(void) {
     font_cleanup();
     cover_free_wallpaper();
     cover_cleanup();
+    scraper_cleanup();
     memcard_unmount_all();
     
     return 0;
