@@ -265,12 +265,12 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== HANDLE REDIRECTS MANUALLY =====
+    // ===== FIXED: Handle redirects manually =====
     if (statusCode == 301 || statusCode == 302 || statusCode == 307 || statusCode == 308) {
         char location[512] = {0};
         
-        // Try to get the Location header
-        ret = sceHttpGetResponseHeaderValue(reqId, "Location", location, sizeof(location));
+        // ===== FIXED: Use sceHttpGetResponseHeader (not Value) =====
+        ret = sceHttpGetResponseHeader(reqId, "Location", location, sizeof(location));
         
         if (ret >= 0 && location[0] != '\0') {
             log_debug("Following redirect to: %s", location);
@@ -788,7 +788,7 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
-    // ===== FIXED URL LIST =====
+    // ===== FIXED URL LIST - All URLs properly quoted =====
     const char *urls[] = {
         // Try specific release URL first (direct download, no redirect)
         "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
@@ -838,4 +838,83 @@ void scraper_force_download_gameindex(void)
     unlink(path);
 
     const char *urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
+        "http://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        NULL
+    };
+    
+    int success = 0;
+    for (int i = 0; urls[i] != NULL; i++) {
+        log_debug("Force downloading PS2.data.json from URL %d: %s", i + 1, urls[i]);
+        if (download_file(urls[i], path) == 0) {
+            struct stat st;
+            if (stat(path, &st) == 0 && st.st_size > 100) {
+                log_debug("Successfully force downloaded PS2.data.json (%ld bytes)", st.st_size);
+                success = 1;
+                break;
+            }
+        }
+        log_debug("Force download failed for URL %d", i + 1);
+        sleep(2);
+    }
+    
+    if (!success) {
+        log_debug("All force download attempts failed for PS2.data.json");
+        log_debug("Creating minimal fallback PS2.data.json");
+        FILE *fp = fopen(path, "w");
+        if (fp) {
+            fprintf(fp, "{}");
+            fclose(fp);
+        }
+    }
+}
+
+// ===== scraper_init and cleanup =====
+void scraper_init(void) {
+    char path[512];
+
+    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
+    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
+    g_gamedb_data = file_load(path, &g_gamedb_size);
+    if (g_gamedb_data) {
+        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
+    } else {
+        log_debug("PS2.data.json not found at %s, attempting download...", path);
+        scraper_download_gameindex();
+        g_gamedb_data = file_load(path, &g_gamedb_size);
+        if (g_gamedb_data) {
+            log_debug("Loaded PS2.data.json after download (%zu bytes)", g_gamedb_size);
+        }
+    }
+
+    snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
+    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
+    g_metadata_data = file_load(path, &g_metadata_size);
+    if (g_metadata_data)
+        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
+    else
+        log_debug("ps2_metadata.json not found at %s", path);
+
+    pthread_mutex_lock(&cache_mutex);
+    cache_count = 0;
+    memset(game_cache, 0, sizeof(game_cache));
+    pthread_mutex_unlock(&cache_mutex);
+    log_debug("Game info cache cleared");
+    
+    scraper_stop_background_downloads();
+}
+
+void scraper_cleanup(void) {
+    log_debug("Scraper cleanup starting...");
+    scraper_stop_background_downloads();
+    if (g_gamedb_data) {
+        free(g_gamedb_data);
+        g_gamedb_data = NULL;
+    }
+    if (g_metadata_data) {
+        free(g_metadata_data);
+        g_metadata_data = NULL;
+    }
+    log_debug("Scraper cleanup complete");
+}
