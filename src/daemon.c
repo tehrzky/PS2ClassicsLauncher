@@ -23,7 +23,18 @@ struct iovec {
     size_t  iov_len;
 };
 
-extern int nmount(struct iovec *iov, unsigned int niov, int flags);
+/* This toolchain's musl-based libc exposes umount() but not nmount() as
+ * a linkable symbol, even though the PS4 kernel (a BSD fork) implements
+ * the syscall itself. Call it directly via syscall() instead of relying
+ * on a wrapper that doesn't exist in this libc. 378 is nmount's syscall
+ * number on FreeBSD 11/12, which the PS4's BSD-compat layer mirrors —
+ * this is the same number scene tools (mira-project etc.) use. */
+#define PS4_SYS_NMOUNT 378
+extern long syscall(long number, ...);
+
+static int nmount(struct iovec *iov, unsigned int niov, int flags) {
+    return (int)syscall(PS4_SYS_NMOUNT, iov, niov, flags);
+}
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 
