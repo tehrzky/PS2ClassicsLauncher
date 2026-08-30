@@ -54,7 +54,7 @@ static pthread_t background_thread;
 static int background_thread_running = 0;
 static pthread_mutex_t cover_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ========== ORIGINAL FUNCTIONS ==========
+// ========== ORIGINAL FUNCTIONS (unchanged) ==========
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -126,7 +126,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== FIXED: download_file without unsupported functions =====
+// ===== download_file (with retries and fallback) =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -217,7 +217,6 @@ static int download_file(const char *url, const char *path)
 
     sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
 
-    // Connect by resolved IP
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
@@ -232,13 +231,10 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
-    // Force correct Host header
     ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
     if (ret < 0) {
         log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
     }
-    
-    // Add User-Agent for GitHub compatibility
     sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
     sceHttpAddRequestHeader(reqId, "Accept", "application/json", 0);
 
@@ -256,20 +252,15 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // GitHub releases return 302 redirect - we need to handle this
+    // Handle redirects (GitHub releases) by trying fallback URL
     if (statusCode == 302 || statusCode == 301) {
-        log_debug("Redirect received, trying alternative URL...");
-        // For GitHub, try using the raw.githubusercontent.com URL directly
-        // The original code tried to follow redirects but the functions don't exist
-        // So we use a different approach
-        
-        // Try the raw URL as fallback
+        log_debug("Redirect received, trying fallback URL...");
+        // Use raw GitHub content URL as fallback
         char fallback_url[512];
         snprintf(fallback_url, sizeof(fallback_url), 
                  "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json");
-        log_debug("Trying fallback URL: %s", fallback_url);
-        
-        // Clean up current request
+        log_debug("Trying fallback: %s", fallback_url);
+        // Clean up and retry
         sceHttpDeleteRequest(reqId);
         sceHttpDeleteConnection(connId);
         sceHttpDeleteTemplate(tmplId);
@@ -277,8 +268,6 @@ static int download_file(const char *url, const char *path)
         sceSslTerm();
         g_download_active = 0;
         g_download_status[0] = '\0';
-        
-        // Retry with fallback URL
         return download_file(fallback_url, path);
     }
 
@@ -322,7 +311,6 @@ static int download_file(const char *url, const char *path)
     fp = NULL;
     log_debug("Downloaded %zu bytes: %s", total, path);
     
-    // Verify file was downloaded
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 0) {
         log_debug("File verified: %ld bytes", st.st_size);
@@ -333,7 +321,6 @@ static int download_file(const char *url, const char *path)
         goto cleanup;
     }
 
-    // Cleanup
     if (reqId >= 0) sceHttpDeleteRequest(reqId);
     if (connId >= 0) sceHttpDeleteConnection(connId);
     if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
@@ -355,26 +342,22 @@ cleanup:
     return -1;
 }
 
-// ===== String normalization =====
-static void normalize_string(const char *src, char *dst, size_t dst_len)
-{
+// ===== String normalization and JSON helpers (unchanged) =====
+static void normalize_string(const char *src, char *dst, size_t dst_len) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
         char c = src[i];
         if (c == ' ' || c == ':' || c == '-' || c == '_' || c == '.' ||
             c == '\'' || c == '\"' || c == '!' || c == '?' || c == '&' ||
             c == '/' || c == '\\' || c == '(' || c == ')' || c == '[' ||
-            c == ']' || c == ',' || c == ';')
-            continue;
+            c == ']' || c == ',' || c == ';') continue;
         if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
         dst[j++] = c;
     }
     dst[j] = '\0';
 }
 
-// ===== JSON helpers =====
-static char *file_load(const char *path, size_t *out_size)
-{
+static char *file_load(const char *path, size_t *out_size) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
     fseek(fp, 0, SEEK_END);
@@ -390,8 +373,7 @@ static char *file_load(const char *path, size_t *out_size)
     return buf;
 }
 
-static const char *json_find_object_end(const char *start)
-{
+static const char *json_find_object_end(const char *start) {
     int depth = 0;
     const char *p = start;
     while (*p) {
@@ -411,8 +393,7 @@ static const char *json_find_object_end(const char *start)
     return NULL;
 }
 
-static int json_get_string(const char *obj, const char *key, char *out, size_t out_len)
-{
+static int json_get_string(const char *obj, const char *key, char *out, size_t out_len) {
     char pattern[64];
     snprintf(pattern, sizeof(pattern), "\"%s\"", key);
     const char *p = strstr(obj, pattern);
@@ -440,8 +421,7 @@ static int gamedb_lookup_serial(const char *serial,
                                 char *developer, size_t dev_len,
                                 char *publisher, size_t pub_len,
                                 char *genre, size_t genre_len,
-                                char *release_date, size_t date_len)
-{
+                                char *release_date, size_t date_len) {
     if (!g_gamedb_data || !serial) return -1;
 
     char needle[64];
@@ -476,12 +456,9 @@ static int gamedb_lookup_serial(const char *serial,
     return 0;
 }
 
-// ===== Metadata description lookup =====
 static int metadata_find_description(const char *normalized_title,
-                                     char *out_desc, size_t out_len)
-{
-    if (!g_metadata_data || !normalized_title || !normalized_title[0])
-        return -1;
+                                     char *out_desc, size_t out_len) {
+    if (!g_metadata_data || !normalized_title || !normalized_title[0]) return -1;
 
     const char *p = g_metadata_data;
     while ((p = strstr(p, "\"name\"")) != NULL) {
@@ -523,12 +500,10 @@ static int metadata_find_description(const char *normalized_title,
 }
 
 // ===== scraper_get_game_info with caching =====
-int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out)
-{
+int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out) {
     if (!out || !serial || !serial[0]) return -1;
     memset(out, 0, sizeof(GameDBInfo));
 
-    // Check cache first
     pthread_mutex_lock(&cache_mutex);
     for (int i = 0; i < cache_count; i++) {
         if (strcmp(game_cache[i].serial, serial) == 0) {
@@ -539,7 +514,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     }
     pthread_mutex_unlock(&cache_mutex);
 
-    // Lookup GameDB by serial
     gamedb_lookup_serial(serial,
                          out->title, sizeof(out->title),
                          out->developer, sizeof(out->developer),
@@ -547,7 +521,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
                          out->genre, sizeof(out->genre),
                          out->release_date, sizeof(out->release_date));
 
-    // Fuzzy-match LaunchBox description
     const char *match_title = (out->title[0]) ? out->title : fallback_title;
     if (match_title && match_title[0]) {
         char normalized[256];
@@ -555,7 +528,6 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
         metadata_find_description(normalized, out->description, sizeof(out->description));
     }
 
-    // Save to cache
     pthread_mutex_lock(&cache_mutex);
     if (cache_count < MAX_CACHE) {
         strcpy(game_cache[cache_count].serial, serial);
@@ -569,9 +541,8 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     return 0;
 }
 
-// ===== Cover scraper =====
-static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d)
-{
+// ===== Cover functions =====
+static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d) {
     const char *base = g_settings.scraper_base_url;
     if (is_3d) {
         snprintf(out, out_len, "%s/covers/3d/%s.png", base, serial);
@@ -580,42 +551,32 @@ static void build_cover_url(char *out, size_t out_len, const char *serial, int i
     }
 }
 
-static void mark_no_cover(const char *serial)
-{
+static void mark_no_cover(const char *serial) {
     char path[512];
     snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
     FILE *fp = fopen(path, "w");
     if (fp) fclose(fp);
 }
 
-static int has_no_cover_marker(const char *serial)
-{
+static int has_no_cover_marker(const char *serial) {
     char path[512];
     snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
     return access(path, F_OK) == 0;
 }
 
-static int cover_already_exists(const char *serial)
-{
+// Check if BOTH covers exist – returns 1 only if both are present
+static int cover_both_exist(const char *serial) {
     if (!serial || !serial[0]) return 0;
-    
     char path[512];
-    
+    int has_default = 0, has_3d = 0;
     snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-    if (access(path, F_OK) == 0) {
-        return 1;
-    }
-    
+    if (access(path, F_OK) == 0) has_default = 1;
     snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-    if (access(path, F_OK) == 0) {
-        return 1;
-    }
-    
-    return 0;
+    if (access(path, F_OK) == 0) has_3d = 1;
+    return (has_default && has_3d) ? 1 : 0;
 }
 
-void scraper_download_cover(const char *serial)
-{
+void scraper_download_cover(const char *serial) {
     if (!serial || strlen(serial) == 0) return;
     if (!g_settings.auto_download_covers) return;
     if (has_no_cover_marker(serial)) return;
@@ -662,54 +623,27 @@ void scraper_download_cover(const char *serial)
     }
 }
 
-void scraper_force_download_cover(const char *serial)
-{
-    if (!serial || strlen(serial) == 0) return;
-
-    char path[512];
-    snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
-    unlink(path);
-
-    char cover_path[512];
-    char url[512];
-
-    char covers_dir[512], default_dir[512], d3_dir[512];
-    snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
-    snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
-    snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
-    mkdir(covers_dir, 0777);
-    mkdir(default_dir, 0777);
-    mkdir(d3_dir, 0777);
-
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-    build_cover_url(url, sizeof(url), serial, 0);
-    log_debug("Force downloading default cover: %s", url);
-    download_file(url, cover_path);
-
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-    build_cover_url(url, sizeof(url), serial, 1);
-    log_debug("Force downloading 3D cover: %s", url);
-    download_file(url, cover_path);
+void scraper_force_download_cover(const char *serial) {
+    // For single-game force, we can just queue it – the queue will only download missing ones.
+    scraper_queue_cover_download(serial);
 }
 
 // ===== Background Download System =====
-static void* background_download_worker(void* arg)
-{
+static void* background_download_worker(void* arg) {
     (void)arg;
-    
     log_debug("Background download thread started");
     
     while (background_thread_running) {
         int found_work = 0;
         
         pthread_mutex_lock(&cover_mutex);
-        
         for (int i = 0; i < cover_task_count; i++) {
             if (!cover_tasks[i].is_downloading && !cover_tasks[i].is_downloaded && cover_tasks[i].is_queued) {
-                if (cover_already_exists(cover_tasks[i].serial)) {
+                // Check if both covers already exist – if so, skip this task
+                if (cover_both_exist(cover_tasks[i].serial)) {
                     cover_tasks[i].is_downloaded = 1;
                     cover_tasks[i].is_queued = 0;
-                    log_debug("Cover already exists for: %s", cover_tasks[i].serial);
+                    log_debug("Both covers already exist for: %s", cover_tasks[i].serial);
                     continue;
                 }
                 
@@ -726,13 +660,12 @@ static void* background_download_worker(void* arg)
                 cover_tasks[i].is_queued = 0;
                 pthread_mutex_unlock(&cover_mutex);
                 
-                sleep(1);
+                sleep(1); // throttle
                 
                 pthread_mutex_lock(&cover_mutex);
                 break;
             }
         }
-        
         pthread_mutex_unlock(&cover_mutex);
         
         if (!found_work) {
@@ -744,11 +677,8 @@ static void* background_download_worker(void* arg)
     return NULL;
 }
 
-void scraper_start_background_downloads(void)
-{
-    if (background_thread_running) {
-        return;
-    }
+void scraper_start_background_downloads(void) {
+    if (background_thread_running) return;
     
     pthread_mutex_lock(&cover_mutex);
     cover_task_count = 0;
@@ -761,16 +691,15 @@ void scraper_start_background_downloads(void)
         background_thread_running = 0;
         return;
     }
-    
     log_debug("Background download thread started");
 }
 
-void scraper_queue_cover_download(const char *serial)
-{
+void scraper_queue_cover_download(const char *serial) {
     if (!serial || !serial[0]) return;
     if (!g_settings.auto_download_covers) return;
     
-    if (cover_already_exists(serial)) {
+    // If both covers already exist, don't queue
+    if (cover_both_exist(serial)) {
         return;
     }
     
@@ -778,7 +707,7 @@ void scraper_queue_cover_download(const char *serial)
     for (int i = 0; i < cover_task_count; i++) {
         if (strcmp(cover_tasks[i].serial, serial) == 0) {
             pthread_mutex_unlock(&cover_mutex);
-            return;
+            return; // already queued
         }
     }
     pthread_mutex_unlock(&cover_mutex);
@@ -797,19 +726,15 @@ void scraper_queue_cover_download(const char *serial)
     scraper_start_background_downloads();
 }
 
-void scraper_stop_background_downloads(void)
-{
+void scraper_stop_background_downloads(void) {
     if (!background_thread_running) return;
-    
     background_thread_running = 0;
     pthread_join(background_thread, NULL);
     log_debug("Background download thread stopped");
 }
 
-int scraper_is_cover_downloading(const char *serial)
-{
+int scraper_is_cover_downloading(const char *serial) {
     if (!serial || !serial[0]) return 0;
-    
     pthread_mutex_lock(&cover_mutex);
     for (int i = 0; i < cover_task_count; i++) {
         if (strcmp(cover_tasks[i].serial, serial) == 0) {
@@ -823,8 +748,7 @@ int scraper_is_cover_downloading(const char *serial)
 }
 
 // ===== GameDB download =====
-void scraper_download_gameindex(void)
-{
+void scraper_download_gameindex(void) {
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
@@ -860,14 +784,12 @@ void scraper_download_gameindex(void)
         log_debug("Failed to download from URL %d, trying next...", i + 1);
         sleep(2);
     }
-    
     if (!success) {
         log_debug("All download attempts failed for PS2.data.json");
     }
 }
 
-void scraper_force_download_gameindex(void)
-{
+void scraper_force_download_gameindex(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
 
@@ -897,15 +819,13 @@ void scraper_force_download_gameindex(void)
         log_debug("Force download failed for URL %d", i + 1);
         sleep(2);
     }
-    
     if (!success) {
         log_debug("All force download attempts failed for PS2.data.json");
     }
 }
 
-// ===== scraper_init =====
-void scraper_init(void)
-{
+// ===== scraper_init and cleanup =====
+void scraper_init(void) {
     char path[512];
 
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
@@ -939,12 +859,9 @@ void scraper_init(void)
     scraper_stop_background_downloads();
 }
 
-void scraper_cleanup(void)
-{
+void scraper_cleanup(void) {
     log_debug("Scraper cleanup starting...");
-    
     scraper_stop_background_downloads();
-    
     if (g_gamedb_data) {
         free(g_gamedb_data);
         g_gamedb_data = NULL;
@@ -953,6 +870,5 @@ void scraper_cleanup(void)
         free(g_metadata_data);
         g_metadata_data = NULL;
     }
-    
     log_debug("Scraper cleanup complete");
 }
