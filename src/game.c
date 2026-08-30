@@ -148,7 +148,8 @@ void scan_games(void) {
             strncpy(games[game_count].genre, info.genre, sizeof(games[game_count].genre) - 1);
             strncpy(games[game_count].release_date, info.release_date, sizeof(games[game_count].release_date) - 1);
         }
-
+        
+        scraper_queue_cover_download(games[game_count].id);
         game_count++;
     }
     closedir(dir);
