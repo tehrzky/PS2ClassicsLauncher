@@ -15,6 +15,7 @@ typedef struct {
     char description[1024];
 } GameDBInfo;
 
+// ===== Core Functions (Existing) =====
 void scraper_init(void);
 int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out);
 
@@ -22,5 +23,14 @@ void scraper_download_cover(const char *serial);
 void scraper_force_download_cover(const char *serial);
 void scraper_download_gameindex(void);
 void scraper_force_download_gameindex(void);
+
+// ===== NEW: Background Download System =====
+void scraper_start_background_downloads(void);
+void scraper_queue_cover_download(const char *serial);
+void scraper_stop_background_downloads(void);
+int scraper_is_cover_downloading(const char *serial);
+
+// ===== NEW: Cleanup Function =====
+void scraper_cleanup(void);
 
 #endif
