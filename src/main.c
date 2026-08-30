@@ -63,10 +63,6 @@ int main(void) {
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_USER_SERVICE);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_VIDEO_OUT);
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_PAD);
-    /* Required for sceLncUtilLaunchApp / sceSystemServiceLoadExec to actually
-     * resolve at runtime. Linking -lSceLncUtil only gives us the stub table;
-     * the real code lives in libSceSystemService.sprx and has to be loaded
-     * into this process explicitly, or launch_emulator() silently fails. */
     sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SYSTEM_SERVICE);
     
     if (!sandbox_bypass()) {
@@ -139,7 +135,7 @@ int main(void) {
                 if (pressed & ORBIS_PAD_BUTTON_DOWN) {
                     settings_sel = (settings_sel + 1) % SETTINGS_ITEMS;
                 }
-                    if (pressed & ORBIS_PAD_BUTTON_LEFT || pressed & ORBIS_PAD_BUTTON_RIGHT) {
+                if (pressed & ORBIS_PAD_BUTTON_LEFT || pressed & ORBIS_PAD_BUTTON_RIGHT) {
                     if (settings_sel == 0) g_settings.auto_download_covers ^= 1;
                     if (settings_sel == 1) g_settings.auto_download_gameindex ^= 1;
                     if (settings_sel == 2) g_settings.cover_type ^= 1;
@@ -182,6 +178,7 @@ int main(void) {
                         // Queue all games for cover download – non‑blocking, only missing ones
                         for (int i = 0; i < game_count; i++) {
                             scraper_queue_cover_download(games[i].id);
+                        }
                     }
                 }
             } else if (ui_mode == 2) {
