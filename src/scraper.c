@@ -15,6 +15,7 @@
 #include <orbis/Net.h>
 #include <orbis/NetCtl.h>
 #include <orbis/Sysmodule.h>
+#include <pthread.h>  // NEW: For background threading
 
 static int net_initialized = 0;
 
@@ -26,6 +27,34 @@ static size_t g_gamedb_size = 0;
 static char *g_metadata_data = NULL;
 static size_t g_metadata_size = 0;
 
+// ========== NEW: Game Info Cache (Fixes JSON Lag) ==========
+typedef struct {
+    char serial[32];
+    GameDBInfo info;
+    int is_cached;
+} GameInfoCache;
+
+#define MAX_CACHE 500
+static GameInfoCache game_cache[MAX_CACHE];
+static int cache_count = 0;
+static pthread_mutex_t cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// ========== NEW: Background Download System ==========
+typedef struct {
+    char serial[64];
+    int is_downloading;
+    int is_downloaded;
+    int is_queued;
+} CoverTask;
+
+#define MAX_COVER_TASKS 500
+static CoverTask cover_tasks[MAX_COVER_TASKS];
+static int cover_task_count = 0;
+static pthread_t background_thread;
+static int background_thread_running = 0;
+static pthread_mutex_t cover_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// ========== ORIGINAL FUNCTIONS (UNCHANGED) ==========
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -430,37 +459,26 @@ static int metadata_find_description(const char *normalized_title,
 }
 
 /* ------------------------------------------------------------------ */
-/*  Public API                                                        */
+/*  OPTIMIZED: scraper_get_game_info with Caching                     */
 /* ------------------------------------------------------------------ */
-void scraper_init(void)
-{
-    char path[512];
-
-    // Load PS2.data.json into memory
-    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
-    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
-    g_gamedb_data = file_load(path, &g_gamedb_size);
-    if (g_gamedb_data)
-        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
-    else
-        log_debug("PS2.data.json not found at %s", path);
-
-    // Load ps2_metadata.json into memory (user-supplied LaunchBox data)
-    snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
-    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
-    g_metadata_data = file_load(path, &g_metadata_size);
-    if (g_metadata_data)
-        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
-    else
-        log_debug("ps2_metadata.json not found at %s (descriptions disabled)", path);
-}
-
 int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out)
 {
-    if (!out) return -1;
+    if (!out || !serial || !serial[0]) return -1;
     memset(out, 0, sizeof(GameDBInfo));
 
-    if (!serial || !serial[0]) return -1;
+    // ===== CHECK CACHE FIRST (SUPER FAST!) =====
+    pthread_mutex_lock(&cache_mutex);
+    for (int i = 0; i < cache_count; i++) {
+        if (strcmp(game_cache[i].serial, serial) == 0) {
+            // Found in cache! Copy and return instantly
+            memcpy(out, &game_cache[i].info, sizeof(GameDBInfo));
+            pthread_mutex_unlock(&cache_mutex);
+            return 0;  // INSTANT - no JSON scanning!
+        }
+    }
+    pthread_mutex_unlock(&cache_mutex);
+
+    // ===== Only reach here if NOT in cache (runs ONCE per game) =====
 
     // 1) Lookup GameDB by serial
     gamedb_lookup_serial(serial,
@@ -478,11 +496,24 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
         metadata_find_description(normalized, out->description, sizeof(out->description));
     }
 
+    // ===== SAVE TO CACHE FOR NEXT TIME =====
+    pthread_mutex_lock(&cache_mutex);
+    if (cache_count < MAX_CACHE) {
+        strcpy(game_cache[cache_count].serial, serial);
+        memcpy(&game_cache[cache_count].info, out, sizeof(GameDBInfo));
+        game_cache[cache_count].is_cached = 1;
+        cache_count++;
+        log_debug("Cached game info for: %s (cache: %d games)", serial, cache_count);
+    } else {
+        log_debug("Cache full! (%d games cached)", MAX_CACHE);
+    }
+    pthread_mutex_unlock(&cache_mutex);
+
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Cover scraper (unchanged logic, working download core)            */
+/*  Cover scraper (optimized with background downloads)              */
 /* ------------------------------------------------------------------ */
 static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d)
 {
@@ -509,6 +540,29 @@ static int has_no_cover_marker(const char *serial)
     return access(path, F_OK) == 0;
 }
 
+// ===== NEW: Check if cover already exists (FAST) =====
+static int cover_already_exists(const char *serial)
+{
+    if (!serial || !serial[0]) return 0;
+    
+    char path[512];
+    
+    // Check default cover
+    snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+    if (access(path, F_OK) == 0) {
+        return 1;  // Found it!
+    }
+    
+    // Check 3D cover
+    snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+    if (access(path, F_OK) == 0) {
+        return 1;  // Found it!
+    }
+    
+    return 0;  // No cover found
+}
+
+// ===== ORIGINAL download_cover (unchanged, now used by background thread) =====
 void scraper_download_cover(const char *serial)
 {
     if (!serial || strlen(serial) == 0) return;
@@ -588,7 +642,161 @@ void scraper_force_download_cover(const char *serial)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GameDB-PS2 database download (replaces GameIndex.yaml)            */
+/*  NEW: Background Download System                                   */
+/* ------------------------------------------------------------------ */
+
+// ===== Background download worker thread =====
+static void* background_download_worker(void* arg)
+{
+    (void)arg;
+    
+    log_debug("Background download thread started");
+    
+    while (background_thread_running) {
+        int found_work = 0;
+        
+        pthread_mutex_lock(&cover_mutex);
+        
+        // Look for a game that needs downloading
+        for (int i = 0; i < cover_task_count; i++) {
+            if (!cover_tasks[i].is_downloading && !cover_tasks[i].is_downloaded && cover_tasks[i].is_queued) {
+                // Check if cover already exists
+                if (cover_already_exists(cover_tasks[i].serial)) {
+                    cover_tasks[i].is_downloaded = 1;
+                    cover_tasks[i].is_queued = 0;
+                    log_debug("Cover already exists for: %s", cover_tasks[i].serial);
+                    continue;
+                }
+                
+                // Start downloading this one
+                cover_tasks[i].is_downloading = 1;
+                found_work = 1;
+                pthread_mutex_unlock(&cover_mutex);
+                
+                log_debug("Background downloading cover for: %s", cover_tasks[i].serial);
+                
+                // Actually download the cover (in background thread!)
+                scraper_download_cover(cover_tasks[i].serial);
+                
+                // Mark as done (even if it failed)
+                pthread_mutex_lock(&cover_mutex);
+                cover_tasks[i].is_downloaded = 1;
+                cover_tasks[i].is_downloading = 0;
+                cover_tasks[i].is_queued = 0;
+                pthread_mutex_unlock(&cover_mutex);
+                
+                // Wait 1 second before next download (don't overwhelm)
+                sleep(1);
+                
+                pthread_mutex_lock(&cover_mutex);
+                break;  // Process one at a time
+            }
+        }
+        
+        pthread_mutex_unlock(&cover_mutex);
+        
+        // If no work, wait a bit before checking again
+        if (!found_work) {
+            sleep(2);  // Wait 2 seconds, then check again
+        }
+    }
+    
+    log_debug("Background download thread stopped");
+    return NULL;
+}
+
+// ===== Start background downloads =====
+void scraper_start_background_downloads(void)
+{
+    if (background_thread_running) {
+        return;  // Already running
+    }
+    
+    // Reset task list
+    pthread_mutex_lock(&cover_mutex);
+    cover_task_count = 0;
+    memset(cover_tasks, 0, sizeof(cover_tasks));
+    pthread_mutex_unlock(&cover_mutex);
+    
+    // Start the background thread
+    background_thread_running = 1;
+    if (pthread_create(&background_thread, NULL, background_download_worker, NULL) != 0) {
+        log_debug("Failed to create background thread");
+        background_thread_running = 0;
+        return;
+    }
+    
+    log_debug("Background download thread started");
+}
+
+// ===== Queue a cover for background download =====
+void scraper_queue_cover_download(const char *serial)
+{
+    if (!serial || !serial[0]) return;
+    if (!g_settings.auto_download_covers) return;
+    
+    // Check if already exists
+    if (cover_already_exists(serial)) {
+        return;  // No need to download
+    }
+    
+    // Check if already in queue or already downloaded
+    pthread_mutex_lock(&cover_mutex);
+    for (int i = 0; i < cover_task_count; i++) {
+        if (strcmp(cover_tasks[i].serial, serial) == 0) {
+            pthread_mutex_unlock(&cover_mutex);
+            return;  // Already queued
+        }
+    }
+    pthread_mutex_unlock(&cover_mutex);
+    
+    // Add to queue
+    pthread_mutex_lock(&cover_mutex);
+    if (cover_task_count < MAX_COVER_TASKS) {
+        strcpy(cover_tasks[cover_task_count].serial, serial);
+        cover_tasks[cover_task_count].is_downloading = 0;
+        cover_tasks[cover_task_count].is_downloaded = 0;
+        cover_tasks[cover_task_count].is_queued = 1;
+        cover_task_count++;
+        log_debug("Queued cover download for: %s (queue: %d)", serial, cover_task_count);
+    } else {
+        log_debug("Cover queue full! (%d tasks)", MAX_COVER_TASKS);
+    }
+    pthread_mutex_unlock(&cover_mutex);
+    
+    // Make sure background thread is running
+    scraper_start_background_downloads();
+}
+
+// ===== Stop background downloads (cleanup) =====
+void scraper_stop_background_downloads(void)
+{
+    if (!background_thread_running) return;
+    
+    background_thread_running = 0;
+    pthread_join(background_thread, NULL);
+    log_debug("Background download thread stopped");
+}
+
+// ===== Check if a cover is being downloaded =====
+int scraper_is_cover_downloading(const char *serial)
+{
+    if (!serial || !serial[0]) return 0;
+    
+    pthread_mutex_lock(&cover_mutex);
+    for (int i = 0; i < cover_task_count; i++) {
+        if (strcmp(cover_tasks[i].serial, serial) == 0) {
+            int result = cover_tasks[i].is_downloading;
+            pthread_mutex_unlock(&cover_mutex);
+            return result;
+        }
+    }
+    pthread_mutex_unlock(&cover_mutex);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  GameDB-PS2 database download (unchanged)                          */
 /* ------------------------------------------------------------------ */
 void scraper_download_gameindex(void)
 {
@@ -624,4 +832,63 @@ void scraper_force_download_gameindex(void)
     const char *url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
     log_debug("Force downloading PS2.data.json...");
     download_file(url, path);
+}
+
+/* ------------------------------------------------------------------ */
+/*  OPTIMIZED: scraper_init with cache clearing                      */
+/* ------------------------------------------------------------------ */
+void scraper_init(void)
+{
+    char path[512];
+
+    // Load PS2.data.json into memory
+    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
+    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
+    g_gamedb_data = file_load(path, &g_gamedb_size);
+    if (g_gamedb_data)
+        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
+    else
+        log_debug("PS2.data.json not found at %s", path);
+
+    // Load ps2_metadata.json into memory (user-supplied LaunchBox data)
+    snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
+    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
+    g_metadata_data = file_load(path, &g_metadata_size);
+    if (g_metadata_data)
+        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
+    else
+        log_debug("ps2_metadata.json not found at %s (descriptions disabled)", path);
+
+    // ===== NEW: Clear cache on init =====
+    pthread_mutex_lock(&cache_mutex);
+    cache_count = 0;
+    memset(game_cache, 0, sizeof(game_cache));
+    pthread_mutex_unlock(&cache_mutex);
+    log_debug("Game info cache cleared");
+    
+    // ===== NEW: Stop any existing background threads =====
+    scraper_stop_background_downloads();
+}
+
+/* ------------------------------------------------------------------ */
+/*  OPTIMIZED: scraper_cleanup for proper shutdown                   */
+/* ------------------------------------------------------------------ */
+void scraper_cleanup(void)
+{
+    log_debug("Scraper cleanup starting...");
+    
+    // Stop background downloads
+    scraper_stop_background_downloads();
+    
+    // Free JSON data
+    if (g_gamedb_data) {
+        free(g_gamedb_data);
+        g_gamedb_data = NULL;
+    }
+    if (g_metadata_data) {
+        free(g_metadata_data);
+        g_metadata_data = NULL;
+    }
+    
+    log_debug("Scraper cleanup complete");
 }
