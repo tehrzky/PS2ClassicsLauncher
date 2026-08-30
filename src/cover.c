@@ -19,6 +19,9 @@ static int cover_w = 0, cover_h = 0;
 static unsigned char *wallpaper_rgba = NULL;
 static int wallpaper_w = 0, wallpaper_h = 0;
 
+// Track if cover is being downloaded
+static int cover_downloading = 0;
+
 void cover_load(const char *serial) {
     if (cover_loaded && strcmp(current_serial, serial) == 0) return;
 
@@ -29,6 +32,7 @@ void cover_load(const char *serial) {
     cover_w = 0;
     cover_h = 0;
     cover_loaded = 0;
+    cover_downloading = 0;
 
     if (!serial || strlen(serial) == 0) {
         strncpy(current_serial, "UNKNOWN", sizeof(current_serial) - 1);
@@ -43,6 +47,7 @@ void cover_load(const char *serial) {
     char cover_path[512];
     int preferred_3d = g_settings.cover_type == 1;
 
+    // Try to load existing cover
     if (preferred_3d) {
         snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
         if (access(cover_path, F_OK) == 0) {
@@ -67,36 +72,14 @@ void cover_load(const char *serial) {
         }
     }
 
+    // No cover found - queue for background download (DOESN'T BLOCK!)
     if (g_settings.auto_download_covers) {
-        log_debug("No cover found for %s, downloading...", serial);
-        scraper_download_cover(serial);
-
-        if (preferred_3d) {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-            if (access(cover_path, F_OK) == 0) {
-                cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
-                if (cover_rgba) { cover_loaded = 1; return; }
-            }
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-            if (access(cover_path, F_OK) == 0) {
-                cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
-                if (cover_rgba) { cover_loaded = 1; return; }
-            }
-        } else {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-            if (access(cover_path, F_OK) == 0) {
-                cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
-                if (cover_rgba) { cover_loaded = 1; return; }
-            }
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-            if (access(cover_path, F_OK) == 0) {
-                cover_rgba = stbi_load(cover_path, &cover_w, &cover_h, NULL, 4);
-                if (cover_rgba) { cover_loaded = 1; return; }
-            }
-        }
+        log_debug("No cover found for %s, queuing download...", serial);
+        cover_downloading = 1;
+        scraper_queue_cover_download(serial);  // Returns immediately!
     }
 
-    cover_loaded = 1;
+    cover_loaded = 1;  // Show placeholder
 }
 
 void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
@@ -109,6 +92,7 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
         return;
     }
 
+    // Draw placeholder
     int ph_h = (int)(box_h * 0.80f);
     int ph_w = ph_h * 3 / 4;
     int ph_x = x + (box_w - ph_w) / 2;
@@ -137,13 +121,22 @@ void cover_draw_fit(int x, int y, int box_w, int box_h, const char *serial) {
         }
     }
 
-    const char *label = "NO COVER";
+    // Show download status
+    const char *label;
+    int is_downloading = scraper_is_cover_downloading(serial);
+    
+    if (is_downloading) {
+        label = "DOWNLOADING...";
+    } else {
+        label = "NO COVER";
+    }
+    
     int label_w = font_text_width(label, 24);
-    draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, COLOR_MUTED, 2);
+    draw_text_scaled(cx - label_w / 2, cy + radius + 26, label, is_downloading ? COLOR_ACCENT : COLOR_MUTED, 2);
 }
 
 void cover_load_wallpaper(void) {
-    if (wallpaper_rgba) return; // already loaded
+    if (wallpaper_rgba) return;
     if (!g_settings.wallpaper[0]) return;
 
     char wp_path[512];
@@ -184,5 +177,6 @@ void cover_cleanup(void) {
     cover_loaded = 0;
     cover_w = 0;
     cover_h = 0;
+    cover_downloading = 0;
     current_serial[0] = '\0';
 }
