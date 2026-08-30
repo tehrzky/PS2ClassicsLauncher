@@ -9,6 +9,21 @@
 #include <errno.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+
+/* This toolchain's <sys/mount.h> only forward-declares struct iovec and
+ * doesn't expose nmount()/MNT_UPDATE at all. Define them ourselves —
+ * this matches the real FreeBSD/PS4 kernel ABI (same layout Itemzflow's
+ * own mountfs() relies on). */
+#ifndef MNT_UPDATE
+#define MNT_UPDATE 0x0000000000010000ULL
+#endif
+
+struct iovec {
+    void   *iov_base;
+    size_t  iov_len;
+};
+
+extern int nmount(struct iovec *iov, unsigned int niov, int flags);
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 
