@@ -125,7 +125,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - Fixed for GitHub =====
+// ===== download_file with manual redirect handling =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -193,7 +193,7 @@ static int download_file(const char *url, const char *path)
     ip_str[sizeof(ip_str) - 1] = '\0';
     log_debug("Resolved %s -> %s", host, ip_str);
 
-    // ===== FIXED: Only init SSL if using HTTPS =====
+    // Init SSL if using HTTPS
     if (is_https) {
         sslId = sceSslInit(SSL_POOLSIZE);
         if (sslId < 0) {
@@ -221,7 +221,7 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
-    // ===== FIXED: Disable auto-redirect, we handle it manually =====
+    // Disable auto-redirect, we handle it manually
     sceHttpSetAutoRedirect(tmplId, 0);
 
     if (is_https) {
@@ -243,45 +243,15 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
-    // ===== FIXED: Simple headers that GitHub likes =====
-    ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
-    if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader Host warning: 0x%08X", ret);
-    }
-    
-    // GitHub works well with curl User-Agent
-    sceHttpAddRequestHeader(reqId, "User-Agent", "curl/7.68.0", 0);
-    sceHttpAddRequestHeader(reqId, "Accept", "*/*", 0);
+    // Headers that work with GitHub
+    sceHttpAddRequestHeader(reqId, "Host", host, 0);
+    sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
+    sceHttpAddRequestHeader(reqId, "Accept", "application/octet-stream, application/json", 0);
     sceHttpAddRequestHeader(reqId, "Connection", "close", 0);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
         log_debug("sceHttpSendRequest failed: 0x%08X", ret);
-        
-        // If HTTPS failed, try HTTP version
-        if (is_https && strstr(url, "github.com") != NULL) {
-            log_debug("HTTPS failed, trying HTTP version...");
-            char http_url[512];
-            strncpy(http_url, url, sizeof(http_url));
-            // Replace https:// with http://
-            char *https_pos = strstr(http_url, "https://");
-            if (https_pos) {
-                // Create new URL with http://
-                char new_url[512];
-                snprintf(new_url, sizeof(new_url), "http://%s", https_pos + 8);
-                log_debug("Trying HTTP: %s", new_url);
-                
-                sceHttpDeleteRequest(reqId);
-                sceHttpDeleteConnection(connId);
-                sceHttpDeleteTemplate(tmplId);
-                sceHttpTerm(httpCtx);
-                if (is_https) sceSslTerm();
-                g_download_active = 0;
-                g_download_status[0] = '\0';
-                return download_file(new_url, path);
-            }
-        }
-        
         g_download_active = 0;
         g_download_status[0] = '\0';
         goto cleanup;
@@ -295,15 +265,32 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== FIXED: Handle redirects manually =====
-    if (statusCode == 302 || statusCode == 301) {
-        log_debug("Redirect received, trying to follow...");
+    // ===== HANDLE REDIRECTS MANUALLY =====
+    if (statusCode == 301 || statusCode == 302 || statusCode == 307 || statusCode == 308) {
+        char location[512] = {0};
         
-        // For GitHub releases, the redirect goes to a specific release URL
-        // We already have the specific URL in our list, so we can just fail
-        // and let the next URL in the list be tried
-        log_debug("Redirect - will try next URL in list");
-        goto cleanup;
+        // Try to get the Location header
+        ret = sceHttpGetResponseHeaderValue(reqId, "Location", location, sizeof(location));
+        
+        if (ret >= 0 && location[0] != '\0') {
+            log_debug("Following redirect to: %s", location);
+            
+            // Clean up current context
+            if (reqId >= 0) sceHttpDeleteRequest(reqId);
+            if (connId >= 0) sceHttpDeleteConnection(connId);
+            if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
+            if (httpCtx >= 0) sceHttpTerm(httpCtx);
+            if (is_https) sceSslTerm();
+            
+            g_download_active = 0;
+            g_download_status[0] = '\0';
+            
+            // Recursive call with the new URL
+            return download_file(location, path);
+        } else {
+            log_debug("Redirect but no Location header found");
+            goto cleanup;
+        }
     }
 
     if (statusCode != 200) {
@@ -377,7 +364,7 @@ cleanup:
     return -1;
 }
 
-// ===== String normalization and JSON helpers =====
+// ===== String normalization =====
 static void normalize_string(const char *src, char *dst, size_t dst_len) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
@@ -778,7 +765,7 @@ int scraper_is_cover_downloading(const char *serial) {
     return 0;
 }
 
-// ===== GameDB download - FIXED =====
+// ===== GameDB download =====
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
@@ -801,12 +788,14 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
-    // ===== FIXED URL LIST - removed 404 URL =====
+    // ===== FIXED URL LIST =====
     const char *urls[] = {
-        // Try specific release URL first (no redirect, direct download)
+        // Try specific release URL first (direct download, no redirect)
         "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
         // Try latest release (has redirect, but we handle it)
         "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
+        // Try HTTP version as fallback
+        "http://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
         NULL
     };
     
@@ -849,82 +838,4 @@ void scraper_force_download_gameindex(void)
     unlink(path);
 
     const char *urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
-        NULL
-    };
-    
-    int success = 0;
-    for (int i = 0; urls[i] != NULL; i++) {
-        log_debug("Force downloading PS2.data.json from URL %d: %s", i + 1, urls[i]);
-        if (download_file(urls[i], path) == 0) {
-            struct stat st;
-            if (stat(path, &st) == 0 && st.st_size > 100) {
-                log_debug("Successfully force downloaded PS2.data.json (%ld bytes)", st.st_size);
-                success = 1;
-                break;
-            }
-        }
-        log_debug("Force download failed for URL %d", i + 1);
-        sleep(2);
-    }
-    
-    if (!success) {
-        log_debug("All force download attempts failed for PS2.data.json");
-        log_debug("Creating minimal fallback PS2.data.json");
-        FILE *fp = fopen(path, "w");
-        if (fp) {
-            fprintf(fp, "{}");
-            fclose(fp);
-        }
-    }
-}
-
-// ===== scraper_init and cleanup =====
-void scraper_init(void) {
-    char path[512];
-
-    snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
-    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
-    g_gamedb_data = file_load(path, &g_gamedb_size);
-    if (g_gamedb_data) {
-        log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
-    } else {
-        log_debug("PS2.data.json not found at %s, attempting download...", path);
-        scraper_download_gameindex();
-        g_gamedb_data = file_load(path, &g_gamedb_size);
-        if (g_gamedb_data) {
-            log_debug("Loaded PS2.data.json after download (%zu bytes)", g_gamedb_size);
-        }
-    }
-
-    snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
-    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
-    g_metadata_data = file_load(path, &g_metadata_size);
-    if (g_metadata_data)
-        log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
-    else
-        log_debug("ps2_metadata.json not found at %s", path);
-
-    pthread_mutex_lock(&cache_mutex);
-    cache_count = 0;
-    memset(game_cache, 0, sizeof(game_cache));
-    pthread_mutex_unlock(&cache_mutex);
-    log_debug("Game info cache cleared");
-    
-    scraper_stop_background_downloads();
-}
-
-void scraper_cleanup(void) {
-    log_debug("Scraper cleanup starting...");
-    scraper_stop_background_downloads();
-    if (g_gamedb_data) {
-        free(g_gamedb_data);
-        g_gamedb_data = NULL;
-    }
-    if (g_metadata_data) {
-        free(g_metadata_data);
-        g_metadata_data = NULL;
-    }
-    log_debug("Scraper cleanup complete");
-}
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16
