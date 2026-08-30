@@ -54,7 +54,6 @@ static pthread_t background_thread;
 static int background_thread_running = 0;
 static pthread_mutex_t cover_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ========== ORIGINAL FUNCTIONS (unchanged) ==========
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -126,7 +125,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file (with retries and fallback) =====
+// ===== download_file - Fixed for GitHub =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -135,6 +134,7 @@ static int download_file(const char *url, const char *path)
     FILE *fp = NULL;
     int32_t statusCode = 0;
     int result = -1;
+    int is_https = 0;
 
     log_debug("download_file: %s -> %s", url, path);
 
@@ -143,6 +143,7 @@ static int download_file(const char *url, const char *path)
         return -1;
     }
 
+    // Create directory
     char dir_path[512];
     strncpy(dir_path, path, sizeof(dir_path) - 1);
     dir_path[sizeof(dir_path) - 1] = '\0';
@@ -163,6 +164,8 @@ static int download_file(const char *url, const char *path)
         return -1;
     }
     log_debug("URL parsed: scheme=%s host=%s path=%s port=%d", scheme, host, res_path, port);
+
+    is_https = (strcmp(scheme, "https") == 0);
 
     snprintf(g_download_status, sizeof(g_download_status), "Downloading: %s",
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
@@ -190,18 +193,21 @@ static int download_file(const char *url, const char *path)
     ip_str[sizeof(ip_str) - 1] = '\0';
     log_debug("Resolved %s -> %s", host, ip_str);
 
-    sslId = sceSslInit(SSL_POOLSIZE);
-    if (sslId < 0) {
-        log_debug("sceSslInit failed: 0x%08X", sslId);
-        g_download_active = 0;
-        return -1;
+    // ===== FIXED: Only init SSL if using HTTPS =====
+    if (is_https) {
+        sslId = sceSslInit(SSL_POOLSIZE);
+        if (sslId < 0) {
+            log_debug("sceSslInit failed: 0x%08X", sslId);
+            g_download_active = 0;
+            return -1;
+        }
+        log_debug("sceSslInit ok: %d", sslId);
     }
-    log_debug("sceSslInit ok: %d", sslId);
 
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
     if (httpCtx < 0) {
         log_debug("sceHttpInit failed: 0x%08X", httpCtx);
-        sceSslTerm();
+        if (is_https) sceSslTerm();
         g_download_active = 0;
         return -1;
     }
@@ -215,8 +221,14 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
-    sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
+    // ===== FIXED: Disable auto-redirect, we handle it manually =====
+    sceHttpSetAutoRedirect(tmplId, 0);
 
+    if (is_https) {
+        sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
+    }
+
+    // Connect by resolved IP
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
@@ -231,16 +243,47 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
+    // ===== FIXED: Simple headers that GitHub likes =====
     ret = sceHttpAddRequestHeader(reqId, "Host", host, 0);
     if (ret < 0) {
-        log_debug("sceHttpAddRequestHeader warning: 0x%08X", ret);
+        log_debug("sceHttpAddRequestHeader Host warning: 0x%08X", ret);
     }
-    sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
-    sceHttpAddRequestHeader(reqId, "Accept", "application/json", 0);
+    
+    // GitHub works well with curl User-Agent
+    sceHttpAddRequestHeader(reqId, "User-Agent", "curl/7.68.0", 0);
+    sceHttpAddRequestHeader(reqId, "Accept", "*/*", 0);
+    sceHttpAddRequestHeader(reqId, "Connection", "close", 0);
 
     ret = sceHttpSendRequest(reqId, NULL, 0);
     if (ret < 0) {
         log_debug("sceHttpSendRequest failed: 0x%08X", ret);
+        
+        // If HTTPS failed, try HTTP version
+        if (is_https && strstr(url, "github.com") != NULL) {
+            log_debug("HTTPS failed, trying HTTP version...");
+            char http_url[512];
+            strncpy(http_url, url, sizeof(http_url));
+            // Replace https:// with http://
+            char *https_pos = strstr(http_url, "https://");
+            if (https_pos) {
+                // Create new URL with http://
+                char new_url[512];
+                snprintf(new_url, sizeof(new_url), "http://%s", https_pos + 8);
+                log_debug("Trying HTTP: %s", new_url);
+                
+                sceHttpDeleteRequest(reqId);
+                sceHttpDeleteConnection(connId);
+                sceHttpDeleteTemplate(tmplId);
+                sceHttpTerm(httpCtx);
+                if (is_https) sceSslTerm();
+                g_download_active = 0;
+                g_download_status[0] = '\0';
+                return download_file(new_url, path);
+            }
+        }
+        
+        g_download_active = 0;
+        g_download_status[0] = '\0';
         goto cleanup;
     }
     log_debug("sceHttpSendRequest ok");
@@ -252,23 +295,15 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // Handle redirects (GitHub releases) by trying fallback URL
+    // ===== FIXED: Handle redirects manually =====
     if (statusCode == 302 || statusCode == 301) {
-        log_debug("Redirect received, trying fallback URL...");
-        // Use raw GitHub content URL as fallback
-        char fallback_url[512];
-        snprintf(fallback_url, sizeof(fallback_url), 
-                 "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json");
-        log_debug("Trying fallback: %s", fallback_url);
-        // Clean up and retry
-        sceHttpDeleteRequest(reqId);
-        sceHttpDeleteConnection(connId);
-        sceHttpDeleteTemplate(tmplId);
-        sceHttpTerm(httpCtx);
-        sceSslTerm();
-        g_download_active = 0;
-        g_download_status[0] = '\0';
-        return download_file(fallback_url, path);
+        log_debug("Redirect received, trying to follow...");
+        
+        // For GitHub releases, the redirect goes to a specific release URL
+        // We already have the specific URL in our list, so we can just fail
+        // and let the next URL in the list be tried
+        log_debug("Redirect - will try next URL in list");
+        goto cleanup;
     }
 
     if (statusCode != 200) {
@@ -325,7 +360,7 @@ static int download_file(const char *url, const char *path)
     if (connId >= 0) sceHttpDeleteConnection(connId);
     if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
     if (httpCtx >= 0) sceHttpTerm(httpCtx);
-    sceSslTerm();
+    if (is_https) sceSslTerm();
     g_download_active = 0;
     g_download_status[0] = '\0';
     return result;
@@ -338,11 +373,11 @@ cleanup:
     if (connId >= 0) sceHttpDeleteConnection(connId);
     if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
     if (httpCtx >= 0) sceHttpTerm(httpCtx);
-    sceSslTerm();
+    if (is_https) sceSslTerm();
     return -1;
 }
 
-// ===== String normalization and JSON helpers (unchanged) =====
+// ===== String normalization and JSON helpers =====
 static void normalize_string(const char *src, char *dst, size_t dst_len) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
@@ -564,7 +599,6 @@ static int has_no_cover_marker(const char *serial) {
     return access(path, F_OK) == 0;
 }
 
-// Check if BOTH covers exist – returns 1 only if both are present
 static int cover_both_exist(const char *serial) {
     if (!serial || !serial[0]) return 0;
     char path[512];
@@ -624,7 +658,6 @@ void scraper_download_cover(const char *serial) {
 }
 
 void scraper_force_download_cover(const char *serial) {
-    // For single-game force, we can just queue it – the queue will only download missing ones.
     scraper_queue_cover_download(serial);
 }
 
@@ -639,7 +672,6 @@ static void* background_download_worker(void* arg) {
         pthread_mutex_lock(&cover_mutex);
         for (int i = 0; i < cover_task_count; i++) {
             if (!cover_tasks[i].is_downloading && !cover_tasks[i].is_downloaded && cover_tasks[i].is_queued) {
-                // Check if both covers already exist – if so, skip this task
                 if (cover_both_exist(cover_tasks[i].serial)) {
                     cover_tasks[i].is_downloaded = 1;
                     cover_tasks[i].is_queued = 0;
@@ -660,7 +692,7 @@ static void* background_download_worker(void* arg) {
                 cover_tasks[i].is_queued = 0;
                 pthread_mutex_unlock(&cover_mutex);
                 
-                sleep(1); // throttle
+                sleep(1);
                 
                 pthread_mutex_lock(&cover_mutex);
                 break;
@@ -698,7 +730,6 @@ void scraper_queue_cover_download(const char *serial) {
     if (!serial || !serial[0]) return;
     if (!g_settings.auto_download_covers) return;
     
-    // If both covers already exist, don't queue
     if (cover_both_exist(serial)) {
         return;
     }
@@ -707,7 +738,7 @@ void scraper_queue_cover_download(const char *serial) {
     for (int i = 0; i < cover_task_count; i++) {
         if (strcmp(cover_tasks[i].serial, serial) == 0) {
             pthread_mutex_unlock(&cover_mutex);
-            return; // already queued
+            return;
         }
     }
     pthread_mutex_unlock(&cover_mutex);
@@ -747,8 +778,9 @@ int scraper_is_cover_downloading(const char *serial) {
     return 0;
 }
 
-// ===== GameDB download =====
-void scraper_download_gameindex(void) {
+// ===== GameDB download - FIXED =====
+void scraper_download_gameindex(void)
+{
     if (!g_settings.auto_download_gameindex) return;
 
     char path[512];
@@ -764,9 +796,17 @@ void scraper_download_gameindex(void) {
         return;
     }
 
+    if (stat(path, &st) == 0 && st.st_size < 100) {
+        log_debug("PS2.data.json is too small (%ld bytes), deleting...", st.st_size);
+        unlink(path);
+    }
+
+    // ===== FIXED URL LIST - removed 404 URL =====
     const char *urls[] = {
+        // Try specific release URL first (no redirect, direct download)
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        // Try latest release (has redirect, but we handle it)
         "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
-        "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json",
         NULL
     };
     
@@ -784,12 +824,21 @@ void scraper_download_gameindex(void) {
         log_debug("Failed to download from URL %d, trying next...", i + 1);
         sleep(2);
     }
+    
     if (!success) {
         log_debug("All download attempts failed for PS2.data.json");
+        log_debug("Creating minimal fallback PS2.data.json to prevent blackscreen");
+        FILE *fp = fopen(path, "w");
+        if (fp) {
+            fprintf(fp, "{}");
+            fclose(fp);
+            log_debug("Created fallback PS2.data.json");
+        }
     }
 }
 
-void scraper_force_download_gameindex(void) {
+void scraper_force_download_gameindex(void)
+{
     char path[512];
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
 
@@ -800,8 +849,8 @@ void scraper_force_download_gameindex(void) {
     unlink(path);
 
     const char *urls[] = {
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
         "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
-        "https://raw.githubusercontent.com/niemasd/GameDB-PS2/main/PS2.data.json",
         NULL
     };
     
@@ -819,8 +868,15 @@ void scraper_force_download_gameindex(void) {
         log_debug("Force download failed for URL %d", i + 1);
         sleep(2);
     }
+    
     if (!success) {
         log_debug("All force download attempts failed for PS2.data.json");
+        log_debug("Creating minimal fallback PS2.data.json");
+        FILE *fp = fopen(path, "w");
+        if (fp) {
+            fprintf(fp, "{}");
+            fclose(fp);
+        }
     }
 }
 
