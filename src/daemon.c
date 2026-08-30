@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <orbis/libkernel.h>
+#include <orbis/SystemService.h>
 
 /* This toolchain's <sys/mount.h> only forward-declares struct iovec and
  * doesn't expose nmount()/MNT_UPDATE at all. Define them ourselves —
@@ -24,19 +26,16 @@ struct iovec {
 };
 
 /* This toolchain's musl-based libc exposes umount() but not nmount() as
- * a linkable symbol, even though the PS4 kernel (a BSD fork) implements
- * the syscall itself. Call it directly via syscall() instead of relying
- * on a wrapper that doesn't exist in this libc. 378 is nmount's syscall
- * number on FreeBSD 11/12, which the PS4's BSD-compat layer mirrors —
- * this is the same number scene tools (mira-project etc.) use. */
-#define PS4_SYS_NMOUNT 378
-extern long syscall(long number, ...);
-
-static int nmount(struct iovec *iov, unsigned int niov, int flags) {
-    return (int)syscall(PS4_SYS_NMOUNT, iov, niov, flags);
+ * a linkable symbol. Going through libc's generic variadic syscall()
+ * wrapper for raw syscall 378 also comes back ENOSYS on this platform
+ * (not a permissions error -- credentials are already elevated by
+ * sandbox_bypass() by the time we get here). The proven fix, copied
+ * directly from ps4-libjbc/utils.c (already a build dependency of this
+ * project, and confirmed working there), is to skip libc entirely and
+ * issue the syscall via inline assembly. */
+__attribute__((naked)) static int nmount(struct iovec *iov, unsigned int niov, int flags) {
+    __asm__ volatile("mov $378, %rax\n\tmov %rcx, %r10\n\tsyscall\n\tret");
 }
-#include <orbis/libkernel.h>
-#include <orbis/SystemService.h>
 
 #define LAUNCH_APP_SKIP_SYSTEM_UPDATE  2u
 #define SCE_LNC_UTIL_ERROR_ALREADY_RUNNING  0x80D00504u
@@ -163,9 +162,13 @@ static int remount_system_rw(void) {
 
 #undef ADDIOV
 
+    /* Raw FreeBSD/PS4 syscall ABI: on success rax==0; on failure rax
+     * holds the errno value directly (this naked wrapper doesn't check
+     * the carry flag or touch libc's errno global, so "nonzero" is the
+     * only reliable failure check here — same as libjbc's own usage). */
     int ret = nmount(iov, iovlen, MNT_UPDATE);
-    if (ret < 0) {
-        log_debug("daemon: /system remount rw failed: %d (errno %d)", ret, errno);
+    if (ret != 0) {
+        log_debug("daemon: /system remount rw failed, errno-like: %d", ret);
         return 0;
     }
     log_debug("daemon: /system remounted read-write");
