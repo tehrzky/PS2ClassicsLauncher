@@ -9,7 +9,6 @@
 #include <errno.h>
 #include <sys/param.h>
 #include <sys/mount.h>
-#include <sys/_iovec.h>
 #include <orbis/libkernel.h>
 #include <orbis/SystemService.h>
 
