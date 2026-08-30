@@ -8,44 +8,60 @@
 #include <stdio.h>
 #include <math.h>
 
-/* ---------- Full-page layout constants ---------- */
-#define PG_MARGIN       40
-#define PG_HEADER_H     70
-#define PG_TAB_H        50
-#define PG_TAB_GAP      6
-#define PG_FOOTER_H     60
-#define PG_ROW_H        58
-#define PG_ROW_GAP      3
-#define PG_DESC_H       70
-#define PG_SCROLLBAR_W  5
+/* ---------- Consistent Screen Layout & Safe Area ---------- */
+#define SCREEN_WIDTH        1920
+#define SCREEN_HEIGHT       1080
 
-#define PG_CONTENT_TOP  (PG_HEADER_H + PG_TAB_H + 20)
-#define PG_CONTENT_BOT  (SCREEN_HEIGHT - PG_FOOTER_H - 20)
-#define PG_CONTENT_H    (PG_CONTENT_BOT - PG_CONTENT_TOP)
-#define PG_VISIBLE_ROWS (PG_CONTENT_H / (PG_ROW_H + PG_ROW_GAP))
+#define SAFE_X              64
+#define SAFE_Y              40
+#define SAFE_X1             (SCREEN_WIDTH - SAFE_X)
+#define SAFE_Y1             (SCREEN_HEIGHT - SAFE_Y)
 
-#define PG_DROPDOWN_W   500
-#define PG_DROPDOWN_H   500
-#define PG_DROPDOWN_X   ((SCREEN_WIDTH - PG_DROPDOWN_W) / 2)
-#define PG_DROPDOWN_Y   ((SCREEN_HEIGHT - PG_DROPDOWN_H) / 2)
-#define PG_DROPDOWN_ROW 44
+#define HEADER_H            100
+#define FOOTER_H            70
+#define PANEL_BORDER        2
+#define ROUND_RADIUS        8
+#define ROUND_RADIUS_SMALL  6
+#define ROUND_RADIUS_LARGE  16
+
+#define PG_TAB_H            44
+#define PG_TAB_GAP          8
+#define PG_ROW_H            58
+#define PG_ROW_GAP          4
+#define PG_DESC_H           80
+#define PG_SCROLLBAR_W      4
+
+#define PG_CONTENT_TOP      (HEADER_H + PG_TAB_H + 24)
+#define PG_CONTENT_BOT      (SCREEN_HEIGHT - FOOTER_H - 30)
+#define PG_CONTENT_H        (PG_CONTENT_BOT - PG_CONTENT_TOP)
+#define PG_VISIBLE_ROWS     ((PG_CONTENT_H - PG_DESC_H - 12) / (PG_ROW_H + PG_ROW_GAP))
+
+#define PG_DROPDOWN_W       600
+#define PG_DROPDOWN_H       480
+#define PG_DROPDOWN_X       ((SCREEN_WIDTH - PG_DROPDOWN_W) / 2)
+#define PG_DROPDOWN_Y       ((SCREEN_HEIGHT - PG_DROPDOWN_H) / 2)
+#define PG_DROPDOWN_ROW     48
 
 /* ---------- Helpers ---------- */
+static uint32_t pg_get_panel_color(void) {
+    int a = g_settings.panel_opacity * 255 / 100;
+    return (a << 24) | (COLOR_PANEL & 0x00FFFFFF);
+}
+
 static void pg_draw_btn_hint(int x, int y, const char *btn, const char *lbl, uint32_t c) {
-    int bw = font_text_width(btn, 20) + 12;
-    int bh = 28;
-    draw_rounded_rect(x, y, bw, bh, 4, COLOR_BORDER);
-    draw_rounded_rect(x + 1, y + 1, bw - 2, bh - 2, 3, COLOR_CARD);
-    draw_text(x + 6, y + 3, btn, c, 20);
-    draw_text(x + bw + 8, y + 3, lbl, COLOR_TEXT, 20);
+    int bw = font_text_width(btn, 24) + 16;
+    int bh = 36;
+    draw_rounded_rect(x, y, bw, bh, 6, COLOR_BORDER);
+    draw_rounded_rect(x + 1, y + 1, bw - 2, bh - 2, 5, COLOR_CARD);
+    draw_text(x + 8, y + 6, btn, c, 24);
+    draw_text(x + bw + 14, y + 6, lbl, COLOR_TEXT, 24);
 }
 
 static const char *get_field_display_value(const SchemaField *f, const GameSettings *gs) {
     static char buf[256];
     if (f->type == FIELD_SELECT) {
         const char *val = pgsettings_get_str(gs, f->id);
-        int i;
-        for (i = 0; i < f->option_count; i++) {
+        for (int i = 0; i < f->option_count; i++) {
             if (strcmp(f->options[i].key, val) == 0)
                 return f->options[i].label;
         }
@@ -69,16 +85,14 @@ static const char *get_field_display_value(const SchemaField *f, const GameSetti
     return "";
 }
 
-/* ---------- Slider (improved) ---------- */
+/* ---------- Components ---------- */
 static void pg_draw_slider(int x, int y, int w, int h, double min, double max, double step,
                             double value, int is_sel) {
     int track_y = y + h / 2 - 2;
     int track_w = w - 20;
 
-    /* Track background */
-    draw_rounded_rect(x, track_y, track_w, 4, 2, is_sel ? COLOR_BORDER : COLOR_BORDER);
+    draw_rounded_rect(x, track_y, track_w, 4, 2, COLOR_BORDER);
 
-    /* Fill */
     if (max > min) {
         double ratio = (value - min) / (max - min);
         if (ratio < 0.0) ratio = 0.0;
@@ -88,7 +102,6 @@ static void pg_draw_slider(int x, int y, int w, int h, double min, double max, d
             draw_rounded_rect(x, track_y, fill_w, 4, 2, is_sel ? COLOR_ACCENT : COLOR_DIM);
     }
 
-    /* Thumb */
     double ratio = (max > min) ? (value - min) / (max - min) : 0.0;
     if (ratio < 0.0) ratio = 0.0;
     if (ratio > 1.0) ratio = 1.0;
@@ -103,96 +116,82 @@ static void pg_draw_slider(int x, int y, int w, int h, double min, double max, d
     }
 }
 
-/* ---------- Field row ---------- */
 static void pg_draw_field(const SchemaField *f, const GameSettings *gs,
                            int x, int y, int w, int is_sel, int is_modified) {
-    /* Background */
     if (is_sel) {
-        draw_rounded_rect(x, y, w, PG_ROW_H, 6, COLOR_CARD_SEL);
-        draw_rect(x, y + 4, 3, PG_ROW_H - 8, COLOR_ACCENT);
+        draw_rounded_rect(x, y, w, PG_ROW_H, 8, COLOR_CARD_SEL);
+        draw_rect(x + 2, y + 6, 4, PG_ROW_H - 12, COLOR_ACCENT);
     } else if (is_modified) {
-        draw_rounded_rect(x, y, w, PG_ROW_H, 6, COLOR_CARD);
+        draw_rounded_rect(x, y, w, PG_ROW_H, 8, COLOR_CARD);
     }
 
-    /* Label */
     uint32_t label_c = is_sel ? COLOR_TEXT : (is_modified ? COLOR_GOLD : COLOR_DIM);
-    draw_text(x + 14, y + 14, f->label, label_c, 26);
+    draw_text(x + 20, y + 14, f->label, label_c, 28);
 
-    /* Value (right-aligned) */
-    int vx = x + w - 300;
-    int vw = 280;
+    int vx = x + w - 320;
+    int vw = 300;
 
     if (f->type == FIELD_SLIDER) {
-        pg_draw_slider(vx, y + 6, vw, PG_ROW_H - 12,
+        pg_draw_slider(vx, y + 6, vw - 60, PG_ROW_H - 12,
                         f->min_f, f->max_f, f->step_f,
                         pgsettings_get_double(gs, f->id), is_sel);
-        /* Numeric value to the right of slider */
         const char *num = get_field_display_value(f, gs);
-        int nw = font_text_width(num, 20);
-        draw_text(x + w - nw - 10, y + 16, num, is_sel ? COLOR_ACCENT : COLOR_DIM, 20);
+        int nw = font_text_width(num, 24);
+        draw_text(x + w - nw - 20, y + 14, num, is_sel ? COLOR_ACCENT : COLOR_DIM, 24);
     }
     else if (f->type == FIELD_TOGGLE || f->type == FIELD_CHECKBOX) {
         int on = pgsettings_get_int(gs, f->id);
-        const char *txt = on ? "[ON]" : "[OFF]";
-        uint32_t tc = on ? (is_sel ? COLOR_SUCCESS : COLOR_DIM) : (is_sel ? COLOR_ERROR : COLOR_MUTED);
-        int tw = font_text_width(txt, 24);
-        draw_text(x + w - tw - 14, y + 14, txt, tc, 24);
+        const char *txt = on ? "ON" : "OFF";
+        uint32_t tc = is_sel ? COLOR_ACCENT : COLOR_DIM;
+        int tw = font_text_width(txt, 26);
+        draw_text(x + w - tw - 20, y + 14, txt, tc, 26);
     }
     else if (f->type == FIELD_SELECT) {
         const char *val = get_field_display_value(f, gs);
-        char buf[128];
-        snprintf(buf, sizeof(buf), "[%s]", val);
-        uint32_t tc = is_sel ? COLOR_GOLD : COLOR_DIM;
-        int tw = font_text_width(buf, 24);
-        draw_text(x + w - tw - 14, y + 14, buf, tc, 24);
-        if (is_sel) {
-            draw_text(x + w - tw - 36, y + 14, "\xE2\x96\xBC", COLOR_ACCENT, 18);
-        }
+        uint32_t tc = is_sel ? COLOR_ACCENT : COLOR_DIM;
+        int tw = font_text_width(val, 26);
+        draw_text(x + w - tw - 20, y + 14, val, tc, 26);
     }
     else if (f->type == FIELD_TEXT) {
         const char *val = pgsettings_get_str(gs, f->id);
-        char buf[128];
-        snprintf(buf, sizeof(buf), "\"%s\"", val[0] ? val : "");
-        uint32_t tc = is_sel ? COLOR_GOLD : COLOR_DIM;
-        int tw = font_text_width(buf, 24);
+        uint32_t tc = is_sel ? COLOR_ACCENT : COLOR_DIM;
+        int tw = font_text_width(val, 26);
         if (tw > vw) tw = vw;
-        draw_text(x + w - tw - 14, y + 14, buf, tc, 24);
+        draw_text(x + w - tw - 20, y + 14, val, tc, 26);
     }
 }
 
-/* ---------- Description box ---------- */
 static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
     if (!f || !f->description[0] || !f->show_description) return;
 
-    draw_rounded_rect(x, y, w, PG_DESC_H, 6, COLOR_PANEL);
-    draw_text(x + 12, y + 8, "\xF0\x9F\x92\xA1", COLOR_GOLD, 20);
+    draw_rounded_rect(x, y, w, PG_DESC_H, ROUND_RADIUS, COLOR_BORDER);
+    draw_rounded_rect(x + 1, y + 1, w - 2, PG_DESC_H - 2, ROUND_RADIUS_SMALL, COLOR_CARD);
 
-    /* Simple word wrap */
+    draw_text_slot(x + 16, y + 10, "INFO:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+
     char buf[512];
     strncpy(buf, f->description, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-    int line_h = 20;
+    int line_h = 22;
     int max_lines = (PG_DESC_H - 16) / line_h;
-    if (max_lines < 1) max_lines = 1;
-
     char line[256] = "";
     char *word = strtok(buf, " \n\r\t");
-    int cy = y + 10;
+    int cy = y + 36;
     int lines = 0;
-    int text_x = x + 40;
-    int text_w = w - 56;
+    int text_x = x + 16;
+    int text_w = w - 32;
 
     while (word && lines < max_lines) {
         char test[512];
         if (line[0]) snprintf(test, sizeof(test), "%s %s", line, word);
         else snprintf(test, sizeof(test), "%s", word);
 
-        if (font_text_width(test, 18) <= text_w) {
+        if (font_text_width(test, 20) <= text_w) {
             snprintf(line, sizeof(line), "%s", test);
         } else {
             if (line[0]) {
-                draw_text(text_x, cy, line, COLOR_DIM, 18);
+                draw_text(text_x, cy, line, COLOR_DIM, 20);
                 cy += line_h;
                 lines++;
             }
@@ -201,46 +200,40 @@ static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
         word = strtok(NULL, " \n\r\t");
     }
     if (line[0] && lines < max_lines) {
-        draw_text(text_x, cy, line, COLOR_DIM, 18);
+        draw_text(text_x, cy, line, COLOR_DIM, 20);
     }
 }
 
-/* ---------- Scrollbar ---------- */
 static void pg_draw_scrollbar(int total, int visible, int offset, int x, int y, int h) {
     if (total <= visible) return;
     draw_rect(x, y, PG_SCROLLBAR_W, h, COLOR_CARD);
     int thumb = h * visible / total;
-    if (thumb < 20) thumb = 20;
+    if (thumb < 24) thumb = 24;
     int ty = y + (h - thumb) * offset / (total - visible);
     draw_rect(x, ty, PG_SCROLLBAR_W, thumb, COLOR_ACCENT);
 }
 
-/* ---------- Dropdown overlay ---------- */
 static void pg_draw_dropdown(const SchemaField *f, const GameSettings *gs, PGSettingsUIState *st) {
     if (!f || f->type != FIELD_SELECT || !st->dropdown_active) return;
 
-    /* Dim background */
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xD0000000);
 
-    /* Panel */
-    draw_rounded_rect(PG_DROPDOWN_X - 4, PG_DROPDOWN_Y - 4, PG_DROPDOWN_W + 8, PG_DROPDOWN_H + 8, 12, COLOR_ACCENT);
-    draw_rounded_rect(PG_DROPDOWN_X, PG_DROPDOWN_Y, PG_DROPDOWN_W, PG_DROPDOWN_H, 10, COLOR_PANEL);
-    draw_rounded_rect(PG_DROPDOWN_X + 2, PG_DROPDOWN_Y + 2, PG_DROPDOWN_W - 4, PG_DROPDOWN_H - 4, 8, COLOR_BG);
+    draw_rounded_rect(PG_DROPDOWN_X, PG_DROPDOWN_Y, PG_DROPDOWN_W, PG_DROPDOWN_H, ROUND_RADIUS_LARGE, COLOR_PANEL);
+    draw_rounded_rect(PG_DROPDOWN_X + PANEL_BORDER, PG_DROPDOWN_Y + PANEL_BORDER,
+                      PG_DROPDOWN_W - PANEL_BORDER * 2, PG_DROPDOWN_H - PANEL_BORDER * 2,
+                      ROUND_RADIUS_LARGE - PANEL_BORDER, COLOR_BG);
 
-    /* Title */
     char title[128];
     snprintf(title, sizeof(title), "Select: %s", f->label);
-    int tw = font_text_width(title, 28);
-    draw_text(PG_DROPDOWN_X + (PG_DROPDOWN_W - tw) / 2, PG_DROPDOWN_Y + 14, title, COLOR_GOLD, 28);
-    draw_rect(PG_DROPDOWN_X + 20, PG_DROPDOWN_Y + 50, PG_DROPDOWN_W - 40, 2, COLOR_BORDER);
+    int tw = font_text_width_slot(title, 32, FONT_SLOT_TITLE);
+    draw_text_slot(PG_DROPDOWN_X + (PG_DROPDOWN_W - tw) / 2, PG_DROPDOWN_Y + 18, title, COLOR_GOLD, 32, FONT_SLOT_TITLE);
+    draw_rect(PG_DROPDOWN_X + 20, PG_DROPDOWN_Y + 56, PG_DROPDOWN_W - 40, PANEL_BORDER, COLOR_BORDER);
 
-    /* Options */
-    int list_top = PG_DROPDOWN_Y + 64;
-    int list_h = PG_DROPDOWN_H - 80;
+    int list_top = PG_DROPDOWN_Y + 68;
+    int list_h = PG_DROPDOWN_H - 120;
     int visible_opts = list_h / PG_DROPDOWN_ROW;
     if (visible_opts < 1) visible_opts = 1;
 
-    /* Auto-scroll dropdown */
     if (st->dropdown_sel < st->dropdown_scroll)
         st->dropdown_scroll = st->dropdown_sel;
     if (st->dropdown_sel >= st->dropdown_scroll + visible_opts)
@@ -250,122 +243,135 @@ static void pg_draw_dropdown(const SchemaField *f, const GameSettings *gs, PGSet
         st->dropdown_scroll = f->option_count - visible_opts;
     if (st->dropdown_scroll < 0) st->dropdown_scroll = 0;
 
-    int i;
-    for (i = 0; i < visible_opts && (st->dropdown_scroll + i) < f->option_count; i++) {
+    for (int i = 0; i < visible_opts && (st->dropdown_scroll + i) < f->option_count; i++) {
         int idx = st->dropdown_scroll + i;
         int oy = list_top + i * PG_DROPDOWN_ROW;
         int is_sel = (idx == st->dropdown_sel);
 
         if (is_sel) {
-            draw_rounded_rect(PG_DROPDOWN_X + 16, oy, PG_DROPDOWN_W - 32, PG_DROPDOWN_ROW - 2, 6, COLOR_CARD_SEL);
+            draw_rounded_rect(PG_DROPDOWN_X + 16, oy, PG_DROPDOWN_W - 32, PG_DROPDOWN_ROW - 4, 6, COLOR_CARD_SEL);
+            draw_rect(PG_DROPDOWN_X + 16, oy + 4, 4, PG_DROPDOWN_ROW - 12, COLOR_ACCENT);
         }
 
-        /* Checkmark for current value */
         const char *cur_val = pgsettings_get_str(gs, f->id);
         int is_current = (strcmp(f->options[idx].key, cur_val) == 0);
 
-        int tx = PG_DROPDOWN_X + 30;
-        if (is_current) {
-            draw_text(tx, oy + 8, "\xE2\x9C\x93", COLOR_SUCCESS, 22);
-            tx += 28;
-        }
-
-        draw_text(tx, oy + 8, f->options[idx].label, is_sel ? COLOR_TEXT : COLOR_DIM, 24);
+        uint32_t tc = is_sel ? COLOR_TEXT : (is_current ? COLOR_GOLD : COLOR_DIM);
+        draw_text(PG_DROPDOWN_X + 32, oy + 8, f->options[idx].label, tc, 26);
     }
 
-    /* Dropdown scrollbar */
     if (f->option_count > visible_opts) {
         pg_draw_scrollbar(f->option_count, visible_opts, st->dropdown_scroll,
-                          PG_DROPDOWN_X + PG_DROPDOWN_W - 20, list_top, list_h);
+                          PG_DROPDOWN_X + PG_DROPDOWN_W - 16, list_top, list_h);
     }
 
-    /* Footer hint */
-    draw_text(PG_DROPDOWN_X + 20, PG_DROPDOWN_Y + PG_DROPDOWN_H - 32,
-              "[X] Select   [O] Cancel", COLOR_DIM, 18);
+    int hy = PG_DROPDOWN_Y + PG_DROPDOWN_H - 44;
+    draw_text(PG_DROPDOWN_X + 24, hy, "X Select     O Cancel", COLOR_DIM, 22);
 }
 
 /* ---------- Header, Tabs, Footer ---------- */
 static void pg_draw_header(const char *game_name) {
     char title[512];
-    snprintf(title, sizeof(title), "PS2 Game Settings: %s", game_name);
-    int tw = font_text_width_slot(title, 32, FONT_SLOT_TITLE);
-    int tx = (SCREEN_WIDTH - tw) / 2;
-    if (tx < PG_MARGIN) tx = PG_MARGIN;
-    draw_text_slot(tx, 16, title, COLOR_GOLD, 32, FONT_SLOT_TITLE);
-    draw_rect(PG_MARGIN, PG_HEADER_H - 4, SCREEN_WIDTH - PG_MARGIN * 2, 2, COLOR_BORDER);
+    snprintf(title, sizeof(title), "GAME CONFIG: %s", game_name);
+    
+    draw_text_slot(SAFE_X, SAFE_Y, title, COLOR_ACCENT, 52, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X + 1, SAFE_Y, title, COLOR_ACCENT, 52, FONT_SLOT_TITLE);
+
+    int tw = font_text_width_slot("tehrzky", 32, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X1 - tw, SAFE_Y + 8, "tehrzky", COLOR_ACCENT, 32, FONT_SLOT_TITLE);
+
+    draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), PANEL_BORDER, COLOR_ACCENT);
 }
 
 static void pg_draw_tabs(const Schema *schema, int selected_tab) {
-    int x = PG_MARGIN;
-    int y = PG_HEADER_H + 6;
-    int i;
-    for (i = 0; i < schema->tab_count; i++) {
+    int x = SAFE_X;
+    int y = HEADER_H + 12;
+
+    for (int i = 0; i < schema->tab_count; i++) {
         const SchemaTab *t = &schema->tabs[i];
         char label[64];
         snprintf(label, sizeof(label), "%s %s", t->icon[0] ? t->icon : "", t->label);
-        int lw = font_text_width(label, 22);
-        int tw = lw + 24;
+        int tw = font_text_width(label, 24) + 28;
         int is_sel = (i == selected_tab);
 
         uint32_t bg = is_sel ? COLOR_ACCENT : COLOR_CARD;
         uint32_t fg = is_sel ? COLOR_TEXT : COLOR_DIM;
 
-        draw_rounded_rect(x, y, tw, PG_TAB_H - 6, 8, bg);
-        draw_text(x + 12, y + 10, label, fg, 22);
+        draw_rounded_rect(x, y, tw, PG_TAB_H, 6, bg);
+        draw_text(x + 14, y + 8, label, fg, 24);
         x += tw + PG_TAB_GAP;
     }
-    draw_rect(PG_MARGIN, y + PG_TAB_H - 2, SCREEN_WIDTH - PG_MARGIN * 2, 2, COLOR_BORDER);
 }
 
 static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
-    int y = SCREEN_HEIGHT - PG_FOOTER_H + 8;
-    draw_rect(0, SCREEN_HEIGHT - PG_FOOTER_H, SCREEN_WIDTH, 2, COLOR_BORDER);
+    int y = SCREEN_HEIGHT - FOOTER_H;
+    draw_rect(0, y, SCREEN_WIDTH, FOOTER_H, COLOR_PANEL);
+    draw_rect(0, y, SCREEN_WIDTH, PANEL_BORDER, COLOR_ACCENT);
+
+    int hy = y + 16;
+    int x = SAFE_X + 20;
 
     if (show_confirm) {
-        const char *opts[3] = {"Save & Exit", "Discard Changes", "Cancel"};
+        const char *opts[3] = {"Save & Exit", "Discard", "Cancel"};
         uint32_t colors[3] = {COLOR_SUCCESS, COLOR_ERROR, COLOR_DIM};
-        int x = (SCREEN_WIDTH - 600) / 2;
-        int i;
-        for (i = 0; i < 3; i++) {
+        int cx = (SCREEN_WIDTH - 540) / 2;
+
+        for (int i = 0; i < 3; i++) {
             uint32_t c = (i == confirm_sel) ? COLOR_ACCENT : COLOR_CARD;
-            int tw = font_text_width(opts[i], 22);
-            draw_rounded_rect(x, y, tw + 20, 36, 5, c);
-            draw_text(x + 10, y + 5, opts[i], colors[i], 22);
-            x += tw + 40;
+            int tw = font_text_width(opts[i], 24);
+            draw_rounded_rect(cx, hy, tw + 24, 36, 6, c);
+            draw_text(cx + 12, hy + 6, opts[i], colors[i], 24);
+            cx += tw + 44;
         }
     } else {
-        int x = PG_MARGIN;
-        pg_draw_btn_hint(x, y, "^v", "Navigate", COLOR_DIM); x += 180;
-        pg_draw_btn_hint(x, y, "<>", "Change", COLOR_DIM); x += 180;
-        pg_draw_btn_hint(x, y, "L1/R1", "Tabs", COLOR_DIM); x += 200;
-        pg_draw_btn_hint(x, y, "X", "Select", COLOR_ACCENT); x += 200;
-        pg_draw_btn_hint(x, y, "TRI", "Reset", COLOR_DIM); x += 200;
-        pg_draw_btn_hint(x, y, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
+        pg_draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
+        pg_draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
+        pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
+        pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
+        pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
+        pg_draw_btn_hint(x, hy, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
 
         if (dirty) {
-            const char *ind = "\xE2\x97\x8F UNSAVED";
-            int iw = font_text_width(ind, 18);
-            draw_text(SCREEN_WIDTH - iw - PG_MARGIN, y + 4, ind, COLOR_ERROR, 18);
+            const char *ind = "UNSAVED";
+            int iw = font_text_width(ind, 22);
+            draw_text(SAFE_X1 - iw, hy + 6, ind, COLOR_ERROR, 22);
         }
     }
 }
 
-/* ---------- Public draw function ---------- */
+/* ---------- Main Draw Router ---------- */
 void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
                         PGSettingsUIState *st) {
     if (!schema || !settings || !st || !st->active) return;
 
-    /* Full-screen background clear */
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    if (g_settings.wallpaper[0]) {
+        cover_draw_wallpaper();
+        if (g_settings.wallpaper_brightness < 100) {
+            int alpha = (100 - g_settings.wallpaper_brightness) * 255 / 100;
+            draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (alpha << 24));
+        }
+    } else {
+        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    }
 
     pg_draw_header(st->game_name);
     pg_draw_tabs(schema, st->selected_tab);
 
-    const SchemaTab *tab = &schema->tabs[st->selected_tab];
-    int content_x = PG_MARGIN;
-    int content_w = SCREEN_WIDTH - PG_MARGIN * 2 - PG_SCROLLBAR_W - 12;
+    /* Panel Backdrop Container */
+    int panel_w = SAFE_X1 - SAFE_X;
+    int panel_h = PG_CONTENT_H + 20;
+    int panel_y = PG_CONTENT_TOP - 10;
 
-    /* Auto-scroll */
+    draw_rounded_rect(SAFE_X, panel_y, panel_w, panel_h, ROUND_RADIUS, COLOR_GOLD);
+    uint32_t panel_col = pg_get_panel_color();
+    draw_rounded_rect(SAFE_X + PANEL_BORDER, panel_y + PANEL_BORDER,
+                      panel_w - PANEL_BORDER * 2, panel_h - PANEL_BORDER * 2,
+                      ROUND_RADIUS_SMALL, panel_col);
+
+    const SchemaTab *tab = &schema->tabs[st->selected_tab];
+    int content_x = SAFE_X + 16;
+    int content_w = panel_w - 48;
+
     if (st->selected_field < st->scroll_offset)
         st->scroll_offset = st->selected_field;
     if (st->selected_field >= st->scroll_offset + PG_VISIBLE_ROWS)
@@ -375,9 +381,7 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
         st->scroll_offset = tab->field_count - PG_VISIBLE_ROWS;
     if (st->scroll_offset < 0) st->scroll_offset = 0;
 
-    /* Draw visible fields */
-    int i;
-    for (i = 0; i < PG_VISIBLE_ROWS && (st->scroll_offset + i) < tab->field_count; i++) {
+    for (int i = 0; i < PG_VISIBLE_ROWS && (st->scroll_offset + i) < tab->field_count; i++) {
         int fidx = st->scroll_offset + i;
         const SchemaField *f = &tab->fields[fidx];
         int fy = PG_CONTENT_TOP + i * (PG_ROW_H + PG_ROW_GAP);
@@ -386,37 +390,32 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
         pg_draw_field(f, settings, content_x, fy, content_w, is_sel, is_mod);
     }
 
-    /* Description for selected field */
     if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
         const SchemaField *sf = &tab->fields[st->selected_field];
         if (sf->show_description && sf->description[0]) {
-            int desc_y = PG_CONTENT_TOP + PG_VISIBLE_ROWS * (PG_ROW_H + PG_ROW_GAP) + 6;
-            if (desc_y + PG_DESC_H < PG_CONTENT_BOT) {
-                pg_draw_description(sf, content_x, desc_y, content_w);
-            }
+            int desc_y = PG_CONTENT_TOP + PG_VISIBLE_ROWS * (PG_ROW_H + PG_ROW_GAP) + 4;
+            pg_draw_description(sf, content_x, desc_y, content_w);
         }
     }
 
-    /* Scrollbar */
     pg_draw_scrollbar(tab->field_count, PG_VISIBLE_ROWS, st->scroll_offset,
-                      SCREEN_WIDTH - PG_MARGIN - PG_SCROLLBAR_W, PG_CONTENT_TOP, PG_CONTENT_H);
+                      SAFE_X1 - 20, PG_CONTENT_TOP, PG_VISIBLE_ROWS * (PG_ROW_H + PG_ROW_GAP));
 
     pg_draw_footer(st->dirty, st->show_confirm, st->confirm_sel);
 
-    /* Dropdown overlay (on top of everything) */
     if (st->dropdown_active && st->selected_field >= 0 && st->selected_field < tab->field_count) {
         pg_draw_dropdown(&tab->fields[st->selected_field], settings, st);
     }
 }
 
-/* ---------- Input handling ---------- */
+/* ---------- Input Logic ---------- */
 static void change_field_value(const SchemaField *f, GameSettings *gs, int direction) {
     if (!f || !gs) return;
 
     if (f->type == FIELD_SELECT) {
         const char *cur = pgsettings_get_str(gs, f->id);
-        int idx = -1, i;
-        for (i = 0; i < f->option_count; i++) {
+        int idx = -1;
+        for (int i = 0; i < f->option_count; i++) {
             if (strcmp(f->options[i].key, cur) == 0) { idx = i; break; }
         }
         if (idx < 0) idx = 0;
@@ -434,7 +433,6 @@ static void change_field_value(const SchemaField *f, GameSettings *gs, int direc
         double next = cur + direction * f->step_f;
         if (next < f->min_f) next = f->min_f;
         if (next > f->max_f) next = f->max_f;
-        /* Round to nearest step */
         if (f->step_f > 0) {
             next = f->min_f + round((next - f->min_f) / f->step_f) * f->step_f;
         }
@@ -462,7 +460,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
 
     const SchemaTab *tab = &schema->tabs[st->selected_tab];
 
-    /* Dropdown mode takes priority */
     if (st->dropdown_active) {
         const SchemaField *f = &tab->fields[st->selected_field];
         if (pressed & ORBIS_PAD_BUTTON_UP) {
@@ -482,7 +479,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         return 1;
     }
 
-    /* Confirm dialog */
     if (st->show_confirm) {
         if (pressed & ORBIS_PAD_BUTTON_LEFT) {
             st->confirm_sel = (st->confirm_sel - 1 + 3) % 3;
@@ -511,7 +507,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         return 1;
     }
 
-    /* Normal navigation */
     if (pressed & ORBIS_PAD_BUTTON_UP) {
         st->selected_field = (st->selected_field - 1 + tab->field_count) % tab->field_count;
     }
@@ -547,12 +542,10 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             const SchemaField *f = &tab->fields[st->selected_field];
             if (f->type == FIELD_SELECT && f->option_count > 0) {
-                /* Open dropdown */
                 st->dropdown_active = 1;
                 const char *cur = pgsettings_get_str(settings, f->id);
                 st->dropdown_sel = 0;
-                int i;
-                for (i = 0; i < f->option_count; i++) {
+                for (int i = 0; i < f->option_count; i++) {
                     if (strcmp(f->options[i].key, cur) == 0) {
                         st->dropdown_sel = i;
                         break;
@@ -574,9 +567,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     }
 
     if (pressed & ORBIS_PAD_BUTTON_SQUARE) {
-        /* Reset entire tab */
-        int i;
-        for (i = 0; i < tab->field_count; i++) {
+        for (int i = 0; i < tab->field_count; i++) {
             reset_field_to_default(&tab->fields[i], settings);
         }
         st->dirty = pgsettings_any_modified(settings, schema);
