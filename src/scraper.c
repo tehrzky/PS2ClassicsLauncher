@@ -125,7 +125,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - WITHOUT redirect handling (direct URLs only) =====
+// ===== download_file - WITH redirect handling =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -262,13 +262,24 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== REMOVED: Redirect handling (not available in SDK) =====
-    // We only use direct URLs, so we shouldn't get redirects
-    // If we do get a redirect, fail and let the caller try the next URL
-
+    // Handle redirects (GitHub release downloads return 302 pointing to S3 storage)
     if (statusCode == 301 || statusCode == 302 || statusCode == 307 || statusCode == 308) {
-        log_debug("Redirect received (status %d) - this URL needs manual handling", statusCode);
-        goto cleanup;
+        char location[512] = {0};
+        ret = sceHttpGetResponseHeaderValue(reqId, "Location", location, sizeof(location));
+        if (ret >= 0 && location[0] != '\0') {
+            log_debug("Following redirect to: %s", location);
+            
+            // Clean up current HTTP context
+            if (fp) fclose(fp);
+            if (reqId >= 0) sceHttpDeleteRequest(reqId);
+            if (connId >= 0) sceHttpDeleteConnection(connId);
+            if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
+            if (httpCtx >= 0) sceHttpTerm(httpCtx);
+            if (is_https) sceSslTerm();
+            
+            // Re-run download_file using the redirected URL
+            return download_file(location, path);
+        }
     }
 
     if (statusCode != 200) {
@@ -766,12 +777,9 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
-    // ===== FIXED: Direct URLs only - no redirects! =====
+    // Use latest release with redirect handling
     const char *urls[] = {
-        // Direct URL - specific release, NO REDIRECT
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-        // HTTP version as fallback
-        "http://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
         NULL
     };
     
@@ -814,8 +822,7 @@ void scraper_force_download_gameindex(void)
     unlink(path);
 
     const char *urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-        "http://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
         NULL
     };
     
