@@ -177,17 +177,8 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file with manual redirect following =====
-#define MAX_REDIRECTS 5
-
-static int download_file_internal(const char *url, const char *path, int redirect_depth);
-
+// ===== download_file with auto-redirect support =====
 static int download_file(const char *url, const char *path)
-{
-    return download_file_internal(url, path, 0);
-}
-
-static int download_file_internal(const char *url, const char *path, int redirect_depth)
 {
     int ret;
     int32_t sslId = -1, httpCtx = -1;
@@ -197,7 +188,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
     int result = -1;
     int is_https = 0;
 
-    log_debug("download_file: %s -> %s (depth %d)", url, path, redirect_depth);
+    log_debug("download_file: %s -> %s", url, path);
 
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
@@ -301,6 +292,9 @@ static int download_file_internal(const char *url, const char *path, int redirec
     }
     log_debug("sceHttpCreateRequest ok: %d", reqId);
 
+    // Enable automatic redirect following (libSceHttp handles 3xx)
+    sceHttpSetAutoRedirect(reqId, 1);
+
     // Headers that work with GitHub
     sceHttpAddRequestHeader(reqId, "Host", host, 0);
     sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
@@ -323,63 +317,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== Follow redirects manually =====
-    if (statusCode == 301 || statusCode == 302 || statusCode == 303 ||
-        statusCode == 307 || statusCode == 308) {
-
-        if (redirect_depth >= MAX_REDIRECTS) {
-            log_debug("Too many redirects (%d) for %s, giving up", redirect_depth, url);
-            goto cleanup;
-        }
-
-        // Get all response headers and parse Location manually
-        char *headers = NULL;
-        size_t headers_len = 0;
-        char location[1024] = {0};
-        int got_location = 0;
-
-        ret = sceHttpGetAllResponseHeaders(reqId, &headers, &headers_len);
-        if (ret >= 0 && headers && headers_len > 0) {
-            log_debug("Got headers (%zu bytes)", headers_len);
-            
-            // Find Location: header
-            char *loc_ptr = strstr(headers, "Location:");
-            if (loc_ptr) {
-                loc_ptr += 9; // Skip "Location:"
-                while (*loc_ptr == ' ' || *loc_ptr == '\t') loc_ptr++;
-                char *end = loc_ptr;
-                while (*end && *end != '\r' && *end != '\n') end++;
-                size_t len = end - loc_ptr;
-                if (len > 0 && len < sizeof(location) - 1) {
-                    memcpy(location, loc_ptr, len);
-                    location[len] = '\0';
-                    got_location = 1;
-                    log_debug("Got Location from headers: %s", location);
-                }
-            }
-            
-            // Free the headers buffer (libSceHttp allocates it)
-            free(headers);
-        }
-
-        // Clean up this hop's connection before recursing
-        if (reqId >= 0) sceHttpDeleteRequest(reqId);
-        if (connId >= 0) sceHttpDeleteConnection(connId);
-        if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
-        if (httpCtx >= 0) sceHttpTerm(httpCtx);
-        if (is_https) sceSslTerm();
-        g_download_active = 0;
-
-        if (!got_location || location[0] == '\0') {
-            log_debug("Redirect (status %d) had no usable Location header", statusCode);
-            g_download_status[0] = '\0';
-            return -1;
-        }
-
-        log_debug("Following redirect (%d) -> %s", statusCode, location);
-        return download_file_internal(location, path, redirect_depth + 1);
-    }
-
+    // With auto-redirect on, we should only see 200 for the final response
     if (statusCode != 200) {
         log_debug("HTTP error: status=%d", statusCode);
         goto cleanup;
@@ -457,6 +395,7 @@ static void normalize_string(const char *src, char *dst, size_t dst_len) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
         unsigned char c = src[i];
+        // OPTIMIZATION: Use bitmask for common characters
         if (c == ' ' || c == ':' || c == '-' || c == '_' || c == '.' ||
             c == '\'' || c == '\"' || c == '!' || c == '?' || c == '&' ||
             c == '/' || c == '\\' || c == '(' || c == ')' || c == '[' ||
@@ -940,7 +879,7 @@ int scraper_did_json_succeed(void) {
     return success;
 }
 
-// ===== Background JSON Worker - optimized =====
+// ===== Background JSON Worker - uses auto-redirect =====
 static void* background_json_worker(void* arg) {
     (void)arg;
     log_debug("Background JSON download thread started");
@@ -955,6 +894,7 @@ static void* background_json_worker(void* arg) {
 
             int success = 0;
 
+            // Single HTTPS request - libSceHttp auto-redirect handles the 302
             const char *redirect_url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
             if (download_file(redirect_url, json_task.path) == 0) {
                 struct stat st;
@@ -964,6 +904,7 @@ static void* background_json_worker(void* arg) {
                 }
             }
 
+            // HTTP fallback only if HTTPS fails
             if (!success) {
                 log_debug("HTTPS attempt failed, trying HTTP redirect URL...");
                 const char *http_url = "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
@@ -984,6 +925,7 @@ static void* background_json_worker(void* arg) {
 
             log_debug("JSON download %s", success ? "SUCCESS" : "FAILED");
 
+            // Reload the data if successful
             if (success) {
                 if (g_gamedb_data) {
                     free(g_gamedb_data);
@@ -1001,6 +943,7 @@ static void* background_json_worker(void* arg) {
                     fprintf(fp, "{}");
                     fclose(fp);
                     log_debug("Created fallback PS2.data.json");
+                    // Mark as success so we don't retry forever
                     pthread_mutex_lock(&json_mutex);
                     json_task.download_success = 1;
                     pthread_mutex_unlock(&json_mutex);
@@ -1030,6 +973,7 @@ void scraper_download_gameindex(void)
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
 
+    // Check if file exists and is valid
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 100) {
         log_debug("PS2.data.json already exists (%ld bytes)", st.st_size);
@@ -1041,6 +985,7 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
+    // Start async download
     scraper_start_async_json_download(path);
     if (!json_thread_running) {
         json_thread_running = 1;
@@ -1059,12 +1004,14 @@ void scraper_force_download_gameindex(void)
 
     unlink(path);
 
+    // Remove any cached data
     if (g_gamedb_data) {
         free(g_gamedb_data);
         g_gamedb_data = NULL;
     }
     g_gamedb_size = 0;
 
+    // Start async download
     scraper_start_async_json_download(path);
     if (!json_thread_running) {
         json_thread_running = 1;
@@ -1076,8 +1023,10 @@ void scraper_force_download_gameindex(void)
 void scraper_init(void) {
     char path[512];
 
+    // OPTIMIZATION: Pre-create directories once
     ensure_directories();
 
+    // Load JSON if it exists (non-blocking)
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
     if (g_gamedb_data) {
         free(g_gamedb_data);
@@ -1096,6 +1045,7 @@ void scraper_init(void) {
         }
     }
 
+    // Load metadata
     snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
     if (g_metadata_data) {
         free(g_metadata_data);
@@ -1108,6 +1058,7 @@ void scraper_init(void) {
         log_debug("ps2_metadata.json not found at %s", path);
     }
 
+    // Clear cache
     pthread_mutex_lock(&cache_mutex);
     cache_count = 0;
     memset(game_cache, 0, sizeof(game_cache));
