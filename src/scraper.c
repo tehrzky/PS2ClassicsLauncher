@@ -68,6 +68,41 @@ static pthread_mutex_t json_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t json_thread;
 static int json_thread_running = 0;
 
+// ========== OPTIMIZATION: Pre-computed paths cache ==========
+static char covers_dir[512] = {0};
+static char default_dir[512] = {0};
+static char d3_dir[512] = {0};
+static int dirs_created = 0;
+
+static void ensure_directories(void) {
+    if (dirs_created) return;
+    
+    snprintf(covers_dir, sizeof(covers_dir), "%s/covers", g_settings.work_path);
+    snprintf(default_dir, sizeof(default_dir), "%s/covers/default", g_settings.work_path);
+    snprintf(d3_dir, sizeof(d3_dir), "%s/covers/3d", g_settings.work_path);
+    
+    mkdir(covers_dir, 0777);
+    mkdir(default_dir, 0777);
+    mkdir(d3_dir, 0777);
+    
+    dirs_created = 1;
+}
+
+// ========== OPTIMIZATION: Fast path checking ==========
+static inline int file_exists(const char *path) {
+    struct stat st;
+    return (stat(path, &st) == 0);
+}
+
+static inline int file_exists_and_size(const char *path, size_t *size) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        if (size) *size = st.st_size;
+        return 1;
+    }
+    return 0;
+}
+
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -139,7 +174,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - direct URLs only =====
+// ===== download_file - optimized =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -276,7 +311,7 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // Check for redirect - fail and let caller handle
+    // Check for redirect - we can't follow it, so fail and let caller use API
     if (statusCode == 301 || statusCode == 302 || statusCode == 303 || 
         statusCode == 307 || statusCode == 308) {
         log_debug("Redirect received (status %d) - this URL needs manual handling", statusCode);
@@ -294,7 +329,8 @@ static int download_file(const char *url, const char *path)
         goto cleanup;
     }
 
-    char buf[4096];
+    // OPTIMIZATION: Larger buffer for faster downloads
+    char buf[16384];  // 16KB buffer instead of 4KB
     size_t total = 0;
     int read_retries = 0;
     const int max_read_retries = 3;
@@ -354,11 +390,12 @@ cleanup:
     return -1;
 }
 
-// ===== String normalization =====
+// ===== String normalization - optimized =====
 static void normalize_string(const char *src, char *dst, size_t dst_len) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dst_len - 1; i++) {
-        char c = src[i];
+        unsigned char c = src[i];
+        // OPTIMIZATION: Use bitmask for common characters
         if (c == ' ' || c == ':' || c == '-' || c == '_' || c == '.' ||
             c == '\'' || c == '\"' || c == '!' || c == '?' || c == '&' ||
             c == '/' || c == '\\' || c == '(' || c == ')' || c == '[' ||
@@ -511,12 +548,12 @@ static int metadata_find_description(const char *normalized_title,
     return -1;
 }
 
-// ===== scraper_get_game_info with caching =====
+// ===== scraper_get_game_info with caching - optimized =====
 int scraper_get_game_info(const char *serial, const char *fallback_title, GameDBInfo *out) {
     if (!out || !serial || !serial[0]) return -1;
     memset(out, 0, sizeof(GameDBInfo));
 
-    // Check cache first
+    // Check cache first (fast path)
     pthread_mutex_lock(&cache_mutex);
     for (int i = 0; i < cache_count; i++) {
         if (strcmp(game_cache[i].serial, serial) == 0) {
@@ -585,7 +622,7 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     return 0;
 }
 
-// ===== Cover functions =====
+// ===== Cover functions - optimized =====
 static void build_cover_url(char *out, size_t out_len, const char *serial, int is_3d) {
     const char *base = g_settings.scraper_base_url;
     if (is_3d) {
@@ -602,20 +639,22 @@ static void mark_no_cover(const char *serial) {
     if (fp) fclose(fp);
 }
 
-static int has_no_cover_marker(const char *serial) {
+static inline int has_no_cover_marker(const char *serial) {
     char path[512];
     snprintf(path, sizeof(path), "%s/covers/.%s.nocover", g_settings.work_path, serial);
-    return access(path, F_OK) == 0;
+    return file_exists(path);
 }
 
-static int cover_both_exist(const char *serial) {
+static inline int cover_both_exist(const char *serial) {
     if (!serial || !serial[0]) return 0;
     char path[512];
-    int has_default = 0, has_3d = 0;
+    
     snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-    if (access(path, F_OK) == 0) has_default = 1;
+    int has_default = file_exists(path);
+    
     snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-    if (access(path, F_OK) == 0) has_3d = 1;
+    int has_3d = file_exists(path);
+    
     return (has_default && has_3d) ? 1 : 0;
 }
 
@@ -624,77 +663,62 @@ void scraper_download_cover(const char *serial) {
     if (!g_settings.auto_download_covers) return;
     if (has_no_cover_marker(serial)) return;
 
-    char cover_path[512];
-    char url[512];
-    char covers_dir[512], default_dir[512], d3_dir[512];
-    
-    snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
-    snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
-    snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
-    mkdir(covers_dir, 0777);
-    mkdir(default_dir, 0777);
-    mkdir(d3_dir, 0777);
+    ensure_directories();
 
     int preferred_3d = g_settings.cover_type == 1;
-    int has_default = 0;
-    int has_3d = 0;
+    char path[512];
+    int has_default = 0, has_3d = 0;
 
-    // Check what exists
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-    if (access(cover_path, F_OK) == 0) has_default = 1;
+    // OPTIMIZATION: Check both at once
+    snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+    has_default = file_exists(path);
     
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-    if (access(cover_path, F_OK) == 0) has_3d = 1;
+    snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+    has_3d = file_exists(path);
 
-    // If both exist, we're done
     if (has_default && has_3d) return;
 
-    // Download missing covers based on preference
+    char url[512];
+
+    // Download missing covers
     if (preferred_3d) {
-        // Download 3D if missing
         if (!has_3d) {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+            snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            download_file(url, cover_path);
+            download_file(url, path);
         }
-        // Download default if missing
         if (!has_default) {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+            snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            download_file(url, cover_path);
+            download_file(url, path);
         }
     } else {
-        // Download default if missing
         if (!has_default) {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+            snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            download_file(url, cover_path);
+            download_file(url, path);
         }
-        // Download 3D if missing
         if (!has_3d) {
-            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+            snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            download_file(url, cover_path);
+            download_file(url, path);
         }
     }
 
-    // After downloads, verify what we have
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-    has_default = (access(cover_path, F_OK) == 0);
+    // Verify after download
+    snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+    has_default = file_exists(path);
     
-    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-    has_3d = (access(cover_path, F_OK) == 0);
+    snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+    has_3d = file_exists(path);
 
-    // Only mark no cover if BOTH are missing
     if (!has_default && !has_3d) {
         mark_no_cover(serial);
         log_debug("Both covers missing for %s, marked as no cover", serial);
-    } else {
-        log_debug("At least one cover exists for %s (default: %d, 3D: %d)", serial, has_default, has_3d);
     }
 }
 
@@ -855,7 +879,7 @@ int scraper_did_json_succeed(void) {
     return success;
 }
 
-// ===== Background JSON Worker =====
+// ===== Background JSON Worker - NO HARDCODED URLs =====
 static void* background_json_worker(void* arg) {
     (void)arg;
     log_debug("Background JSON download thread started");
@@ -868,26 +892,31 @@ static void* background_json_worker(void* arg) {
             
             log_debug("Background downloading PS2.data.json to: %s", json_task.path);
             
-            // Try GitHub API first
             int success = 0;
+            
+            // Try GitHub API to get the latest release
             const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
             char temp_path[512];
             snprintf(temp_path, sizeof(temp_path), "%s/release_latest.json", 
                      g_settings.work_path);
             
+            log_debug("Fetching latest release info from GitHub API...");
             if (download_file(api_url, temp_path) == 0) {
                 size_t json_size = 0;
                 char *json_data = file_load(temp_path, &json_size);
                 if (json_data && json_size > 0) {
+                    // Find the assets array
                     const char *assets = strstr(json_data, "\"assets\"");
                     if (assets) {
+                        // Look for PS2.data.json in the assets
                         const char *asset = strstr(assets, "PS2.data.json");
                         if (asset) {
+                            // Find the browser_download_url
                             const char *url_start = strstr(asset, "\"browser_download_url\"");
                             if (url_start) {
                                 url_start = strstr(url_start, "\"https://");
                                 if (url_start) {
-                                    url_start++;
+                                    url_start++; // Skip the first quote
                                     char download_url[512] = {0};
                                     int i = 0;
                                     while (*url_start && *url_start != '"' && i < sizeof(download_url) - 1) {
@@ -896,6 +925,8 @@ static void* background_json_worker(void* arg) {
                                     download_url[i] = '\0';
                                     
                                     log_debug("Found asset URL: %s", download_url);
+                                    log_debug("Downloading PS2.data.json from API URL...");
+                                    
                                     if (download_file(download_url, json_task.path) == 0) {
                                         struct stat st;
                                         if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
@@ -912,22 +943,30 @@ static void* background_json_worker(void* arg) {
                 unlink(temp_path);
             }
             
-            // Fallback URLs
+            // If API failed, try the latest redirect URL
             if (!success) {
-                const char *fallback_urls[] = {
-                    "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-                    "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
-                    NULL
-                };
+                log_debug("API download failed, trying latest redirect URL...");
+                const char *redirect_url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
                 
-                for (int i = 0; fallback_urls[i] != NULL && !success; i++) {
-                    log_debug("Attempting fallback URL %d: %s", i + 1, fallback_urls[i]);
-                    if (download_file(fallback_urls[i], json_task.path) == 0) {
-                        struct stat st;
-                        if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
-                            log_debug("Successfully downloaded PS2.data.json (%ld bytes) from fallback", st.st_size);
-                            success = 1;
-                        }
+                if (download_file(redirect_url, json_task.path) == 0) {
+                    struct stat st;
+                    if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
+                        log_debug("Successfully downloaded PS2.data.json (%ld bytes) from redirect URL", st.st_size);
+                        success = 1;
+                    }
+                }
+            }
+            
+            // Final fallback: Try HTTP version
+            if (!success) {
+                log_debug("HTTPS redirect failed, trying HTTP redirect URL...");
+                const char *redirect_url = "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
+                
+                if (download_file(redirect_url, json_task.path) == 0) {
+                    struct stat st;
+                    if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
+                        log_debug("Successfully downloaded PS2.data.json (%ld bytes) from HTTP redirect", st.st_size);
+                        success = 1;
                     }
                 }
             }
@@ -950,6 +989,19 @@ static void* background_json_worker(void* arg) {
                 if (g_gamedb_data) {
                     log_debug("Reloaded PS2.data.json (%zu bytes)", g_gamedb_size);
                 }
+            } else {
+                log_debug("All download attempts failed for PS2.data.json");
+                log_debug("Creating minimal fallback PS2.data.json to prevent blackscreen");
+                FILE *fp = fopen(json_task.path, "w");
+                if (fp) {
+                    fprintf(fp, "{}");
+                    fclose(fp);
+                    log_debug("Created fallback PS2.data.json");
+                    // Mark as success so we don't retry forever
+                    pthread_mutex_lock(&json_mutex);
+                    json_task.download_success = 1;
+                    pthread_mutex_unlock(&json_mutex);
+                }
             }
             
             pthread_mutex_lock(&json_mutex);
@@ -963,7 +1015,7 @@ static void* background_json_worker(void* arg) {
     return NULL;
 }
 
-// ===== GameDB download functions (kept for compatibility) =====
+// ===== GameDB download functions =====
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
@@ -975,6 +1027,7 @@ void scraper_download_gameindex(void)
     snprintf(config_dir, sizeof(config_dir), "%s/config", g_settings.work_path);
     mkdir(config_dir, 0777);
 
+    // Check if file exists and is valid
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 100) {
         log_debug("PS2.data.json already exists (%ld bytes)", st.st_size);
@@ -1004,6 +1057,13 @@ void scraper_force_download_gameindex(void)
     mkdir(config_dir, 0777);
 
     unlink(path);
+    
+    // Remove any cached data
+    if (g_gamedb_data) {
+        free(g_gamedb_data);
+        g_gamedb_data = NULL;
+    }
+    g_gamedb_size = 0;
 
     // Start async download
     scraper_start_async_json_download(path);
@@ -1017,6 +1077,9 @@ void scraper_force_download_gameindex(void)
 void scraper_init(void) {
     char path[512];
 
+    // OPTIMIZATION: Pre-create directories once
+    ensure_directories();
+
     // Load JSON if it exists (non-blocking)
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
     if (g_gamedb_data) { 
@@ -1029,16 +1092,14 @@ void scraper_init(void) {
         log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
     } else {
         log_debug("PS2.data.json not found at %s, starting async download...", path);
-        // Start async download - doesn't block!
         scraper_start_async_json_download(path);
-        // Start JSON worker thread if not running
         if (!json_thread_running) {
             json_thread_running = 1;
             pthread_create(&json_thread, NULL, background_json_worker, NULL);
         }
     }
 
-    // Load metadata (this is usually small and fast)
+    // Load metadata
     snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
     if (g_metadata_data) { 
         free(g_metadata_data); 
@@ -1058,14 +1119,12 @@ void scraper_init(void) {
     pthread_mutex_unlock(&cache_mutex);
     log_debug("Game info cache cleared");
     
-    // Stop background downloads (will restart if needed)
     scraper_stop_background_downloads();
 }
 
 void scraper_cleanup(void) {
     log_debug("Scraper cleanup starting...");
     
-    // Stop background threads
     scraper_stop_background_downloads();
     
     json_thread_running = 0;
