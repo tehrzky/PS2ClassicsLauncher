@@ -214,11 +214,17 @@ static const char *find_self_eboot(void) {
  * Public API
  * ----------------------------------------------------------------------- */
 int daemon_is_elevated(int argc, char *argv[]) {
-    for (int i = 0; i < argc; i++) {
-        if (argv[i] && strcmp(argv[i], "--elevated") == 0)
-            return 1;
+    (void)argc; (void)argv; /* no longer used for this check */
+    /* If we're the sandboxed copy, our own eboot exists at one of the
+     * known /mnt/sandbox/... paths. If none of those exist, we must be
+     * running from the elevated vsh slot instead, since that's a
+     * completely different (non-sandboxed) filesystem view. */
+    for (int i = 0; SELF_EBOOT_CANDIDATES[i]; i++) {
+        if (file_exists(SELF_EBOOT_CANDIDATES[i])) {
+            return 0;
+        }
     }
-    return 0;
+    return 1;
 }
 
 int daemon_needs_install(void) {
@@ -288,11 +294,17 @@ int daemon_install(void) {
 
 int daemon_launch_elevated(void) {
     log_debug("daemon: loading libSceSystemService.sprx");
-    int32_t mod = sceKernelLoadStartModule(
+    int32_t mod1 = sceKernelLoadStartModule(
         "/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
-    log_debug("daemon: sceKernelLoadStartModule = %d", mod);
-    if (mod <= 0) {
-        log_debug("daemon: module load failed, aborting launch");
+    log_debug("daemon: sceKernelLoadStartModule(SystemService) = %d", mod1);
+
+    log_debug("daemon: loading libSceLncUtil.sprx");
+    int32_t mod2 = sceKernelLoadStartModule(
+        "/system/common/lib/libSceLncUtil.sprx", 0, NULL, 0, 0, 0);
+    log_debug("daemon: sceKernelLoadStartModule(LncUtil) = %d", mod2);
+
+    if (mod1 <= 0 && mod2 <= 0) {
+        log_debug("daemon: both module loads failed, aborting launch");
         return -1;
     }
 
@@ -304,10 +316,8 @@ int daemon_launch_elevated(void) {
     param.crash_report = 0;
     param.check_flag  = LAUNCH_APP_SKIP_SYSTEM_UPDATE;
 
-    const char *argv[] = { "--elevated", NULL };
-
     log_debug("daemon: sceLncUtilLaunchApp(%s)", DAEMON_TITLE_ID);
-    int32_t res = sceLncUtilLaunchApp(DAEMON_TITLE_ID, argv, &param);
+    int32_t res = sceLncUtilLaunchApp(DAEMON_TITLE_ID, NULL, &param);
     log_debug("daemon: sceLncUtilLaunchApp returned 0x%08X", res);
 
     if (res == 0 || (uint32_t)res == SCE_LNC_UTIL_ERROR_ALREADY_RUNNING) {
