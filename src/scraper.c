@@ -332,39 +332,34 @@ static int download_file_internal(const char *url, const char *path, int redirec
             goto cleanup;
         }
 
-        // Try to get Location header using multiple methods
+        // Get all response headers and parse Location manually
+        char *headers = NULL;
+        size_t headers_len = 0;
         char location[1024] = {0};
         int got_location = 0;
 
-        // Method 1: sceHttpGetResponseHeaderValue if available
-        ret = sceHttpGetResponseHeaderValue(reqId, "Location", location, sizeof(location));
-        if (ret >= 0 && location[0] != '\0') {
-            got_location = 1;
-            log_debug("Got Location via sceHttpGetResponseHeaderValue: %s", location);
-        }
-
-        // Method 2: If that failed, try getting all headers and parsing manually
-        if (!got_location) {
-            char headers[4096] = {0};
-            size_t headers_len = 0;
-            ret = sceHttpGetAllResponseHeaders(reqId, headers, &headers_len);
-            if (ret >= 0 && headers_len > 0) {
-                // Find Location: header
-                char *loc_ptr = strstr(headers, "Location:");
-                if (loc_ptr) {
-                    loc_ptr += 9; // Skip "Location:"
-                    while (*loc_ptr == ' ' || *loc_ptr == '\t') loc_ptr++;
-                    char *end = loc_ptr;
-                    while (*end && *end != '\r' && *end != '\n') end++;
-                    size_t len = end - loc_ptr;
-                    if (len > 0 && len < sizeof(location) - 1) {
-                        memcpy(location, loc_ptr, len);
-                        location[len] = '\0';
-                        got_location = 1;
-                        log_debug("Got Location from headers: %s", location);
-                    }
+        ret = sceHttpGetAllResponseHeaders(reqId, &headers, &headers_len);
+        if (ret >= 0 && headers && headers_len > 0) {
+            log_debug("Got headers (%zu bytes)", headers_len);
+            
+            // Find Location: header
+            char *loc_ptr = strstr(headers, "Location:");
+            if (loc_ptr) {
+                loc_ptr += 9; // Skip "Location:"
+                while (*loc_ptr == ' ' || *loc_ptr == '\t') loc_ptr++;
+                char *end = loc_ptr;
+                while (*end && *end != '\r' && *end != '\n') end++;
+                size_t len = end - loc_ptr;
+                if (len > 0 && len < sizeof(location) - 1) {
+                    memcpy(location, loc_ptr, len);
+                    location[len] = '\0';
+                    got_location = 1;
+                    log_debug("Got Location from headers: %s", location);
                 }
             }
+            
+            // Free the headers buffer (libSceHttp allocates it)
+            free(headers);
         }
 
         // Clean up this hop's connection before recursing
