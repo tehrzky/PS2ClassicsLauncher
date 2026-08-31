@@ -54,6 +54,20 @@ static pthread_t background_thread;
 static int background_thread_running = 0;
 static pthread_mutex_t cover_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// ========== Async JSON Download System ==========
+typedef struct {
+    char path[512];
+    int is_downloading;
+    int is_downloaded;
+    int is_queued;
+    int download_success;
+} JsonDownloadTask;
+
+static JsonDownloadTask json_task = {0};
+static pthread_mutex_t json_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t json_thread;
+static int json_thread_running = 0;
+
 static int ensure_net_init(void)
 {
     if (net_initialized) return 0;
@@ -125,7 +139,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - WITHOUT redirect handling (direct URLs only) =====
+// ===== download_file - direct URLs only =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -262,7 +276,7 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // Check for redirect - we can't follow it, so fail and let caller use API
+    // Check for redirect - fail and let caller handle
     if (statusCode == 301 || statusCode == 302 || statusCode == 303 || 
         statusCode == 307 || statusCode == 308) {
         log_debug("Redirect received (status %d) - this URL needs manual handling", statusCode);
@@ -502,6 +516,7 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     if (!out || !serial || !serial[0]) return -1;
     memset(out, 0, sizeof(GameDBInfo));
 
+    // Check cache first
     pthread_mutex_lock(&cache_mutex);
     for (int i = 0; i < cache_count; i++) {
         if (strcmp(game_cache[i].serial, serial) == 0) {
@@ -512,6 +527,36 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
     }
     pthread_mutex_unlock(&cache_mutex);
 
+    // If JSON is still downloading, use fallback title
+    if (scraper_is_json_downloading()) {
+        log_debug("JSON still downloading, using fallback title for %s", serial);
+        if (fallback_title && fallback_title[0]) {
+            strncpy(out->title, fallback_title, sizeof(out->title) - 1);
+            out->title[sizeof(out->title) - 1] = '\0';
+        }
+        // Cache the basic info
+        pthread_mutex_lock(&cache_mutex);
+        if (cache_count < MAX_CACHE) {
+            strcpy(game_cache[cache_count].serial, serial);
+            memcpy(&game_cache[cache_count].info, out, sizeof(GameDBInfo));
+            game_cache[cache_count].is_cached = 1;
+            cache_count++;
+        }
+        pthread_mutex_unlock(&cache_mutex);
+        return 0;
+    }
+
+    // If JSON failed to download, use fallback
+    if (!g_gamedb_data) {
+        log_debug("No JSON data available, using fallback title for %s", serial);
+        if (fallback_title && fallback_title[0]) {
+            strncpy(out->title, fallback_title, sizeof(out->title) - 1);
+            out->title[sizeof(out->title) - 1] = '\0';
+        }
+        return 0;
+    }
+
+    // Normal lookup
     gamedb_lookup_serial(serial,
                          out->title, sizeof(out->title),
                          out->developer, sizeof(out->developer),
@@ -526,6 +571,7 @@ int scraper_get_game_info(const char *serial, const char *fallback_title, GameDB
         metadata_find_description(normalized, out->description, sizeof(out->description));
     }
 
+    // Cache the result
     pthread_mutex_lock(&cache_mutex);
     if (cache_count < MAX_CACHE) {
         strcpy(game_cache[cache_count].serial, serial);
@@ -580,8 +626,8 @@ void scraper_download_cover(const char *serial) {
 
     char cover_path[512];
     char url[512];
-
     char covers_dir[512], default_dir[512], d3_dir[512];
+    
     snprintf(covers_dir,  sizeof(covers_dir),  "%s/covers", g_settings.work_path);
     snprintf(default_dir,  sizeof(default_dir),  "%s/covers/default", g_settings.work_path);
     snprintf(d3_dir,       sizeof(d3_dir),       "%s/covers/3d", g_settings.work_path);
@@ -590,33 +636,65 @@ void scraper_download_cover(const char *serial) {
     mkdir(d3_dir, 0777);
 
     int preferred_3d = g_settings.cover_type == 1;
+    int has_default = 0;
+    int has_3d = 0;
 
+    // Check what exists
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+    if (access(cover_path, F_OK) == 0) has_default = 1;
+    
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+    if (access(cover_path, F_OK) == 0) has_3d = 1;
+
+    // If both exist, we're done
+    if (has_default && has_3d) return;
+
+    // Download missing covers based on preference
     if (preferred_3d) {
-        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-        if (access(cover_path, F_OK) != 0) {
+        // Download 3D if missing
+        if (!has_3d) {
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+            download_file(url, cover_path);
         }
-        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-        if (access(cover_path, F_OK) != 0) {
+        // Download default if missing
+        if (!has_default) {
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+            download_file(url, cover_path);
         }
     } else {
-        snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
-        if (access(cover_path, F_OK) != 0) {
+        // Download default if missing
+        if (!has_default) {
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 0);
             log_debug("Downloading default cover: %s", url);
-            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+            download_file(url, cover_path);
         }
-        snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
-        if (access(cover_path, F_OK) != 0) {
+        // Download 3D if missing
+        if (!has_3d) {
+            snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
             build_cover_url(url, sizeof(url), serial, 1);
             log_debug("Downloading 3D cover: %s", url);
-            if (download_file(url, cover_path) < 0) mark_no_cover(serial);
+            download_file(url, cover_path);
         }
+    }
+
+    // After downloads, verify what we have
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
+    has_default = (access(cover_path, F_OK) == 0);
+    
+    snprintf(cover_path, sizeof(cover_path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
+    has_3d = (access(cover_path, F_OK) == 0);
+
+    // Only mark no cover if BOTH are missing
+    if (!has_default && !has_3d) {
+        mark_no_cover(serial);
+        log_debug("Both covers missing for %s, marked as no cover", serial);
+    } else {
+        log_debug("At least one cover exists for %s (default: %d, 3D: %d)", serial, has_default, has_3d);
     }
 }
 
@@ -741,7 +819,151 @@ int scraper_is_cover_downloading(const char *serial) {
     return 0;
 }
 
-// ===== GameDB download with GitHub API =====
+// ===== Async JSON Functions =====
+void scraper_start_async_json_download(const char *path) {
+    pthread_mutex_lock(&json_mutex);
+    if (!json_task.is_queued && !json_task.is_downloading && !json_task.is_downloaded) {
+        strncpy(json_task.path, path, sizeof(json_task.path) - 1);
+        json_task.path[sizeof(json_task.path) - 1] = '\0';
+        json_task.is_queued = 1;
+        json_task.is_downloading = 0;
+        json_task.is_downloaded = 0;
+        json_task.download_success = 0;
+        log_debug("Queued async JSON download to: %s", path);
+    }
+    pthread_mutex_unlock(&json_mutex);
+}
+
+int scraper_is_json_ready(void) {
+    pthread_mutex_lock(&json_mutex);
+    int ready = json_task.is_downloaded;
+    pthread_mutex_unlock(&json_mutex);
+    return ready;
+}
+
+int scraper_is_json_downloading(void) {
+    pthread_mutex_lock(&json_mutex);
+    int downloading = json_task.is_downloading;
+    pthread_mutex_unlock(&json_mutex);
+    return downloading;
+}
+
+int scraper_did_json_succeed(void) {
+    pthread_mutex_lock(&json_mutex);
+    int success = json_task.download_success;
+    pthread_mutex_unlock(&json_mutex);
+    return success;
+}
+
+// ===== Background JSON Worker =====
+static void* background_json_worker(void* arg) {
+    (void)arg;
+    log_debug("Background JSON download thread started");
+    
+    while (json_thread_running) {
+        pthread_mutex_lock(&json_mutex);
+        if (json_task.is_queued && !json_task.is_downloading && !json_task.is_downloaded) {
+            json_task.is_downloading = 1;
+            pthread_mutex_unlock(&json_mutex);
+            
+            log_debug("Background downloading PS2.data.json to: %s", json_task.path);
+            
+            // Try GitHub API first
+            int success = 0;
+            const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
+            char temp_path[512];
+            snprintf(temp_path, sizeof(temp_path), "%s/release_latest.json", 
+                     g_settings.work_path);
+            
+            if (download_file(api_url, temp_path) == 0) {
+                size_t json_size = 0;
+                char *json_data = file_load(temp_path, &json_size);
+                if (json_data && json_size > 0) {
+                    const char *assets = strstr(json_data, "\"assets\"");
+                    if (assets) {
+                        const char *asset = strstr(assets, "PS2.data.json");
+                        if (asset) {
+                            const char *url_start = strstr(asset, "\"browser_download_url\"");
+                            if (url_start) {
+                                url_start = strstr(url_start, "\"https://");
+                                if (url_start) {
+                                    url_start++;
+                                    char download_url[512] = {0};
+                                    int i = 0;
+                                    while (*url_start && *url_start != '"' && i < sizeof(download_url) - 1) {
+                                        download_url[i++] = *url_start++;
+                                    }
+                                    download_url[i] = '\0';
+                                    
+                                    log_debug("Found asset URL: %s", download_url);
+                                    if (download_file(download_url, json_task.path) == 0) {
+                                        struct stat st;
+                                        if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
+                                            log_debug("Successfully downloaded PS2.data.json (%ld bytes) via API", st.st_size);
+                                            success = 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    free(json_data);
+                }
+                unlink(temp_path);
+            }
+            
+            // Fallback URLs
+            if (!success) {
+                const char *fallback_urls[] = {
+                    "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+                    "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
+                    NULL
+                };
+                
+                for (int i = 0; fallback_urls[i] != NULL && !success; i++) {
+                    log_debug("Attempting fallback URL %d: %s", i + 1, fallback_urls[i]);
+                    if (download_file(fallback_urls[i], json_task.path) == 0) {
+                        struct stat st;
+                        if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
+                            log_debug("Successfully downloaded PS2.data.json (%ld bytes) from fallback", st.st_size);
+                            success = 1;
+                        }
+                    }
+                }
+            }
+            
+            pthread_mutex_lock(&json_mutex);
+            json_task.is_downloading = 0;
+            json_task.is_downloaded = 1;
+            json_task.download_success = success;
+            pthread_mutex_unlock(&json_mutex);
+            
+            log_debug("JSON download %s", success ? "SUCCESS" : "FAILED");
+            
+            // Reload the data if successful
+            if (success) {
+                if (g_gamedb_data) {
+                    free(g_gamedb_data);
+                    g_gamedb_data = NULL;
+                }
+                g_gamedb_data = file_load(json_task.path, &g_gamedb_size);
+                if (g_gamedb_data) {
+                    log_debug("Reloaded PS2.data.json (%zu bytes)", g_gamedb_size);
+                }
+            }
+            
+            pthread_mutex_lock(&json_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&json_mutex);
+        sleep(1);
+    }
+    
+    log_debug("Background JSON download thread stopped");
+    return NULL;
+}
+
+// ===== GameDB download functions (kept for compatibility) =====
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
@@ -764,88 +986,11 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
-    // Use GitHub API to get the latest release asset URL
-    const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
-    char temp_path[512];
-    snprintf(temp_path, sizeof(temp_path), "%s/config/release_latest.json", g_settings.work_path);
-    
-    log_debug("Fetching latest release info from GitHub API...");
-    if (download_file(api_url, temp_path) == 0) {
-        size_t json_size = 0;
-        char *json_data = file_load(temp_path, &json_size);
-        if (json_data && json_size > 0) {
-            // Find the assets array
-            const char *assets = strstr(json_data, "\"assets\"");
-            if (assets) {
-                // Look for PS2.data.json in the assets
-                const char *asset = strstr(assets, "PS2.data.json");
-                if (asset) {
-                    // Find the browser_download_url
-                    const char *url_start = strstr(asset, "\"browser_download_url\"");
-                    if (url_start) {
-                        url_start = strstr(url_start, "\"https://");
-                        if (url_start) {
-                            url_start++; // Skip the first quote
-                            char download_url[512] = {0};
-                            int i = 0;
-                            while (*url_start && *url_start != '"' && i < sizeof(download_url) - 1) {
-                                download_url[i++] = *url_start++;
-                            }
-                            download_url[i] = '\0';
-                            
-                            log_debug("Found asset URL: %s", download_url);
-                            log_debug("Downloading PS2.data.json from API URL...");
-                            
-                            if (download_file(download_url, path) == 0) {
-                                struct stat st2;
-                                if (stat(path, &st2) == 0 && st2.st_size > 100) {
-                                    log_debug("Successfully downloaded PS2.data.json (%ld bytes) via API", st2.st_size);
-                                    free(json_data);
-                                    unlink(temp_path);
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            free(json_data);
-        }
-        unlink(temp_path);
-    }
-
-    // Fallback: Try known direct URLs (specific releases)
-    log_debug("API download failed, trying known direct URLs...");
-    const char *fallback_urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
-        NULL
-    };
-    
-    int success = 0;
-    for (int i = 0; fallback_urls[i] != NULL; i++) {
-        log_debug("Attempting download from fallback URL %d: %s", i + 1, fallback_urls[i]);
-        if (download_file(fallback_urls[i], path) == 0) {
-            struct stat st2;
-            if (stat(path, &st2) == 0 && st2.st_size > 100) {
-                log_debug("Successfully downloaded PS2.data.json (%ld bytes) from fallback URL %d", st2.st_size, i + 1);
-                success = 1;
-                break;
-            }
-        }
-        log_debug("Failed to download from fallback URL %d", i + 1);
-        sleep(2);
-    }
-    
-    if (!success) {
-        log_debug("All download attempts failed for PS2.data.json");
-        log_debug("Creating minimal fallback PS2.data.json to prevent blackscreen");
-        FILE *fp = fopen(path, "w");
-        if (fp) {
-            fprintf(fp, "{}");
-            fclose(fp);
-            log_debug("Created fallback PS2.data.json");
-        }
+    // Start async download
+    scraper_start_async_json_download(path);
+    if (!json_thread_running) {
+        json_thread_running = 1;
+        pthread_create(&json_thread, NULL, background_json_worker, NULL);
     }
 }
 
@@ -860,84 +1005,11 @@ void scraper_force_download_gameindex(void)
 
     unlink(path);
 
-    // Use GitHub API to get the latest release asset URL
-    const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
-    char temp_path[512];
-    snprintf(temp_path, sizeof(temp_path), "%s/config/release_latest.json", g_settings.work_path);
-    
-    log_debug("Force fetching latest release info from GitHub API...");
-    if (download_file(api_url, temp_path) == 0) {
-        size_t json_size = 0;
-        char *json_data = file_load(temp_path, &json_size);
-        if (json_data && json_size > 0) {
-            const char *assets = strstr(json_data, "\"assets\"");
-            if (assets) {
-                const char *asset = strstr(assets, "PS2.data.json");
-                if (asset) {
-                    const char *url_start = strstr(asset, "\"browser_download_url\"");
-                    if (url_start) {
-                        url_start = strstr(url_start, "\"https://");
-                        if (url_start) {
-                            url_start++;
-                            char download_url[512] = {0};
-                            int i = 0;
-                            while (*url_start && *url_start != '"' && i < sizeof(download_url) - 1) {
-                                download_url[i++] = *url_start++;
-                            }
-                            download_url[i] = '\0';
-                            
-                            log_debug("Found asset URL: %s", download_url);
-                            log_debug("Force downloading PS2.data.json from API URL...");
-                            
-                            if (download_file(download_url, path) == 0) {
-                                struct stat st2;
-                                if (stat(path, &st2) == 0 && st2.st_size > 100) {
-                                    log_debug("Successfully force downloaded PS2.data.json (%ld bytes) via API", st2.st_size);
-                                    free(json_data);
-                                    unlink(temp_path);
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            free(json_data);
-        }
-        unlink(temp_path);
-    }
-
-    // Fallback: Try known direct URLs
-    log_debug("API download failed, trying known direct URLs...");
-    const char *fallback_urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
-        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
-        NULL
-    };
-    
-    int success = 0;
-    for (int i = 0; fallback_urls[i] != NULL; i++) {
-        log_debug("Force downloading from fallback URL %d: %s", i + 1, fallback_urls[i]);
-        if (download_file(fallback_urls[i], path) == 0) {
-            struct stat st;
-            if (stat(path, &st) == 0 && st.st_size > 100) {
-                log_debug("Successfully force downloaded PS2.data.json (%ld bytes) from fallback URL %d", st.st_size, i + 1);
-                success = 1;
-                break;
-            }
-        }
-        log_debug("Force download failed for fallback URL %d", i + 1);
-        sleep(2);
-    }
-    
-    if (!success) {
-        log_debug("All force download attempts failed for PS2.data.json");
-        log_debug("Creating minimal fallback PS2.data.json");
-        FILE *fp = fopen(path, "w");
-        if (fp) {
-            fprintf(fp, "{}");
-            fclose(fp);
-        }
+    // Start async download
+    scraper_start_async_json_download(path);
+    if (!json_thread_running) {
+        json_thread_running = 1;
+        pthread_create(&json_thread, NULL, background_json_worker, NULL);
     }
 }
 
@@ -945,40 +1017,63 @@ void scraper_force_download_gameindex(void)
 void scraper_init(void) {
     char path[512];
 
+    // Load JSON if it exists (non-blocking)
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
-    if (g_gamedb_data) { free(g_gamedb_data); g_gamedb_data = NULL; }
+    if (g_gamedb_data) { 
+        free(g_gamedb_data); 
+        g_gamedb_data = NULL; 
+    }
+    
     g_gamedb_data = file_load(path, &g_gamedb_size);
     if (g_gamedb_data) {
         log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
     } else {
-        log_debug("PS2.data.json not found at %s, attempting download...", path);
-        scraper_download_gameindex();
-        g_gamedb_data = file_load(path, &g_gamedb_size);
-        if (g_gamedb_data) {
-            log_debug("Loaded PS2.data.json after download (%zu bytes)", g_gamedb_size);
+        log_debug("PS2.data.json not found at %s, starting async download...", path);
+        // Start async download - doesn't block!
+        scraper_start_async_json_download(path);
+        // Start JSON worker thread if not running
+        if (!json_thread_running) {
+            json_thread_running = 1;
+            pthread_create(&json_thread, NULL, background_json_worker, NULL);
         }
     }
 
+    // Load metadata (this is usually small and fast)
     snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
-    if (g_metadata_data) { free(g_metadata_data); g_metadata_data = NULL; }
+    if (g_metadata_data) { 
+        free(g_metadata_data); 
+        g_metadata_data = NULL; 
+    }
     g_metadata_data = file_load(path, &g_metadata_size);
-    if (g_metadata_data)
+    if (g_metadata_data) {
         log_debug("Loaded ps2_metadata.json (%zu bytes)", g_metadata_size);
-    else
+    } else {
         log_debug("ps2_metadata.json not found at %s", path);
+    }
 
+    // Clear cache
     pthread_mutex_lock(&cache_mutex);
     cache_count = 0;
     memset(game_cache, 0, sizeof(game_cache));
     pthread_mutex_unlock(&cache_mutex);
     log_debug("Game info cache cleared");
     
+    // Stop background downloads (will restart if needed)
     scraper_stop_background_downloads();
 }
 
 void scraper_cleanup(void) {
     log_debug("Scraper cleanup starting...");
+    
+    // Stop background threads
     scraper_stop_background_downloads();
+    
+    json_thread_running = 0;
+    if (json_thread) {
+        pthread_join(json_thread, NULL);
+        json_thread = 0;
+    }
+    
     if (g_gamedb_data) {
         free(g_gamedb_data);
         g_gamedb_data = NULL;
