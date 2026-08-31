@@ -74,6 +74,15 @@ static char default_dir[512] = {0};
 static char d3_dir[512] = {0};
 static int dirs_created = 0;
 
+#define MAX_REDIRECTS 5
+
+static int download_file_internal(const char *url, const char *path, int redirect_depth);
+
+static int download_file(const char *url, const char *path)
+{
+    return download_file_internal(url, path, 0);
+}
+
 static void ensure_directories(void) {
     if (dirs_created) return;
     
@@ -174,8 +183,8 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - optimized =====
-static int download_file(const char *url, const char *path)
+// ===== download_file - now follows redirects =====
+static int download_file_internal(const char *url, const char *path, int redirect_depth)
 {
     int ret;
     int32_t sslId = -1, httpCtx = -1;
@@ -185,14 +194,13 @@ static int download_file(const char *url, const char *path)
     int result = -1;
     int is_https = 0;
 
-    log_debug("download_file: %s -> %s", url, path);
+    log_debug("download_file: %s -> %s (depth %d)", url, path, redirect_depth);
 
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
         return -1;
     }
 
-    // Create directory
     char dir_path[512];
     strncpy(dir_path, path, sizeof(dir_path) - 1);
     dir_path[sizeof(dir_path) - 1] = '\0';
@@ -220,7 +228,6 @@ static int download_file(const char *url, const char *path)
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
 
-    // DNS with retry
     struct hostent *server = NULL;
     int dns_retries = 3;
     for (int attempt = 0; attempt < dns_retries; attempt++) {
@@ -229,7 +236,7 @@ static int download_file(const char *url, const char *path)
         log_debug("DNS attempt %d failed for: %s, retrying...", attempt + 1, host);
         sleep(1);
     }
-    
+
     if (!server) {
         log_debug("gethostbyname failed for: %s after %d attempts", host, dns_retries);
         g_download_active = 0;
@@ -242,7 +249,6 @@ static int download_file(const char *url, const char *path)
     ip_str[sizeof(ip_str) - 1] = '\0';
     log_debug("Resolved %s -> %s", host, ip_str);
 
-    // Init SSL if using HTTPS
     if (is_https) {
         sslId = sceSslInit(SSL_POOLSIZE);
         if (sslId < 0) {
@@ -250,7 +256,6 @@ static int download_file(const char *url, const char *path)
             g_download_active = 0;
             return -1;
         }
-        log_debug("sceSslInit ok: %d", sslId);
     }
 
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
@@ -260,7 +265,6 @@ static int download_file(const char *url, const char *path)
         g_download_active = 0;
         return -1;
     }
-    log_debug("sceHttpInit ok: %d", httpCtx);
 
     tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0",
                                    ORBIS_HTTP_VERSION_1_1, 0);
@@ -268,28 +272,23 @@ static int download_file(const char *url, const char *path)
         log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
     if (is_https) {
         sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
     }
 
-    // Connect by resolved IP
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateConnection ok: %d", connId);
 
     reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
     if (reqId < 0) {
         log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
         goto cleanup;
     }
-    log_debug("sceHttpCreateRequest ok: %d", reqId);
 
-    // Headers that work with GitHub
     sceHttpAddRequestHeader(reqId, "Host", host, 0);
     sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
     sceHttpAddRequestHeader(reqId, "Accept", "application/octet-stream, application/json", 0);
@@ -302,7 +301,6 @@ static int download_file(const char *url, const char *path)
         g_download_status[0] = '\0';
         goto cleanup;
     }
-    log_debug("sceHttpSendRequest ok");
 
     ret = sceHttpGetStatusCode(reqId, &statusCode);
     if (ret < 0) {
@@ -311,11 +309,41 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // Check for redirect - we can't follow it, so fail and let caller use API
-    if (statusCode == 301 || statusCode == 302 || statusCode == 303 || 
+    // ===== Follow redirects instead of bailing =====
+    if (statusCode == 301 || statusCode == 302 || statusCode == 303 ||
         statusCode == 307 || statusCode == 308) {
-        log_debug("Redirect received (status %d) - this URL needs manual handling", statusCode);
-        goto cleanup;
+
+        if (redirect_depth >= MAX_REDIRECTS) {
+            log_debug("Too many redirects (%d) for %s, giving up", redirect_depth, url);
+            goto cleanup;
+        }
+
+        void *hdrVal = NULL;
+        size_t hdrLen = 0;
+        char location[1024] = {0};
+
+        ret = sceHttpGetResponseHeaderValue(reqId, "Location", &hdrVal, &hdrLen);
+        if (ret >= 0 && hdrVal && hdrLen > 0 && hdrLen < sizeof(location)) {
+            memcpy(location, hdrVal, hdrLen);
+            location[hdrLen] = '\0';
+        }
+
+        // tear down this hop's connection before recursing
+        if (reqId >= 0)  sceHttpDeleteRequest(reqId);
+        if (connId >= 0) sceHttpDeleteConnection(connId);
+        if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
+        if (httpCtx >= 0) sceHttpTerm(httpCtx);
+        if (is_https) sceSslTerm();
+        g_download_active = 0;
+
+        if (location[0] == '\0') {
+            log_debug("Redirect (status %d) had no usable Location header", statusCode);
+            g_download_status[0] = '\0';
+            return -1;
+        }
+
+        log_debug("Following redirect (%d) -> %s", statusCode, location);
+        return download_file_internal(location, path, redirect_depth + 1);
     }
 
     if (statusCode != 200) {
@@ -329,12 +357,11 @@ static int download_file(const char *url, const char *path)
         goto cleanup;
     }
 
-    // OPTIMIZATION: Larger buffer for faster downloads
-    char buf[16384];  // 16KB buffer instead of 4KB
+    char buf[16384];
     size_t total = 0;
     int read_retries = 0;
     const int max_read_retries = 3;
-    
+
     while (1) {
         ret = sceHttpReadData(reqId, buf, sizeof(buf));
         if (ret > 0) {
@@ -354,11 +381,11 @@ static int download_file(const char *url, const char *path)
             sleep(1);
         }
     }
-    
+
     fclose(fp);
     fp = NULL;
     log_debug("Downloaded %zu bytes: %s", total, path);
-    
+
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 0) {
         log_debug("File verified: %ld bytes", st.st_size);
@@ -879,7 +906,7 @@ int scraper_did_json_succeed(void) {
     return success;
 }
 
-// ===== Background JSON Worker - NO HARDCODED URLs =====
+// ===== Background JSON Worker - NO HARDCODED URLS =====
 static void* background_json_worker(void* arg) {
     (void)arg;
     log_debug("Background JSON download thread started");
@@ -894,78 +921,25 @@ static void* background_json_worker(void* arg) {
             
             int success = 0;
             
-            // Try GitHub API to get the latest release
-            const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
-            char temp_path[512];
-            snprintf(temp_path, sizeof(temp_path), "%s/release_latest.json", 
-                     g_settings.work_path);
-            
-            log_debug("Fetching latest release info from GitHub API...");
-            if (download_file(api_url, temp_path) == 0) {
-                size_t json_size = 0;
-                char *json_data = file_load(temp_path, &json_size);
-                if (json_data && json_size > 0) {
-                    // Find the assets array
-                    const char *assets = strstr(json_data, "\"assets\"");
-                    if (assets) {
-                        // Look for PS2.data.json in the assets
-                        const char *asset = strstr(assets, "PS2.data.json");
-                        if (asset) {
-                            // Find the browser_download_url
-                            const char *url_start = strstr(asset, "\"browser_download_url\"");
-                            if (url_start) {
-                                url_start = strstr(url_start, "\"https://");
-                                if (url_start) {
-                                    url_start++; // Skip the first quote
-                                    char download_url[512] = {0};
-                                    int i = 0;
-                                    while (*url_start && *url_start != '"' && i < sizeof(download_url) - 1) {
-                                        download_url[i++] = *url_start++;
-                                    }
-                                    download_url[i] = '\0';
-                                    
-                                    log_debug("Found asset URL: %s", download_url);
-                                    log_debug("Downloading PS2.data.json from API URL...");
-                                    
-                                    if (download_file(download_url, json_task.path) == 0) {
-                                        struct stat st;
-                                        if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
-                                            log_debug("Successfully downloaded PS2.data.json (%ld bytes) via API", st.st_size);
-                                            success = 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    free(json_data);
-                }
-                unlink(temp_path);
-            }
-            
-            // If API failed, try the latest redirect URL
-            if (!success) {
-                log_debug("API download failed, trying latest redirect URL...");
-                const char *redirect_url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
-                
-                if (download_file(redirect_url, json_task.path) == 0) {
-                    struct stat st;
-                    if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
-                        log_debug("Successfully downloaded PS2.data.json (%ld bytes) from redirect URL", st.st_size);
-                        success = 1;
-                    }
+            // Single request — download_file now follows the redirect chain
+            // (latest/download -> versioned release -> release-assets storage)
+            const char *redirect_url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
+            if (download_file(redirect_url, json_task.path) == 0) {
+                struct stat st;
+                if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
+                    log_debug("Successfully downloaded PS2.data.json (%ld bytes)", st.st_size);
+                    success = 1;
                 }
             }
             
-            // Final fallback: Try HTTP version
+            // HTTP fallback only if HTTPS somehow fails outright
             if (!success) {
-                log_debug("HTTPS redirect failed, trying HTTP redirect URL...");
-                const char *redirect_url = "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
-                
-                if (download_file(redirect_url, json_task.path) == 0) {
+                log_debug("HTTPS attempt failed, trying HTTP redirect URL...");
+                const char *http_url = "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
+                if (download_file(http_url, json_task.path) == 0) {
                     struct stat st;
                     if (stat(json_task.path, &st) == 0 && st.st_size > 100) {
-                        log_debug("Successfully downloaded PS2.data.json (%ld bytes) from HTTP redirect", st.st_size);
+                        log_debug("Successfully downloaded PS2.data.json (%ld bytes) via HTTP", st.st_size);
                         success = 1;
                     }
                 }
@@ -979,7 +953,6 @@ static void* background_json_worker(void* arg) {
             
             log_debug("JSON download %s", success ? "SUCCESS" : "FAILED");
             
-            // Reload the data if successful
             if (success) {
                 if (g_gamedb_data) {
                     free(g_gamedb_data);
@@ -996,8 +969,6 @@ static void* background_json_worker(void* arg) {
                 if (fp) {
                     fprintf(fp, "{}");
                     fclose(fp);
-                    log_debug("Created fallback PS2.data.json");
-                    // Mark as success so we don't retry forever
                     pthread_mutex_lock(&json_mutex);
                     json_task.download_success = 1;
                     pthread_mutex_unlock(&json_mutex);
