@@ -125,7 +125,7 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - WITH redirect handling =====
+// ===== download_file - WITHOUT redirect handling (direct URLs only) =====
 static int download_file(const char *url, const char *path)
 {
     int ret;
@@ -262,29 +262,11 @@ static int download_file(const char *url, const char *path)
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== HANDLE REDIRECTS =====
+    // Check for redirect - we can't follow it, so fail and let caller use API
     if (statusCode == 301 || statusCode == 302 || statusCode == 303 || 
         statusCode == 307 || statusCode == 308) {
-        char location[512] = {0};
-        ret = sceHttpGetResponseHeaderValue(reqId, "Location", location, sizeof(location));
-        if (ret >= 0 && location[0] != '\0') {
-            log_debug("Following redirect to: %s", location);
-            
-            // Clean up current context
-            if (reqId >= 0) sceHttpDeleteRequest(reqId);
-            if (connId >= 0) sceHttpDeleteConnection(connId);
-            if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
-            if (httpCtx >= 0) sceHttpTerm(httpCtx);
-            if (is_https) sceSslTerm();
-            g_download_active = 0;
-            g_download_status[0] = '\0';
-            
-            // Retry with the new URL
-            return download_file(location, path);
-        } else {
-            log_debug("Redirect but no Location header found");
-            goto cleanup;
-        }
+        log_debug("Redirect received (status %d) - this URL needs manual handling", statusCode);
+        goto cleanup;
     }
 
     if (statusCode != 200) {
@@ -759,7 +741,7 @@ int scraper_is_cover_downloading(const char *serial) {
     return 0;
 }
 
-// ===== GameDB download with GitHub API and redirect handling =====
+// ===== GameDB download with GitHub API =====
 void scraper_download_gameindex(void)
 {
     if (!g_settings.auto_download_gameindex) return;
@@ -782,7 +764,7 @@ void scraper_download_gameindex(void)
         unlink(path);
     }
 
-    // Try GitHub API first to get the latest release
+    // Use GitHub API to get the latest release asset URL
     const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
     char temp_path[512];
     snprintf(temp_path, sizeof(temp_path), "%s/config/release_latest.json", g_settings.work_path);
@@ -832,11 +814,11 @@ void scraper_download_gameindex(void)
         unlink(temp_path);
     }
 
-    // Fallback: Try the latest redirect URL (which will be handled by our redirect code)
-    log_debug("API download failed, trying latest redirect URL...");
+    // Fallback: Try known direct URLs (specific releases)
+    log_debug("API download failed, trying known direct URLs...");
     const char *fallback_urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
-        "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
         NULL
     };
     
@@ -878,7 +860,7 @@ void scraper_force_download_gameindex(void)
 
     unlink(path);
 
-    // Try GitHub API first
+    // Use GitHub API to get the latest release asset URL
     const char *api_url = "https://api.github.com/repos/niemasd/GameDB-PS2/releases/latest";
     char temp_path[512];
     snprintf(temp_path, sizeof(temp_path), "%s/config/release_latest.json", g_settings.work_path);
@@ -925,11 +907,11 @@ void scraper_force_download_gameindex(void)
         unlink(temp_path);
     }
 
-    // Fallback: Try the latest redirect URL
-    log_debug("API download failed, trying latest redirect URL...");
+    // Fallback: Try known direct URLs
+    log_debug("API download failed, trying known direct URLs...");
     const char *fallback_urls[] = {
-        "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
-        "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-16_20-23-50/PS2.data.json",
+        "https://github.com/niemasd/GameDB-PS2/releases/download/2026-07-02_01-20-56/PS2.data.json",
         NULL
     };
     
