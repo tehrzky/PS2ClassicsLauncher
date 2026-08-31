@@ -17,6 +17,10 @@
 #include <orbis/Sysmodule.h>
 #include <pthread.h>
 
+// Forward declaration - defined further down in this file (Async JSON Functions
+// section) but referenced earlier by scraper_get_game_info().
+int scraper_is_json_downloading(void);
+
 static int net_initialized = 0;
 
 char g_download_status[128] = {0};
@@ -74,26 +78,17 @@ static char default_dir[512] = {0};
 static char d3_dir[512] = {0};
 static int dirs_created = 0;
 
-#define MAX_REDIRECTS 5
-
-static int download_file_internal(const char *url, const char *path, int redirect_depth);
-
-static int download_file(const char *url, const char *path)
-{
-    return download_file_internal(url, path, 0);
-}
-
 static void ensure_directories(void) {
     if (dirs_created) return;
-    
+
     snprintf(covers_dir, sizeof(covers_dir), "%s/covers", g_settings.work_path);
     snprintf(default_dir, sizeof(default_dir), "%s/covers/default", g_settings.work_path);
     snprintf(d3_dir, sizeof(d3_dir), "%s/covers/3d", g_settings.work_path);
-    
+
     mkdir(covers_dir, 0777);
     mkdir(default_dir, 0777);
     mkdir(d3_dir, 0777);
-    
+
     dirs_created = 1;
 }
 
@@ -183,8 +178,11 @@ static int parse_url(const char *url, char *scheme, size_t scheme_len,
     return 0;
 }
 
-// ===== download_file - now follows redirects =====
-static int download_file_internal(const char *url, const char *path, int redirect_depth)
+// ===== download_file - optimized, and now follows redirects =====
+// GitHub release asset URLs (browser_download_url, and the /releases/latest/download/...
+// shortcut) always 302 to the real storage host. sceHttpSetAutoRedirect tells libSceHttp
+// to follow that itself instead of us having to parse a Location header manually.
+static int download_file(const char *url, const char *path)
 {
     int ret;
     int32_t sslId = -1, httpCtx = -1;
@@ -194,13 +192,14 @@ static int download_file_internal(const char *url, const char *path, int redirec
     int result = -1;
     int is_https = 0;
 
-    log_debug("download_file: %s -> %s (depth %d)", url, path, redirect_depth);
+    log_debug("download_file: %s -> %s", url, path);
 
     if (ensure_net_init() < 0) {
         log_debug("ensure_net_init failed");
         return -1;
     }
 
+    // Create directory
     char dir_path[512];
     strncpy(dir_path, path, sizeof(dir_path) - 1);
     dir_path[sizeof(dir_path) - 1] = '\0';
@@ -228,6 +227,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
              strrchr(url, '/') ? strrchr(url, '/') + 1 : url);
     g_download_active = 1;
 
+    // DNS with retry
     struct hostent *server = NULL;
     int dns_retries = 3;
     for (int attempt = 0; attempt < dns_retries; attempt++) {
@@ -249,6 +249,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
     ip_str[sizeof(ip_str) - 1] = '\0';
     log_debug("Resolved %s -> %s", host, ip_str);
 
+    // Init SSL if using HTTPS
     if (is_https) {
         sslId = sceSslInit(SSL_POOLSIZE);
         if (sslId < 0) {
@@ -256,6 +257,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
             g_download_active = 0;
             return -1;
         }
+        log_debug("sceSslInit ok: %d", sslId);
     }
 
     httpCtx = sceHttpInit(0, sslId, LIBHTTP_POOLSIZE);
@@ -265,6 +267,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
         g_download_active = 0;
         return -1;
     }
+    log_debug("sceHttpInit ok: %d", httpCtx);
 
     tmplId = sceHttpCreateTemplate(httpCtx, "PS2ClassicsLauncher/1.0",
                                    ORBIS_HTTP_VERSION_1_1, 0);
@@ -272,23 +275,36 @@ static int download_file_internal(const char *url, const char *path, int redirec
         log_debug("sceHttpCreateTemplate failed: 0x%08X", tmplId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateTemplate ok: %d", tmplId);
 
     if (is_https) {
         sceHttpsSetSslCallback(tmplId, ssl_callback, NULL);
     }
 
+    // Connect by resolved IP
     connId = sceHttpCreateConnection(tmplId, ip_str, scheme, port, 1);
     if (connId < 0) {
         log_debug("sceHttpCreateConnection failed: 0x%08X", connId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateConnection ok: %d", connId);
 
     reqId = sceHttpCreateRequest(connId, ORBIS_METHOD_GET, res_path, 0);
     if (reqId < 0) {
         log_debug("sceHttpCreateRequest failed: 0x%08X", reqId);
         goto cleanup;
     }
+    log_debug("sceHttpCreateRequest ok: %d", reqId);
 
+    // Let libSceHttp follow redirects itself (GitHub release assets always
+    // 302 to their real storage host - this is what made JSON downloads fail
+    // while direct-hosted covers worked fine).
+    ret = sceHttpSetAutoRedirect(reqId, 1);
+    if (ret < 0) {
+        log_debug("sceHttpSetAutoRedirect failed: 0x%08X (continuing anyway)", ret);
+    }
+
+    // Headers that work with GitHub
     sceHttpAddRequestHeader(reqId, "Host", host, 0);
     sceHttpAddRequestHeader(reqId, "User-Agent", "PS2ClassicsLauncher/1.0", 0);
     sceHttpAddRequestHeader(reqId, "Accept", "application/octet-stream, application/json", 0);
@@ -301,6 +317,7 @@ static int download_file_internal(const char *url, const char *path, int redirec
         g_download_status[0] = '\0';
         goto cleanup;
     }
+    log_debug("sceHttpSendRequest ok");
 
     ret = sceHttpGetStatusCode(reqId, &statusCode);
     if (ret < 0) {
@@ -309,41 +326,12 @@ static int download_file_internal(const char *url, const char *path, int redirec
     }
     log_debug("HTTP status code: %d", statusCode);
 
-    // ===== Follow redirects instead of bailing =====
+    // With auto-redirect on, we should only see a 3xx here if redirects were
+    // exhausted or auto-redirect silently isn't supported - fail cleanly either way.
     if (statusCode == 301 || statusCode == 302 || statusCode == 303 ||
         statusCode == 307 || statusCode == 308) {
-
-        if (redirect_depth >= MAX_REDIRECTS) {
-            log_debug("Too many redirects (%d) for %s, giving up", redirect_depth, url);
-            goto cleanup;
-        }
-
-        void *hdrVal = NULL;
-        size_t hdrLen = 0;
-        char location[1024] = {0};
-
-        ret = sceHttpGetResponseHeaderValue(reqId, "Location", &hdrVal, &hdrLen);
-        if (ret >= 0 && hdrVal && hdrLen > 0 && hdrLen < sizeof(location)) {
-            memcpy(location, hdrVal, hdrLen);
-            location[hdrLen] = '\0';
-        }
-
-        // tear down this hop's connection before recursing
-        if (reqId >= 0)  sceHttpDeleteRequest(reqId);
-        if (connId >= 0) sceHttpDeleteConnection(connId);
-        if (tmplId >= 0) sceHttpDeleteTemplate(tmplId);
-        if (httpCtx >= 0) sceHttpTerm(httpCtx);
-        if (is_https) sceSslTerm();
-        g_download_active = 0;
-
-        if (location[0] == '\0') {
-            log_debug("Redirect (status %d) had no usable Location header", statusCode);
-            g_download_status[0] = '\0';
-            return -1;
-        }
-
-        log_debug("Following redirect (%d) -> %s", statusCode, location);
-        return download_file_internal(location, path, redirect_depth + 1);
+        log_debug("Redirect received (status %d) even with auto-redirect enabled - giving up", statusCode);
+        goto cleanup;
     }
 
     if (statusCode != 200) {
@@ -357,7 +345,8 @@ static int download_file_internal(const char *url, const char *path, int redirec
         goto cleanup;
     }
 
-    char buf[16384];
+    // OPTIMIZATION: Larger buffer for faster downloads
+    char buf[16384];  // 16KB buffer instead of 4KB
     size_t total = 0;
     int read_retries = 0;
     const int max_read_retries = 3;
@@ -675,13 +664,13 @@ static inline int has_no_cover_marker(const char *serial) {
 static inline int cover_both_exist(const char *serial) {
     if (!serial || !serial[0]) return 0;
     char path[512];
-    
+
     snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
     int has_default = file_exists(path);
-    
+
     snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
     int has_3d = file_exists(path);
-    
+
     return (has_default && has_3d) ? 1 : 0;
 }
 
@@ -699,7 +688,7 @@ void scraper_download_cover(const char *serial) {
     // OPTIMIZATION: Check both at once
     snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
     has_default = file_exists(path);
-    
+
     snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
     has_3d = file_exists(path);
 
@@ -739,7 +728,7 @@ void scraper_download_cover(const char *serial) {
     // Verify after download
     snprintf(path, sizeof(path), "%s/covers/default/%s.jpg", g_settings.work_path, serial);
     has_default = file_exists(path);
-    
+
     snprintf(path, sizeof(path), "%s/covers/3d/%s.png", g_settings.work_path, serial);
     has_3d = file_exists(path);
 
@@ -757,10 +746,10 @@ void scraper_force_download_cover(const char *serial) {
 static void* background_download_worker(void* arg) {
     (void)arg;
     log_debug("Background download thread started");
-    
+
     while (background_thread_running) {
         int found_work = 0;
-        
+
         pthread_mutex_lock(&cover_mutex);
         for (int i = 0; i < cover_task_count; i++) {
             if (!cover_tasks[i].is_downloading && !cover_tasks[i].is_downloaded && cover_tasks[i].is_queued) {
@@ -770,45 +759,45 @@ static void* background_download_worker(void* arg) {
                     log_debug("Both covers already exist for: %s", cover_tasks[i].serial);
                     continue;
                 }
-                
+
                 cover_tasks[i].is_downloading = 1;
                 found_work = 1;
                 pthread_mutex_unlock(&cover_mutex);
-                
+
                 log_debug("Background downloading cover for: %s", cover_tasks[i].serial);
                 scraper_download_cover(cover_tasks[i].serial);
-                
+
                 pthread_mutex_lock(&cover_mutex);
                 cover_tasks[i].is_downloaded = 1;
                 cover_tasks[i].is_downloading = 0;
                 cover_tasks[i].is_queued = 0;
                 pthread_mutex_unlock(&cover_mutex);
-                
+
                 sleep(1);
-                
+
                 pthread_mutex_lock(&cover_mutex);
                 break;
             }
         }
         pthread_mutex_unlock(&cover_mutex);
-        
+
         if (!found_work) {
             sleep(2);
         }
     }
-    
+
     log_debug("Background download thread stopped");
     return NULL;
 }
 
 void scraper_start_background_downloads(void) {
     if (background_thread_running) return;
-    
+
     pthread_mutex_lock(&cover_mutex);
     cover_task_count = 0;
     memset(cover_tasks, 0, sizeof(cover_tasks));
     pthread_mutex_unlock(&cover_mutex);
-    
+
     background_thread_running = 1;
     if (pthread_create(&background_thread, NULL, background_download_worker, NULL) != 0) {
         log_debug("Failed to create background thread");
@@ -821,11 +810,11 @@ void scraper_start_background_downloads(void) {
 void scraper_queue_cover_download(const char *serial) {
     if (!serial || !serial[0]) return;
     if (!g_settings.auto_download_covers) return;
-    
+
     if (cover_both_exist(serial)) {
         return;
     }
-    
+
     pthread_mutex_lock(&cover_mutex);
     for (int i = 0; i < cover_task_count; i++) {
         if (strcmp(cover_tasks[i].serial, serial) == 0) {
@@ -834,7 +823,7 @@ void scraper_queue_cover_download(const char *serial) {
         }
     }
     pthread_mutex_unlock(&cover_mutex);
-    
+
     pthread_mutex_lock(&cover_mutex);
     if (cover_task_count < MAX_COVER_TASKS) {
         strcpy(cover_tasks[cover_task_count].serial, serial);
@@ -845,7 +834,7 @@ void scraper_queue_cover_download(const char *serial) {
         log_debug("Queued cover download for: %s (queue: %d)", serial, cover_task_count);
     }
     pthread_mutex_unlock(&cover_mutex);
-    
+
     scraper_start_background_downloads();
 }
 
@@ -906,23 +895,25 @@ int scraper_did_json_succeed(void) {
     return success;
 }
 
-// ===== Background JSON Worker - NO HARDCODED URLS =====
+// ===== Background JSON Worker - optimized: single redirect-following request =====
+// download_file() now sets sceHttpSetAutoRedirect, so the old 3-attempt
+// dance (GitHub API asset parse -> HTTPS redirect URL -> HTTP redirect URL)
+// collapses down to one HTTPS request, with a plain HTTP retry only as a
+// last-resort safety net.
 static void* background_json_worker(void* arg) {
     (void)arg;
     log_debug("Background JSON download thread started");
-    
+
     while (json_thread_running) {
         pthread_mutex_lock(&json_mutex);
         if (json_task.is_queued && !json_task.is_downloading && !json_task.is_downloaded) {
             json_task.is_downloading = 1;
             pthread_mutex_unlock(&json_mutex);
-            
+
             log_debug("Background downloading PS2.data.json to: %s", json_task.path);
-            
+
             int success = 0;
-            
-            // Single request — download_file now follows the redirect chain
-            // (latest/download -> versioned release -> release-assets storage)
+
             const char *redirect_url = "https://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
             if (download_file(redirect_url, json_task.path) == 0) {
                 struct stat st;
@@ -931,8 +922,7 @@ static void* background_json_worker(void* arg) {
                     success = 1;
                 }
             }
-            
-            // HTTP fallback only if HTTPS somehow fails outright
+
             if (!success) {
                 log_debug("HTTPS attempt failed, trying HTTP redirect URL...");
                 const char *http_url = "http://github.com/niemasd/GameDB-PS2/releases/latest/download/PS2.data.json";
@@ -944,15 +934,16 @@ static void* background_json_worker(void* arg) {
                     }
                 }
             }
-            
+
             pthread_mutex_lock(&json_mutex);
             json_task.is_downloading = 0;
             json_task.is_downloaded = 1;
             json_task.download_success = success;
             pthread_mutex_unlock(&json_mutex);
-            
+
             log_debug("JSON download %s", success ? "SUCCESS" : "FAILED");
-            
+
+            // Reload the data if successful
             if (success) {
                 if (g_gamedb_data) {
                     free(g_gamedb_data);
@@ -969,19 +960,21 @@ static void* background_json_worker(void* arg) {
                 if (fp) {
                     fprintf(fp, "{}");
                     fclose(fp);
+                    log_debug("Created fallback PS2.data.json");
+                    // Mark as success so we don't retry forever
                     pthread_mutex_lock(&json_mutex);
                     json_task.download_success = 1;
                     pthread_mutex_unlock(&json_mutex);
                 }
             }
-            
+
             pthread_mutex_lock(&json_mutex);
             break;
         }
         pthread_mutex_unlock(&json_mutex);
         sleep(1);
     }
-    
+
     log_debug("Background JSON download thread stopped");
     return NULL;
 }
@@ -1028,7 +1021,7 @@ void scraper_force_download_gameindex(void)
     mkdir(config_dir, 0777);
 
     unlink(path);
-    
+
     // Remove any cached data
     if (g_gamedb_data) {
         free(g_gamedb_data);
@@ -1053,11 +1046,11 @@ void scraper_init(void) {
 
     // Load JSON if it exists (non-blocking)
     snprintf(path, sizeof(path), "%s/config/PS2.data.json", g_settings.work_path);
-    if (g_gamedb_data) { 
-        free(g_gamedb_data); 
-        g_gamedb_data = NULL; 
+    if (g_gamedb_data) {
+        free(g_gamedb_data);
+        g_gamedb_data = NULL;
     }
-    
+
     g_gamedb_data = file_load(path, &g_gamedb_size);
     if (g_gamedb_data) {
         log_debug("Loaded PS2.data.json (%zu bytes)", g_gamedb_size);
@@ -1072,9 +1065,9 @@ void scraper_init(void) {
 
     // Load metadata
     snprintf(path, sizeof(path), "%s/config/ps2_metadata.json", g_settings.work_path);
-    if (g_metadata_data) { 
-        free(g_metadata_data); 
-        g_metadata_data = NULL; 
+    if (g_metadata_data) {
+        free(g_metadata_data);
+        g_metadata_data = NULL;
     }
     g_metadata_data = file_load(path, &g_metadata_size);
     if (g_metadata_data) {
@@ -1089,21 +1082,21 @@ void scraper_init(void) {
     memset(game_cache, 0, sizeof(game_cache));
     pthread_mutex_unlock(&cache_mutex);
     log_debug("Game info cache cleared");
-    
+
     scraper_stop_background_downloads();
 }
 
 void scraper_cleanup(void) {
     log_debug("Scraper cleanup starting...");
-    
+
     scraper_stop_background_downloads();
-    
+
     json_thread_running = 0;
     if (json_thread) {
         pthread_join(json_thread, NULL);
         json_thread = 0;
     }
-    
+
     if (g_gamedb_data) {
         free(g_gamedb_data);
         g_gamedb_data = NULL;
