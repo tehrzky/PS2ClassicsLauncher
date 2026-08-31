@@ -67,7 +67,6 @@ typedef struct {
     uint32_t check_flag;
 } LncAppParam;
 
-extern int32_t sceLncUtilInitialize(void);
 extern int32_t sceLncUtilLaunchApp(const char *title_id,
                                     const char *argv[],
                                     LncAppParam *param);
@@ -292,10 +291,10 @@ int daemon_launch_elevated(void) {
     int32_t mod = sceKernelLoadStartModule(
         "/system/common/lib/libSceSystemService.sprx", 0, NULL, 0, 0, 0);
     log_debug("daemon: sceKernelLoadStartModule = %d", mod);
-
-    log_debug("daemon: sceLncUtilInitialize");
-    int32_t ir = sceLncUtilInitialize();
-    log_debug("daemon: sceLncUtilInitialize = 0x%08X", ir);
+    if (mod <= 0) {
+        log_debug("daemon: module load failed, aborting launch");
+        return -1;
+    }
 
     LncAppParam param;
     memset(&param, 0, sizeof(param));
