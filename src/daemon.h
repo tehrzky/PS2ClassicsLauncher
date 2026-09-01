@@ -18,7 +18,7 @@
  * Flow:
  *   1. Sandboxed instance boots normally (argv has no "--elevated").
  *   2. It installs/updates the elevated copy if needed.
- *   3. It calls sceLncUtilLaunchApp("ITEM00002", {"--elevated"}, ...) and
+ *   3. It calls sceLncUtilLaunchApp(DAEMON_TITLE_ID, NULL, &param) and
  *      exits.
  *   4. The elevated copy boots, sees "--elevated" in argv, skips the
  *      install/trampoline step, and runs the full UI as normal — except
@@ -30,9 +30,13 @@
  * ----------------------------------------------------------------------- */
 
 /* Slot in the PS4's system app registry we install our elevated copy
- * into. "ITEM00002" is an unused/free vsh app id — same slot Itemzflow
- * uses; change it if it collides with something on your firmware. */
-#define DAEMON_TITLE_ID   "ITEM00002"
+ * into. IMPORTANT: this must NOT collide with any real installed app's
+ * slot. ITEM00002 (used in earlier iterations of this file) turned out
+ * to be Itemzflow's own daemon slot on this system, not a free one --
+ * we were overwriting Itemzflow's real daemon binary. PSTL00002 sits in
+ * the same title-id namespace as this launcher itself (PSTL00001) and
+ * won't collide with anything else installed. */
+#define DAEMON_TITLE_ID   "PSTL00002"
 #define DAEMON_PATH       "/system/vsh/app/" DAEMON_TITLE_ID
 
 /* Must match TITLE_ID in the Makefile. Used to locate our own running
@@ -42,6 +46,11 @@
 /* Returns 1 if this process is the elevated vsh-app copy (launched with
  * the --elevated argv flag), 0 if it's the normal sandboxed install. */
 int daemon_is_elevated(int argc, char *argv[]);
+
+/* True if the elevated copy appears to already be running (its eboot.bin
+ * is locked/can't be opened for write). If so, don't attempt to launch
+ * it again — that repeat-launch is a likely crash trigger. */
+int daemon_is_already_running(void);
 
 /* True if the elevated copy is missing or looks stale (different size
  * than our currently running eboot — i.e. you rebuilt since last
