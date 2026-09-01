@@ -1,5 +1,6 @@
 #include "pgsettings_ui.h"
 #include "pgsettings_textview.h"
+#include "upload_qr_ui.h"
 #include "video.h"
 #include "font.h"
 #include "colors.h"
@@ -340,6 +341,7 @@ static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
         pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
         pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
         pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
+        pg_draw_btn_hint(x, hy, "PAD", "Upload Lua", COLOR_DIM); x += 220;
         pg_draw_btn_hint(x, hy, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
 
         if (dirty) {
@@ -419,6 +421,7 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
     }
 
     draw_pgsettings_textview(st);
+    draw_upload_qr_ui();
 }
 
 /* ---------- Input Logic ---------- */
@@ -470,6 +473,10 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                                 const Schema *schema, GameSettings *settings,
                                 PGSettingsUIState *st) {
     if (!st || !st->active) return 0;
+
+    if (upload_qr_ui_is_open()) {
+        return upload_qr_ui_handle_input(pressed);
+    }
 
     if (st->textview_active) {
         return pgsettings_textview_handle_input(pressed, held, st);
@@ -635,6 +642,12 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
 
     if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
         pgsettings_textview_open(st, schema, settings);
+    }
+
+    /* NOTE: verify ORBIS_PAD_BUTTON_TOUCH_PAD matches your orbis/Pad.h --
+     * same caveat as ORBIS_PAD_BUTTON_OPTIONS above, swap if needed. */
+    if (pressed & ORBIS_PAD_BUTTON_TOUCH_PAD) {
+        upload_qr_ui_open();
     }
 
     return 1;

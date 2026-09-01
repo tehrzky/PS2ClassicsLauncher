@@ -58,16 +58,17 @@ int pgsettings_textview_handle_input(unsigned int pressed, unsigned int held, PG
         if (st->textview_scroll < 0) st->textview_scroll = 0;
 
         if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-            /* Hand off to the system keyboard for real editing. See the
-             * NOTE block below -- this is a two-line integration once the
-             * Orbis IME headers are in the project, deliberately left as
-             * a stub rather than a hand-rolled on-screen keyboard. */
-            st->textview_edit_mode = 1;
-#ifdef PGSETTINGS_HAVE_IME
-            pgsettings_open_system_keyboard(st->textview_buf, sizeof(st->textview_buf));
-            tv_reindex_lines(st);
-            st->textview_edit_mode = 0;
-#endif
+            /* Real text editing intentionally isn't done via sceImeDialog
+             * here -- see the reply this shipped with for why (short
+             * version: it needs system IME modules this jailbroken build
+             * doesn't currently load, and is known to be unreliable for
+             * unsigned homebrew, which is why tools like ps4xplorer draw
+             * their own keyboard instead of using Sony's). The plan is to
+             * reuse the same local upload_qr_ui/local_upload_server
+             * mechanism for editing too -- a browser textarea on the
+             * phone/PC already IS a better keyboard than anything drawn
+             * on-screen. Not wired up yet, so CROSS is a no-op here for
+             * now. */
         }
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
             st->textview_active = 0;
@@ -126,5 +127,5 @@ void draw_pgsettings_textview(PGSettingsUIState *st) {
     int fx = TV_X + TV_W - TV_PAD - 420;
     int fy = TV_Y + TV_H - 40;
     /* Font only rasterizes ASCII 32-126 (see font.c), so keep hints plain. */
-    draw_text(fx, fy, "UP/DOWN Scroll   L1/R1 Page   X Edit   O Close", COLOR_DIM, 18);
+    draw_text(fx, fy, "UP/DOWN Scroll   L1/R1 Page   O Close", COLOR_DIM, 18);
 }
