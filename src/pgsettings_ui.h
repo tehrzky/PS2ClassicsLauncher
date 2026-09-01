@@ -19,6 +19,17 @@ typedef struct {
     int dropdown_sel;        /* selected option in dropdown */
     int dropdown_scroll;     /* scroll offset in dropdown */
 
+    /* Hold-to-fast-scrub state for LEFT/RIGHT on a slider */
+    int lr_hold_dir;         /* -1, 0, +1 : direction currently being held */
+    int lr_hold_frames;      /* how many frames LEFT/RIGHT has been held */
+
+    /* Result preview / text editor overlay (see pgsettings_textview.c) */
+    int textview_active;
+    int textview_scroll;
+    int textview_edit_mode;  /* 0 = read-only preview, 1 = editing */
+    int textview_cursor;     /* character offset into the buffer, edit mode only */
+    char textview_buf[8192];
+
     char game_name[256];
     char disc_id[32];
 } PGSettingsUIState;

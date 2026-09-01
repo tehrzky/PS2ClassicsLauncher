@@ -66,11 +66,71 @@ typedef struct {
 
 static FontSlot fonts[FONT_SLOT_COUNT];
 
+/* ===== Glyph raster cache =====
+ * The old code called stbtt_GetCodepointBitmap() for every character of
+ * every string on every single frame. That re-walks the TTF outline and
+ * rasterizes from scratch each time, which is by far the biggest cost on
+ * screens that redraw a lot of text every frame (like per-game settings,
+ * with a dozen rows of labels + values redrawn at 60fps). This cache
+ * rasterizes each (font slot, codepoint, pixel size) combination once and
+ * reuses the bitmap after that, turning per-frame text drawing into cheap
+ * alpha-blit + a hash lookup. */
+#define GLYPH_CACHE_SIZE 4096
+
+typedef struct {
+    int used;
+    int slot;
+    int codepoint;
+    int size_px;
+    int w, h, xoff, yoff;
+    int advance;
+    unsigned char *bitmap; /* NULL for glyphs with no ink (e.g. space) */
+} GlyphCacheEntry;
+
+static GlyphCacheEntry glyph_cache[GLYPH_CACHE_SIZE];
+
+static void glyph_cache_clear(void) {
+    for (int i = 0; i < GLYPH_CACHE_SIZE; i++) {
+        if (glyph_cache[i].bitmap) {
+            free(glyph_cache[i].bitmap);
+            glyph_cache[i].bitmap = NULL;
+        }
+        glyph_cache[i].used = 0;
+    }
+}
+
+static unsigned int glyph_hash(int slot, int c, int size_px) {
+    unsigned int h = (unsigned int)(slot + 1) * 92821u;
+    h ^= (unsigned int)(c + 1) * 2654435761u;
+    h ^= (unsigned int)(size_px + 1) * 40503u;
+    return h % GLYPH_CACHE_SIZE;
+}
+
+/* Finds an existing entry, or an empty slot ready to be filled by the
+ * caller (used is left 0 so the caller knows it still needs rasterizing).
+ * Returns NULL only if the cache is completely full (should not happen in
+ * practice: cache is cleared whenever fonts are (re)loaded, and the set of
+ * distinct glyph/size combos actually drawn is small). */
+static GlyphCacheEntry *glyph_cache_lookup(int slot, int c, int size_px) {
+    unsigned int start = glyph_hash(slot, c, size_px);
+    for (unsigned int probe = 0; probe < GLYPH_CACHE_SIZE; probe++) {
+        unsigned int i = (start + probe) % GLYPH_CACHE_SIZE;
+        GlyphCacheEntry *e = &glyph_cache[i];
+        if (!e->used) return e;
+        if (e->slot == slot && e->codepoint == c && e->size_px == size_px) return e;
+    }
+    return NULL;
+}
+
 static void font_load_into_slot(int slot, const char *path) {
     if (fonts[slot].loaded) {
         free(fonts[slot].data);
         fonts[slot].loaded = 0;
     }
+    /* Any cached glyph bitmaps may belong to the font being replaced, so
+     * drop the whole cache. Loading only happens at startup / when the
+     * user changes a font in settings, never during normal redraws. */
+    glyph_cache_clear();
     FILE *fp = fopen(path, "rb");
     if (!fp) return;
     fseek(fp, 0, SEEK_END);
@@ -223,16 +283,28 @@ void font_init(void) {
 }
 
 void font_cleanup(void) {
+    glyph_cache_clear();
     for (int i = 0; i < FONT_SLOT_COUNT; i++) {
         if (fonts[i].data) { free(fonts[i].data); fonts[i].data = NULL; }
         fonts[i].loaded = 0;
     }
 }
 
-static FontSlot *font_resolve(int slot) {
-    if (slot >= 0 && slot < FONT_SLOT_COUNT && fonts[slot].loaded) return &fonts[slot];
-    if (fonts[FONT_SLOT_BODY].loaded) return &fonts[FONT_SLOT_BODY];
+static FontSlot *font_resolve_ex(int slot, int *resolved_slot) {
+    if (slot >= 0 && slot < FONT_SLOT_COUNT && fonts[slot].loaded) {
+        if (resolved_slot) *resolved_slot = slot;
+        return &fonts[slot];
+    }
+    if (fonts[FONT_SLOT_BODY].loaded) {
+        if (resolved_slot) *resolved_slot = FONT_SLOT_BODY;
+        return &fonts[FONT_SLOT_BODY];
+    }
+    if (resolved_slot) *resolved_slot = -1;
     return NULL;
+}
+
+static FontSlot *font_resolve(int slot) {
+    return font_resolve_ex(slot, NULL);
 }
 
 // ===== Bitmap fallback =====
@@ -253,11 +325,12 @@ static void draw_text_bitmap(int x, int y, const char *s, uint32_t color, int sc
 }
 
 // ===== TTF rendering =====
-static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float size_px, FontSlot *f) {
+static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float size_px, FontSlot *f, int font_slot_id) {
     float scale = stbtt_ScaleForPixelHeight(&f->info, size_px);
     int ascent, baseline;
     stbtt_GetFontVMetrics(&f->info, &ascent, 0, 0);
     baseline = (int)(ascent * scale);
+    int size_key = (int)(size_px + 0.5f);
 
     uint8_t cr = (color >> 16) & 0xFF;
     uint8_t cg = (color >> 8) & 0xFF;
@@ -268,42 +341,60 @@ static void draw_text_ttf(int x, int y, const char *text, uint32_t color, float 
         int c = (unsigned char)*text++;
         if (c < 32 || c > 126) continue;
 
-        int w, h, xoff, yoff;
-        unsigned char *bitmap = stbtt_GetCodepointBitmap(&f->info, 0, scale, c, &w, &h, &xoff, &yoff);
+        GlyphCacheEntry *e = glyph_cache_lookup(font_slot_id, c, size_key);
+        if (e && !e->used) {
+            /* Cache miss: rasterize once and remember it. */
+            int w, h, xoff, yoff;
+            unsigned char *bitmap = stbtt_GetCodepointBitmap(&f->info, 0, scale, c, &w, &h, &xoff, &yoff);
+            int advance, lsb;
+            stbtt_GetCodepointHMetrics(&f->info, c, &advance, &lsb);
 
-        for (int j = 0; j < h; j++) {
-            int py = y + j + baseline + yoff;
-            if (py < 0 || py >= SCREEN_HEIGHT) continue;
-            uint32_t *dst_row = &framebuffer[current_buf][py * SCREEN_WIDTH];
-            for (int i = 0; i < w; i++) {
-                int px = xpos + i + xoff;
-                if (px < 0 || px >= SCREEN_WIDTH) continue;
-                uint8_t alpha = bitmap[j * w + i];
-                if (alpha == 0) continue;
-                if (alpha == 255) {
-                    dst_row[px] = (0xFFu << 24) | ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
-                } else {
-                    uint32_t dst = dst_row[px];
-                    uint8_t dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
-                    uint8_t r = (cr * alpha + dr * (255 - alpha)) / 255;
-                    uint8_t g = (cg * alpha + dg * (255 - alpha)) / 255;
-                    uint8_t b = (cb * alpha + db * (255 - alpha)) / 255;
-                    dst_row[px] = (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+            e->used = 1;
+            e->slot = font_slot_id;
+            e->codepoint = c;
+            e->size_px = size_key;
+            e->w = w; e->h = h; e->xoff = xoff; e->yoff = yoff;
+            e->advance = (int)(advance * scale);
+            e->bitmap = bitmap; /* stb allocates with malloc; we own it now, don't free */
+        }
+
+        if (e) {
+            for (int j = 0; j < e->h; j++) {
+                int py = y + j + baseline + e->yoff;
+                if (py < 0 || py >= SCREEN_HEIGHT) continue;
+                uint32_t *dst_row = &framebuffer[current_buf][py * SCREEN_WIDTH];
+                for (int i = 0; i < e->w; i++) {
+                    int px = xpos + i + e->xoff;
+                    if (px < 0 || px >= SCREEN_WIDTH) continue;
+                    uint8_t alpha = e->bitmap[j * e->w + i];
+                    if (alpha == 0) continue;
+                    if (alpha == 255) {
+                        dst_row[px] = (0xFFu << 24) | ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+                    } else {
+                        uint32_t dst = dst_row[px];
+                        uint8_t dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
+                        uint8_t r = (cr * alpha + dr * (255 - alpha)) / 255;
+                        uint8_t g = (cg * alpha + dg * (255 - alpha)) / 255;
+                        uint8_t b = (cb * alpha + db * (255 - alpha)) / 255;
+                        dst_row[px] = (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                    }
                 }
             }
+            xpos += e->advance;
+        } else {
+            /* Cache exhausted (shouldn't happen) — fall back to uncached draw for advance only */
+            int advance, lsb;
+            stbtt_GetCodepointHMetrics(&f->info, c, &advance, &lsb);
+            xpos += (int)(advance * scale);
         }
-        stbtt_FreeBitmap(bitmap, NULL);
-
-        int advance, lsb;
-        stbtt_GetCodepointHMetrics(&f->info, c, &advance, &lsb);
-        xpos += (int)(advance * scale);
     }
 }
 
 // ===== Public API =====
 void draw_text_slot(int x, int y, const char *s, uint32_t color, int size_px, int slot) {
-    FontSlot *f = font_resolve(slot);
-    if (f) draw_text_ttf(x, y, s, color, (float)size_px, f);
+    int resolved_slot;
+    FontSlot *f = font_resolve_ex(slot, &resolved_slot);
+    if (f) draw_text_ttf(x, y, s, color, (float)size_px, f, resolved_slot);
     else {
         int sc = size_px / 16; if (sc < 1) sc = 1; if (sc > 4) sc = 4;
         draw_text_bitmap(x, y, s, color, sc);

@@ -1,4 +1,5 @@
 #include "pgsettings_ui.h"
+#include "pgsettings_textview.h"
 #include "video.h"
 #include "font.h"
 #include "colors.h"
@@ -7,6 +8,15 @@
 #include <orbis/Pad.h>
 #include <stdio.h>
 #include <math.h>
+
+/* Frames LEFT/RIGHT must be held on a slider before hold-to-fast-scrub
+ * kicks in, and how it accelerates after that. Tuned for a 60fps loop;
+ * scale these if the settings screen runs at a different rate. */
+#define PG_HOLD_DELAY_FRAMES   18   /* ~0.3s dead zone so single taps stay precise */
+#define PG_HOLD_RAMP_FRAMES    6    /* every N frames past the delay, repeat gets faster */
+#define PG_HOLD_MIN_INTERVAL   1    /* fastest repeat rate, in frames between steps */
+#define PG_HOLD_MULT_FRAMES    30   /* every N frames past the delay, step size doubles-ish */
+#define PG_HOLD_MAX_MULT       8    /* cap on how many normal steps one repeat applies */
 
 /* ---------- Consistent Screen Layout & Safe Area ---------- */
 #define SCREEN_WIDTH        1920
@@ -329,6 +339,7 @@ static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
         pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
         pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
         pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
+        pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
         pg_draw_btn_hint(x, hy, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
 
         if (dirty) {
@@ -406,6 +417,8 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
     if (st->dropdown_active && st->selected_field >= 0 && st->selected_field < tab->field_count) {
         pg_draw_dropdown(&tab->fields[st->selected_field], settings, st);
     }
+
+    draw_pgsettings_textview(st);
 }
 
 /* ---------- Input Logic ---------- */
@@ -457,6 +470,10 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                                 const Schema *schema, GameSettings *settings,
                                 PGSettingsUIState *st) {
     if (!st || !st->active) return 0;
+
+    if (st->textview_active) {
+        return pgsettings_textview_handle_input(pressed, held, st);
+    }
 
     const SchemaTab *tab = &schema->tabs[st->selected_tab];
 
@@ -519,11 +536,45 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
             change_field_value(&tab->fields[st->selected_field], settings, -1);
             st->dirty = pgsettings_any_modified(settings, schema);
         }
+        st->lr_hold_dir = -1;
+        st->lr_hold_frames = 0;
     }
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             change_field_value(&tab->fields[st->selected_field], settings, 1);
             st->dirty = pgsettings_any_modified(settings, schema);
+        }
+        st->lr_hold_dir = 1;
+        st->lr_hold_frames = 0;
+    }
+
+    /* Hold-to-fast-scrub: keep LEFT/RIGHT pressed on a slider and it
+     * accelerates instead of forcing repeated single taps. Only sliders --
+     * selects/toggles have a small, fixed number of values so a fast
+     * scrub isn't meaningful for them and would just overshoot. */
+    {
+        unsigned int lr_held = held & (ORBIS_PAD_BUTTON_LEFT | ORBIS_PAD_BUTTON_RIGHT);
+        const SchemaField *hf = (st->selected_field >= 0 && st->selected_field < tab->field_count)
+                                 ? &tab->fields[st->selected_field] : NULL;
+
+        if (hf && hf->type == FIELD_SLIDER && lr_held && st->lr_hold_dir != 0) {
+            st->lr_hold_frames++;
+            if (st->lr_hold_frames > PG_HOLD_DELAY_FRAMES) {
+                int since = st->lr_hold_frames - PG_HOLD_DELAY_FRAMES;
+                int interval = PG_HOLD_RAMP_FRAMES - since / PG_HOLD_RAMP_FRAMES;
+                if (interval < PG_HOLD_MIN_INTERVAL) interval = PG_HOLD_MIN_INTERVAL;
+                if (since % interval == 0) {
+                    int mult = 1 + since / PG_HOLD_MULT_FRAMES;
+                    if (mult > PG_HOLD_MAX_MULT) mult = PG_HOLD_MAX_MULT;
+                    for (int m = 0; m < mult; m++) {
+                        change_field_value(hf, settings, st->lr_hold_dir);
+                    }
+                    st->dirty = pgsettings_any_modified(settings, schema);
+                }
+            }
+        } else if (!lr_held) {
+            st->lr_hold_frames = 0;
+            st->lr_hold_dir = 0;
         }
     }
 
@@ -580,6 +631,10 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         } else {
             st->active = 0;
         }
+    }
+
+    if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
+        pgsettings_textview_open(st, schema, settings);
     }
 
     return 1;
