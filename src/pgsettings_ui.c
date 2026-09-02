@@ -1,6 +1,7 @@
 #include "pgsettings_ui.h"
 #include "pgsettings_textview.h"
 #include "upload_qr_ui.h"
+#include "game.h"
 #include "video.h"
 #include "font.h"
 #include "colors.h"
@@ -12,12 +13,22 @@
 
 /* Frames LEFT/RIGHT must be held on a slider before hold-to-fast-scrub
  * kicks in, and how it accelerates after that. Tuned for a 60fps loop;
- * scale these if the settings screen runs at a different rate. */
-#define PG_HOLD_DELAY_FRAMES   18   /* ~0.3s dead zone so single taps stay precise */
-#define PG_HOLD_RAMP_FRAMES    6    /* every N frames past the delay, repeat gets faster */
+ * scale these if the settings screen runs at a different rate.
+ * Shortened per feedback -- was 18/6/30, felt sluggish before it kicked in. */
+#define PG_HOLD_DELAY_FRAMES   6    /* ~0.1s dead zone so single taps stay precise */
+#define PG_HOLD_RAMP_FRAMES    4    /* every N frames past the delay, repeat gets faster */
 #define PG_HOLD_MIN_INTERVAL   1    /* fastest repeat rate, in frames between steps */
-#define PG_HOLD_MULT_FRAMES    30   /* every N frames past the delay, step size doubles-ish */
+#define PG_HOLD_MULT_FRAMES    18   /* every N frames past the delay, step size doubles-ish */
 #define PG_HOLD_MAX_MULT       8    /* cap on how many normal steps one repeat applies */
+
+/* NOTE on persistence: this screen intentionally does not save anything to
+ * a per-game values file. The only thing that persists per game is the
+ * schema override at gamesettings/<discid>_schema.json (merged in by the
+ * caller before this screen opens -- see schema_merge_game_override() and
+ * main.c). Editing fields here just changes the in-memory GameSettings for
+ * this session, useful for previewing via "Check Result" (OPTIONS); the
+ * config that's actually used comes from the CLI/lua text file in
+ * gameconfig, managed via FTP or the local upload server. */
 
 /* ---------- Consistent Screen Layout & Safe Area ---------- */
 #define SCREEN_WIDTH        1920
@@ -39,7 +50,7 @@
 #define PG_TAB_GAP          8
 #define PG_ROW_H            58
 #define PG_ROW_GAP          4
-#define PG_DESC_H           80
+#define PG_DESC_H           142  /* bigger box for larger text; costs 1 fewer visible row, on purpose */
 #define PG_SCROLLBAR_W      4
 
 #define PG_CONTENT_TOP      (HEADER_H + PG_TAB_H + 24)
@@ -136,7 +147,10 @@ static void pg_draw_field(const SchemaField *f, const GameSettings *gs,
         draw_rounded_rect(x, y, w, PG_ROW_H, 8, COLOR_CARD);
     }
 
-    uint32_t label_c = is_sel ? COLOR_TEXT : (is_modified ? COLOR_GOLD : COLOR_DIM);
+    /* Row background/left-accent already carries the "selected" signal,
+     * so the label itself just stays white/legible instead of dimming --
+     * only actually-modified (non-selected) rows get the gold tint. */
+    uint32_t label_c = is_modified && !is_sel ? COLOR_GOLD : COLOR_TEXT;
     draw_text(x + 20, y + 14, f->label, label_c, 28);
 
     int vx = x + w - 320;
@@ -178,31 +192,32 @@ static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
     draw_rounded_rect(x, y, w, PG_DESC_H, ROUND_RADIUS, COLOR_BORDER);
     draw_rounded_rect(x + 1, y + 1, w - 2, PG_DESC_H - 2, ROUND_RADIUS_SMALL, COLOR_CARD);
 
-    draw_text_slot(x + 16, y + 10, "INFO:", COLOR_GOLD, 22, FONT_SLOT_BOLD);
+    draw_text_slot(x + 18, y + 12, "INFO:", COLOR_GOLD, 24, FONT_SLOT_BOLD);
 
     char buf[512];
     strncpy(buf, f->description, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-    int line_h = 22;
-    int max_lines = (PG_DESC_H - 16) / line_h;
+    int font_size = 24;
+    int line_h = 30;
+    int max_lines = (PG_DESC_H - 20) / line_h;
     char line[256] = "";
     char *word = strtok(buf, " \n\r\t");
-    int cy = y + 36;
+    int cy = y + 46;
     int lines = 0;
-    int text_x = x + 16;
-    int text_w = w - 32;
+    int text_x = x + 18;
+    int text_w = w - 36;
 
     while (word && lines < max_lines) {
         char test[512];
         if (line[0]) snprintf(test, sizeof(test), "%s %s", line, word);
         else snprintf(test, sizeof(test), "%s", word);
 
-        if (font_text_width(test, 20) <= text_w) {
+        if (font_text_width(test, font_size) <= text_w) {
             snprintf(line, sizeof(line), "%s", test);
         } else {
             if (line[0]) {
-                draw_text(text_x, cy, line, COLOR_DIM, 20);
+                draw_text(text_x, cy, line, COLOR_DIM, font_size);
                 cy += line_h;
                 lines++;
             }
@@ -211,7 +226,7 @@ static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
         word = strtok(NULL, " \n\r\t");
     }
     if (line[0] && lines < max_lines) {
-        draw_text(text_x, cy, line, COLOR_DIM, 20);
+        draw_text(text_x, cy, line, COLOR_DIM, font_size);
     }
 }
 
@@ -281,18 +296,44 @@ static void pg_draw_dropdown(const SchemaField *f, const GameSettings *gs, PGSet
 }
 
 /* ---------- Header, Tabs, Footer ---------- */
+static void pg_truncate_to_width(char *text, int max_w, int size_px, int slot) {
+    if (font_text_width_slot(text, size_px, slot) <= max_w) return;
+    size_t len = strlen(text);
+    while (len > 0) {
+        text[len] = '\0';
+        char test[520];
+        snprintf(test, sizeof(test), "%s...", text);
+        if (font_text_width_slot(test, size_px, slot) <= max_w) {
+            strcpy(text, test);
+            return;
+        }
+        len--;
+    }
+}
+
 static void pg_draw_header(const char *game_name) {
+    const char *right_label = "PER-GAME SETTINGS";
+    int right_size = 32;
+    int right_w = font_text_width_slot(right_label, right_size, FONT_SLOT_TITLE);
+
+    int gap = 40;
+    int max_title_w = (SAFE_X1 - gap - right_w) - SAFE_X;
+
     char title[512];
-    snprintf(title, sizeof(title), "GAME CONFIG: %s", game_name);
-    
+    snprintf(title, sizeof(title), "%s", game_name ? game_name : "");
+    pg_truncate_to_width(title, max_title_w, 52, FONT_SLOT_TITLE);
+
     draw_text_slot(SAFE_X, SAFE_Y, title, COLOR_ACCENT, 52, FONT_SLOT_TITLE);
     draw_text_slot(SAFE_X + 1, SAFE_Y, title, COLOR_ACCENT, 52, FONT_SLOT_TITLE);
 
-    int tw = font_text_width_slot("tehrzky", 32, FONT_SLOT_TITLE);
-    draw_text_slot(SAFE_X1 - tw, SAFE_Y + 8, "tehrzky", COLOR_ACCENT, 32, FONT_SLOT_TITLE);
+    draw_text_slot(SAFE_X1 - right_w, SAFE_Y + 8, right_label, COLOR_GOLD, right_size, FONT_SLOT_TITLE);
 
     draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), PANEL_BORDER, COLOR_ACCENT);
 }
+
+/* Slightly darker than COLOR_ACCENT so the white tab label reads clearly
+ * against it -- full-brightness accent washed the text out a bit. */
+#define PG_TAB_SEL_BG 0xFF2F7FB8
 
 static void pg_draw_tabs(const Schema *schema, int selected_tab) {
     int x = SAFE_X;
@@ -305,7 +346,7 @@ static void pg_draw_tabs(const Schema *schema, int selected_tab) {
         int tw = font_text_width(label, 24) + 28;
         int is_sel = (i == selected_tab);
 
-        uint32_t bg = is_sel ? COLOR_ACCENT : COLOR_CARD;
+        uint32_t bg = is_sel ? PG_TAB_SEL_BG : COLOR_CARD;
         uint32_t fg = is_sel ? COLOR_TEXT : COLOR_DIM;
 
         draw_rounded_rect(x, y, tw, PG_TAB_H, 6, bg);
@@ -314,7 +355,7 @@ static void pg_draw_tabs(const Schema *schema, int selected_tab) {
     }
 }
 
-static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
+static void pg_draw_footer(void) {
     int y = SCREEN_HEIGHT - FOOTER_H;
     draw_rect(0, y, SCREEN_WIDTH, FOOTER_H, COLOR_PANEL);
     draw_rect(0, y, SCREEN_WIDTH, PANEL_BORDER, COLOR_ACCENT);
@@ -322,34 +363,14 @@ static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
     int hy = y + 16;
     int x = SAFE_X + 20;
 
-    if (show_confirm) {
-        const char *opts[3] = {"Save & Exit", "Discard", "Cancel"};
-        uint32_t colors[3] = {COLOR_SUCCESS, COLOR_ERROR, COLOR_DIM};
-        int cx = (SCREEN_WIDTH - 540) / 2;
-
-        for (int i = 0; i < 3; i++) {
-            uint32_t c = (i == confirm_sel) ? COLOR_ACCENT : COLOR_CARD;
-            int tw = font_text_width(opts[i], 24);
-            draw_rounded_rect(cx, hy, tw + 24, 36, 6, c);
-            draw_text(cx + 12, hy + 6, opts[i], colors[i], 24);
-            cx += tw + 44;
-        }
-    } else {
-        pg_draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
-        pg_draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
-        pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
-        pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
-        pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
-        pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
-        pg_draw_btn_hint(x, hy, "PAD", "Upload Lua", COLOR_DIM); x += 220;
-        pg_draw_btn_hint(x, hy, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
-
-        if (dirty) {
-            const char *ind = "UNSAVED";
-            int iw = font_text_width(ind, 22);
-            draw_text(SAFE_X1 - iw, hy + 6, ind, COLOR_ERROR, 22);
-        }
-    }
+    pg_draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
+    pg_draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
+    pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
+    pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
+    pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
+    pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
+    pg_draw_btn_hint(x, hy, "PAD", "Upload/Edit", COLOR_DIM); x += 240;
+    pg_draw_btn_hint(x, hy, "O", "Close", COLOR_DIM);
 }
 
 /* ---------- Main Draw Router ---------- */
@@ -414,7 +435,7 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
     pg_draw_scrollbar(tab->field_count, PG_VISIBLE_ROWS, st->scroll_offset,
                       SAFE_X1 - 20, PG_CONTENT_TOP, PG_VISIBLE_ROWS * (PG_ROW_H + PG_ROW_GAP));
 
-    pg_draw_footer(st->dirty, st->show_confirm, st->confirm_sel);
+    pg_draw_footer();
 
     if (st->dropdown_active && st->selected_field >= 0 && st->selected_field < tab->field_count) {
         pg_draw_dropdown(&tab->fields[st->selected_field], settings, st);
@@ -495,38 +516,9 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         if (pressed & ORBIS_PAD_BUTTON_CROSS) {
             pgsettings_set_str(settings, f->id, f->options[st->dropdown_sel].key);
             st->dropdown_active = 0;
-            st->dirty = pgsettings_any_modified(settings, schema);
         }
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
             st->dropdown_active = 0;
-        }
-        return 1;
-    }
-
-    if (st->show_confirm) {
-        if (pressed & ORBIS_PAD_BUTTON_LEFT) {
-            st->confirm_sel = (st->confirm_sel - 1 + 3) % 3;
-        }
-        if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
-            st->confirm_sel = (st->confirm_sel + 1) % 3;
-        }
-        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
-            if (st->confirm_sel == 0) {
-                pgsettings_save(st->disc_id, settings, schema);
-                st->dirty = 0;
-                st->show_confirm = 0;
-                st->active = 0;
-            } else if (st->confirm_sel == 1) {
-                pgsettings_load(st->disc_id, schema, settings);
-                st->dirty = 0;
-                st->show_confirm = 0;
-                st->active = 0;
-            } else {
-                st->show_confirm = 0;
-            }
-        }
-        if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            st->show_confirm = 0;
         }
         return 1;
     }
@@ -541,7 +533,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_LEFT) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             change_field_value(&tab->fields[st->selected_field], settings, -1);
-            st->dirty = pgsettings_any_modified(settings, schema);
         }
         st->lr_hold_dir = -1;
         st->lr_hold_frames = 0;
@@ -549,7 +540,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             change_field_value(&tab->fields[st->selected_field], settings, 1);
-            st->dirty = pgsettings_any_modified(settings, schema);
         }
         st->lr_hold_dir = 1;
         st->lr_hold_frames = 0;
@@ -576,7 +566,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                     for (int m = 0; m < mult; m++) {
                         change_field_value(hf, settings, st->lr_hold_dir);
                     }
-                    st->dirty = pgsettings_any_modified(settings, schema);
                 }
             }
         } else if (!lr_held) {
@@ -612,7 +601,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                 st->dropdown_scroll = 0;
             } else {
                 change_field_value(f, settings, 1);
-                st->dirty = pgsettings_any_modified(settings, schema);
             }
         }
     }
@@ -620,7 +608,6 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             reset_field_to_default(&tab->fields[st->selected_field], settings);
-            st->dirty = pgsettings_any_modified(settings, schema);
         }
     }
 
@@ -628,16 +615,13 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         for (int i = 0; i < tab->field_count; i++) {
             reset_field_to_default(&tab->fields[i], settings);
         }
-        st->dirty = pgsettings_any_modified(settings, schema);
     }
 
     if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-        if (st->dirty) {
-            st->show_confirm = 1;
-            st->confirm_sel = 0;
-        } else {
-            st->active = 0;
-        }
+        /* Nothing here persists on its own (see the top-of-file note on
+         * why per-game values aren't saved to a file anymore), so there's
+         * no unsaved-changes prompt needed -- CIRCLE just closes. */
+        st->active = 0;
     }
 
     if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
@@ -647,7 +631,12 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     /* NOTE: verify ORBIS_PAD_BUTTON_TOUCH_PAD matches your orbis/Pad.h --
      * same caveat as ORBIS_PAD_BUTTON_OPTIONS above, swap if needed. */
     if (pressed & ORBIS_PAD_BUTTON_TOUCH_PAD) {
-        upload_qr_ui_open();
+        /* `selected` is the same game this settings screen is open for --
+         * main.c only enters this screen for games[selected]. */
+        if (selected >= 0 && selected < game_count) {
+            upload_qr_ui_open(games[selected].display_name, games[selected].id,
+                               games[selected].name, games[selected].path);
+        }
     }
 
     return 1;
@@ -660,9 +649,6 @@ void pgsettings_ui_init(PGSettingsUIState *st, const char *game_name, const char
     st->selected_tab = 0;
     st->selected_field = 0;
     st->scroll_offset = 0;
-    st->dirty = 0;
-    st->show_confirm = 0;
-    st->confirm_sel = 0;
     st->dropdown_active = 0;
     st->dropdown_sel = 0;
     st->dropdown_scroll = 0;
@@ -674,9 +660,4 @@ void pgsettings_ui_init(PGSettingsUIState *st, const char *game_name, const char
         strncpy(st->disc_id, disc_id, sizeof(st->disc_id) - 1);
         st->disc_id[sizeof(st->disc_id) - 1] = '\0';
     }
-}
-
-void pgsettings_ui_get_path(const char *disc_id, char *out, size_t out_len) {
-    if (!disc_id || !out || out_len == 0) return;
-    snprintf(out, out_len, "%s/gamesettings/%s.json", g_settings.work_path, disc_id);
 }

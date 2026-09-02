@@ -14,8 +14,10 @@
 static int s_open = 0;
 static char s_url[128] = "";
 
-void upload_qr_ui_open(void) {
+void upload_qr_ui_open(const char *display_name, const char *disc_id,
+                       const char *config_name, const char *iso_path) {
     local_upload_server_start(); /* no-op if already running */
+    local_upload_server_set_game_context(display_name, disc_id, config_name, iso_path);
     local_upload_server_get_url(s_url, sizeof(s_url));
     s_open = 1;
 }
@@ -50,15 +52,15 @@ void draw_upload_qr_ui(void) {
 
     draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0xE0000000);
 
-    int panel_w = 760, panel_h = 760;
+    int panel_w = 1120, panel_h = 980;
     int px = (SCREEN_WIDTH - panel_w) / 2;
     int py = (SCREEN_HEIGHT - panel_h) / 2;
-    draw_rounded_rect(px, py, panel_w, panel_h, 14, COLOR_BORDER);
-    draw_rounded_rect(px + 2, py + 2, panel_w - 4, panel_h - 4, 12, COLOR_PANEL);
+    draw_rounded_rect(px, py, panel_w, panel_h, 16, COLOR_BORDER);
+    draw_rounded_rect(px + 3, py + 3, panel_w - 6, panel_h - 6, 14, COLOR_PANEL);
 
-    const char *title = "Upload a Lua Patch";
-    int tw = font_text_width_slot(title, 32, FONT_SLOT_BOLD);
-    draw_text_slot(px + (panel_w - tw) / 2, py + 24, title, COLOR_GOLD, 32, FONT_SLOT_BOLD);
+    const char *title = "Upload / Edit Game Files";
+    int tw = font_text_width_slot(title, 44, FONT_SLOT_BOLD);
+    draw_text_slot(px + (panel_w - tw) / 2, py + 34, title, COLOR_GOLD, 44, FONT_SLOT_BOLD);
 
     static uint8_t qr_temp[qrcodegen_BUFFER_LEN_MAX];
     static uint8_t qr_out[qrcodegen_BUFFER_LEN_MAX];
@@ -69,31 +71,31 @@ void draw_upload_qr_ui(void) {
 
     if (ok) {
         int size = qrcodegen_getSize(qr_out);
-        int module_px = 5;
+        int module_px = 8;
         int qr_total = size * module_px + 8 * module_px;
         int qx = px + (panel_w - qr_total) / 2;
-        int qy = py + 80;
+        int qy = py + 110;
         draw_qr(qr_out, qx, qy, module_px);
 
-        int addr_y = qy + qr_total + 24;
-        int aw = font_text_width(s_url, 26);
-        draw_text(px + (panel_w - aw) / 2, addr_y, s_url, COLOR_ACCENT, 26);
+        int addr_y = qy + qr_total + 34;
+        int aw = font_text_width(s_url, 34);
+        draw_text(px + (panel_w - aw) / 2, addr_y, s_url, COLOR_ACCENT, 34);
 
         const char *hint1 = "Scan with your phone, or type that address into any";
         const char *hint2 = "browser on the same network (phone or PC).";
-        int h1w = font_text_width(hint1, 20);
-        int h2w = font_text_width(hint2, 20);
-        draw_text(px + (panel_w - h1w) / 2, addr_y + 36, hint1, COLOR_DIM, 20);
-        draw_text(px + (panel_w - h2w) / 2, addr_y + 58, hint2, COLOR_DIM, 20);
+        int h1w = font_text_width(hint1, 24);
+        int h2w = font_text_width(hint2, 24);
+        draw_text(px + (panel_w - h1w) / 2, addr_y + 48, hint1, COLOR_DIM, 24);
+        draw_text(px + (panel_w - h2w) / 2, addr_y + 76, hint2, COLOR_DIM, 24);
     } else {
         const char *err = "Could not build QR code -- use the address below.";
-        int ew = font_text_width(err, 22);
-        draw_text(px + (panel_w - ew) / 2, py + 200, err, COLOR_ERROR, 22);
-        int aw = font_text_width(s_url, 26);
-        draw_text(px + (panel_w - aw) / 2, py + 240, s_url, COLOR_ACCENT, 26);
+        int ew = font_text_width(err, 26);
+        draw_text(px + (panel_w - ew) / 2, py + 300, err, COLOR_ERROR, 26);
+        int aw = font_text_width(s_url, 34);
+        draw_text(px + (panel_w - aw) / 2, py + 350, s_url, COLOR_ACCENT, 34);
     }
 
     const char *close_hint = "O Close";
-    int cw = font_text_width(close_hint, 22);
-    draw_text(px + (panel_w - cw) / 2, py + panel_h - 40, close_hint, COLOR_DIM, 22);
+    int cw = font_text_width(close_hint, 26);
+    draw_text(px + (panel_w - cw) / 2, py + panel_h - 50, close_hint, COLOR_DIM, 26);
 }

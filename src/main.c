@@ -53,6 +53,7 @@ const char *embedded_default =
 #define UI_MODE_PGSETTINGS 3
 
 Schema g_schema;
+Schema g_active_schema; /* g_schema (master) + the selected game's _schema.json override merged in */
 int g_schema_loaded = 0;
 GameSettings g_pgsettings;
 PGSettingsUIState g_pg_ui_state;
@@ -188,7 +189,7 @@ int main(void) {
                 }
                 memcard_ui_handle_input(pressed, buttons);
             } else if (ui_mode == UI_MODE_PGSETTINGS) {
-                if (pgsettings_ui_handle_input(pressed, buttons, &g_schema,
+                if (pgsettings_ui_handle_input(pressed, buttons, &g_active_schema,
                                                 &g_pgsettings, &g_pg_ui_state)) {
                     if (!g_pg_ui_state.active) {
                         ui_mode = 0;
@@ -230,7 +231,15 @@ int main(void) {
                         g_schema_loaded = (schema_load(schema_path, &g_schema) == 0);
                     }
                     if (g_schema_loaded && game_count > 0 && selected >= 0) {
-                        pgsettings_load(games[selected].id, &g_schema, &g_pgsettings);
+                        /* Start from the pure master schema every time, then merge in
+                         * this specific game's gamesettings/<discid>_schema.json
+                         * override (if any) -- doing this fresh per game (instead of
+                         * mutating the cached g_schema in place) is what actually makes
+                         * overrides work: previously this merge was never called at
+                         * all, and g_schema was shared/cached across every game. */
+                        g_active_schema = g_schema;
+                        schema_merge_game_override(&g_active_schema, games[selected].id, g_settings.work_path);
+                        pgsettings_load(games[selected].id, &g_active_schema, &g_pgsettings);
                         pgsettings_ui_init(&g_pg_ui_state,
                                             games[selected].display_name,
                                             games[selected].id);
@@ -275,7 +284,7 @@ int main(void) {
             draw_memcard_ui();
         } else if (ui_mode == UI_MODE_PGSETTINGS) {
             draw_launcher_ui(game_count, selected, game_count);
-            draw_pgsettings_ui(&g_schema, &g_pgsettings, &g_pg_ui_state);
+            draw_pgsettings_ui(&g_active_schema, &g_pgsettings, &g_pg_ui_state);
         } else {
             draw_launcher_ui(game_count, selected, game_count);
         }

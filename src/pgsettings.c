@@ -1,12 +1,9 @@
 #include "pgsettings.h"
-#include "json_parser.h"
-#include "settings.h"
 #include "debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <sys/stat.h>
 
 static SettingValue *find_value(GameSettings *gs, const char *field_id) {
     int i;
@@ -47,31 +44,6 @@ static void populate_defaults(const Schema *schema, GameSettings *gs) {
     }
 }
 
-static void apply_json_overrides(JsonValue *values_obj, GameSettings *gs) {
-    if (!values_obj || values_obj->type != JSON_OBJECT) return;
-    int i;
-    for (i = 0; i < values_obj->u.object.count; i++) {
-        const char *key = values_obj->u.object.keys[i];
-        JsonValue *val = values_obj->u.object.values[i];
-        SettingValue *sv = find_value(gs, key);
-        if (!sv) continue;
-
-        if (val->type == JSON_STRING) {
-            strncpy(sv->value_str, val->u.str_val, PGSETTINGS_MAX_VALUE_LEN - 1);
-            sv->value_str[PGSETTINGS_MAX_VALUE_LEN - 1] = '\0';
-            sv->is_set = 1;
-        } else if (val->type == JSON_BOOL) {
-            sv->value_int = val->u.bool_val ? 1 : 0;
-            sv->is_set = 1;
-        } else if (val->type == JSON_NUMBER) {
-            sv->value_double = val->u.num_val;
-            sv->value_int = (int)val->u.num_val;
-            snprintf(sv->value_str, sizeof(sv->value_str), "%.10g", val->u.num_val);
-            sv->is_set = 1;
-        }
-    }
-}
-
 int pgsettings_load(const char *disc_id, const Schema *schema, GameSettings *out) {
     if (!disc_id || !schema || !out) return -1;
     memset(out, 0, sizeof(GameSettings));
@@ -80,71 +52,11 @@ int pgsettings_load(const char *disc_id, const Schema *schema, GameSettings *out
     strncpy(out->version, schema->version, sizeof(out->version) - 1);
     out->version[sizeof(out->version) - 1] = '\0';
 
+    /* No per-game values file anymore -- the only thing saved per game is
+     * the schema override (gamesettings/<discid>_schema.json), which the
+     * caller already merged into `schema` before calling this. So this is
+     * just "populate from schema defaults" every time. */
     populate_defaults(schema, out);
-
-    char path[512];
-    snprintf(path, sizeof(path), "%s/gamesettings/%s.json", g_settings.work_path, disc_id);
-
-    JsonValue *root = json_parse_file(path);
-    if (root) {
-        if (root->type == JSON_OBJECT) {
-            JsonValue *values = json_object_get(root, "values");
-            if (values) apply_json_overrides(values, out);
-        }
-        json_free(root);
-    }
-    return 0;
-}
-
-int pgsettings_save(const char *disc_id, const GameSettings *settings, const Schema *schema) {
-    if (!disc_id || !settings || !schema) return -1;
-
-    JsonValue *root = json_new_object();
-    json_object_set(root, "disc_id", json_new_string(settings->disc_id));
-    json_object_set(root, "version", json_new_string(schema->version));
-
-    JsonValue *values = json_new_object();
-    int i;
-    for (i = 0; i < settings->value_count; i++) {
-        const SettingValue *sv = &settings->values[i];
-        if (!sv->is_set) continue;
-
-        const SchemaField *sf = schema_find_field(schema, sv->field_id);
-        if (!sf) continue;
-
-        if (sf->type == FIELD_SELECT || sf->type == FIELD_TEXT) {
-            char def_str[PGSETTINGS_MAX_VALUE_LEN];
-            schema_get_default_str(sf, def_str, sizeof(def_str));
-            if (strcmp(sv->value_str, def_str) == 0) continue;
-            json_object_set(values, sv->field_id, json_new_string(sv->value_str));
-        } else if (sf->type == FIELD_SLIDER) {
-            double def_d = schema_get_default_double(sf);
-            if (fabs(sv->value_double - def_d) < 0.0001) continue;
-            json_object_set(values, sv->field_id, json_new_number(sv->value_double));
-        } else {
-            int def_int = schema_get_default_int(sf);
-            if (sv->value_int == def_int) continue;
-            json_object_set(values, sv->field_id, json_new_number(sv->value_int));
-        }
-    }
-    json_object_set(root, "values", values);
-
-    char *json_str = json_serialize(root);
-    json_free(root);
-    if (!json_str) return -1;
-
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/gamesettings", g_settings.work_path);
-    mkdir(dir, 0777);
-
-    char path[512];
-    snprintf(path, sizeof(path), "%s/%s.json", dir, disc_id);
-    FILE *fp = fopen(path, "w");
-    if (!fp) { free(json_str); return -1; }
-    fprintf(fp, "%s\n", json_str);
-    fclose(fp);
-    free(json_str);
-    log_debug("pgsettings saved: %s", path);
     return 0;
 }
 

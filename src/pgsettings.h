@@ -23,12 +23,11 @@ typedef struct {
     int value_count;
 } GameSettings;
 
-/* Load per-game settings: schema defaults merged with saved JSON overrides.
- * Returns 0 on success (even if no JSON file exists — falls back to defaults). */
+/* Load per-game settings: schema (already merged with any _schema.json
+ * override by the caller) defaults only -- there is no per-game values
+ * file anymore, so this always starts from schema defaults.
+ * Returns 0 on success. */
 int pgsettings_load(const char *disc_id, const Schema *schema, GameSettings *out);
-
-/* Save only the values that differ from schema defaults. */
-int pgsettings_save(const char *disc_id, const GameSettings *settings, const Schema *schema);
 
 /* Reset all values to schema defaults (clears is_set flags). */
 void pgsettings_reset(const char *disc_id, const Schema *schema, GameSettings *out);
