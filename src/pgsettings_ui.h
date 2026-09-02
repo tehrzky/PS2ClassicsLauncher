@@ -10,6 +10,9 @@ typedef struct {
     int selected_tab;
     int selected_field;      /* index within current tab */
     int scroll_offset;       /* first visible field in current tab */
+    int dirty;               /* 1 = unsaved changes */
+    int show_confirm;        /* 1 = showing save/discard dialog */
+    int confirm_sel;         /* 0=Save, 1=Discard, 2=Cancel */
 
     /* Dropdown overlay */
     int dropdown_active;     /* 1 = dropdown menu is open */
@@ -42,5 +45,8 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
 /* Draw the per-game settings UI. */
 void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
                         PGSettingsUIState *st);
+
+/* Get path for saving/loading per-game settings JSON */
+void pgsettings_ui_get_path(const char *disc_id, char *out, size_t out_len);
 
 #endif

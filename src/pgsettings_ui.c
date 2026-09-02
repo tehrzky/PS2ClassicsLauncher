@@ -14,21 +14,20 @@
 /* Frames LEFT/RIGHT must be held on a slider before hold-to-fast-scrub
  * kicks in, and how it accelerates after that. Tuned for a 60fps loop;
  * scale these if the settings screen runs at a different rate.
- * Shortened per feedback -- was 18/6/30, felt sluggish before it kicked in. */
-#define PG_HOLD_DELAY_FRAMES   6    /* ~0.1s dead zone so single taps stay precise */
-#define PG_HOLD_RAMP_FRAMES    4    /* every N frames past the delay, repeat gets faster */
+ * Cut down twice now per feedback -- first 18->6, now down to near-
+ * immediate (2 frames, ~33ms) since it still felt delayed at 6. */
+#define PG_HOLD_DELAY_FRAMES   2    /* ~0.03s -- basically starts on the next frame */
+#define PG_HOLD_RAMP_FRAMES    3    /* every N frames past the delay, repeat gets faster */
 #define PG_HOLD_MIN_INTERVAL   1    /* fastest repeat rate, in frames between steps */
-#define PG_HOLD_MULT_FRAMES    18   /* every N frames past the delay, step size doubles-ish */
+#define PG_HOLD_MULT_FRAMES    12   /* every N frames past the delay, step size doubles-ish */
 #define PG_HOLD_MAX_MULT       8    /* cap on how many normal steps one repeat applies */
 
-/* NOTE on persistence: this screen intentionally does not save anything to
- * a per-game values file. The only thing that persists per game is the
- * schema override at gamesettings/<discid>_schema.json (merged in by the
- * caller before this screen opens -- see schema_merge_game_override() and
- * main.c). Editing fields here just changes the in-memory GameSettings for
- * this session, useful for previewing via "Check Result" (OPTIONS); the
- * config that's actually used comes from the CLI/lua text file in
- * gameconfig, managed via FTP or the local upload server. */
+/* NOTE on persistence: per-game field edits ARE saved (gamesettings/
+ * <discid>.json, via pgsettings_save() on CIRCLE + confirm) -- separate
+ * from that, gamesettings/<discid>_schema.json is a *schema* override
+ * (which fields/tabs exist at all for this game), merged in by the
+ * caller before this screen opens. See schema_merge_game_override() and
+ * main.c. */
 
 /* ---------- Consistent Screen Layout & Safe Area ---------- */
 #define SCREEN_WIDTH        1920
@@ -217,7 +216,7 @@ static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
             snprintf(line, sizeof(line), "%s", test);
         } else {
             if (line[0]) {
-                draw_text(text_x, cy, line, COLOR_DIM, font_size);
+                draw_text(text_x, cy, line, COLOR_TEXT, font_size);
                 cy += line_h;
                 lines++;
             }
@@ -226,7 +225,7 @@ static void pg_draw_description(const SchemaField *f, int x, int y, int w) {
         word = strtok(NULL, " \n\r\t");
     }
     if (line[0] && lines < max_lines) {
-        draw_text(text_x, cy, line, COLOR_DIM, font_size);
+        draw_text(text_x, cy, line, COLOR_TEXT, font_size);
     }
 }
 
@@ -331,9 +330,10 @@ static void pg_draw_header(const char *game_name) {
     draw_rect(SAFE_X, HEADER_H, SCREEN_WIDTH - (SAFE_X * 2), PANEL_BORDER, COLOR_ACCENT);
 }
 
-/* Slightly darker than COLOR_ACCENT so the white tab label reads clearly
- * against it -- full-brightness accent washed the text out a bit. */
-#define PG_TAB_SEL_BG 0xFF2F7FB8
+/* Darker than COLOR_ACCENT so the white tab label reads clearly against
+ * it -- darkened once already (75% of accent), still wasn't enough, now
+ * ~55% of accent. */
+#define PG_TAB_SEL_BG 0xFF235D87
 
 static void pg_draw_tabs(const Schema *schema, int selected_tab) {
     int x = SAFE_X;
@@ -355,7 +355,7 @@ static void pg_draw_tabs(const Schema *schema, int selected_tab) {
     }
 }
 
-static void pg_draw_footer(void) {
+static void pg_draw_footer(int dirty, int show_confirm, int confirm_sel) {
     int y = SCREEN_HEIGHT - FOOTER_H;
     draw_rect(0, y, SCREEN_WIDTH, FOOTER_H, COLOR_PANEL);
     draw_rect(0, y, SCREEN_WIDTH, PANEL_BORDER, COLOR_ACCENT);
@@ -363,14 +363,34 @@ static void pg_draw_footer(void) {
     int hy = y + 16;
     int x = SAFE_X + 20;
 
-    pg_draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
-    pg_draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
-    pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
-    pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
-    pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
-    pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
-    pg_draw_btn_hint(x, hy, "PAD", "Upload/Edit", COLOR_DIM); x += 240;
-    pg_draw_btn_hint(x, hy, "O", "Close", COLOR_DIM);
+    if (show_confirm) {
+        const char *opts[3] = {"Save & Exit", "Discard", "Cancel"};
+        uint32_t colors[3] = {COLOR_SUCCESS, COLOR_ERROR, COLOR_DIM};
+        int cx = (SCREEN_WIDTH - 540) / 2;
+
+        for (int i = 0; i < 3; i++) {
+            uint32_t c = (i == confirm_sel) ? COLOR_ACCENT : COLOR_CARD;
+            int tw = font_text_width(opts[i], 24);
+            draw_rounded_rect(cx, hy, tw + 24, 36, 6, c);
+            draw_text(cx + 12, hy + 6, opts[i], colors[i], 24);
+            cx += tw + 44;
+        }
+    } else {
+        pg_draw_btn_hint(x, hy, "^v", "Navigate", COLOR_DIM); x += 220;
+        pg_draw_btn_hint(x, hy, "<>", "Change", COLOR_DIM); x += 220;
+        pg_draw_btn_hint(x, hy, "L1/R1", "Tabs", COLOR_DIM); x += 200;
+        pg_draw_btn_hint(x, hy, "X", "Select", COLOR_ACCENT); x += 200;
+        pg_draw_btn_hint(x, hy, "TRI", "Reset", COLOR_DIM); x += 200;
+        pg_draw_btn_hint(x, hy, "OPT", "Check Result", COLOR_DIM); x += 260;
+        pg_draw_btn_hint(x, hy, "PAD", "Upload/Edit", COLOR_DIM); x += 240;
+        pg_draw_btn_hint(x, hy, "O", dirty ? "Close*" : "Close", dirty ? COLOR_ERROR : COLOR_DIM);
+
+        if (dirty) {
+            const char *ind = "UNSAVED";
+            int iw = font_text_width(ind, 22);
+            draw_text(SAFE_X1 - iw, hy + 6, ind, COLOR_ERROR, 22);
+        }
+    }
 }
 
 /* ---------- Main Draw Router ---------- */
@@ -435,7 +455,7 @@ void draw_pgsettings_ui(const Schema *schema, GameSettings *settings,
     pg_draw_scrollbar(tab->field_count, PG_VISIBLE_ROWS, st->scroll_offset,
                       SAFE_X1 - 20, PG_CONTENT_TOP, PG_VISIBLE_ROWS * (PG_ROW_H + PG_ROW_GAP));
 
-    pg_draw_footer();
+    pg_draw_footer(st->dirty, st->show_confirm, st->confirm_sel);
 
     if (st->dropdown_active && st->selected_field >= 0 && st->selected_field < tab->field_count) {
         pg_draw_dropdown(&tab->fields[st->selected_field], settings, st);
@@ -516,9 +536,38 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         if (pressed & ORBIS_PAD_BUTTON_CROSS) {
             pgsettings_set_str(settings, f->id, f->options[st->dropdown_sel].key);
             st->dropdown_active = 0;
+            st->dirty = pgsettings_any_modified(settings, schema);
         }
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
             st->dropdown_active = 0;
+        }
+        return 1;
+    }
+
+    if (st->show_confirm) {
+        if (pressed & ORBIS_PAD_BUTTON_LEFT) {
+            st->confirm_sel = (st->confirm_sel - 1 + 3) % 3;
+        }
+        if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
+            st->confirm_sel = (st->confirm_sel + 1) % 3;
+        }
+        if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+            if (st->confirm_sel == 0) {
+                pgsettings_save(st->disc_id, settings, schema);
+                st->dirty = 0;
+                st->show_confirm = 0;
+                st->active = 0;
+            } else if (st->confirm_sel == 1) {
+                pgsettings_load(st->disc_id, schema, settings);
+                st->dirty = 0;
+                st->show_confirm = 0;
+                st->active = 0;
+            } else {
+                st->show_confirm = 0;
+            }
+        }
+        if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+            st->show_confirm = 0;
         }
         return 1;
     }
@@ -533,6 +582,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_LEFT) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             change_field_value(&tab->fields[st->selected_field], settings, -1);
+            st->dirty = pgsettings_any_modified(settings, schema);
         }
         st->lr_hold_dir = -1;
         st->lr_hold_frames = 0;
@@ -540,6 +590,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_RIGHT) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             change_field_value(&tab->fields[st->selected_field], settings, 1);
+            st->dirty = pgsettings_any_modified(settings, schema);
         }
         st->lr_hold_dir = 1;
         st->lr_hold_frames = 0;
@@ -566,6 +617,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                     for (int m = 0; m < mult; m++) {
                         change_field_value(hf, settings, st->lr_hold_dir);
                     }
+                    st->dirty = pgsettings_any_modified(settings, schema);
                 }
             }
         } else if (!lr_held) {
@@ -601,6 +653,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
                 st->dropdown_scroll = 0;
             } else {
                 change_field_value(f, settings, 1);
+                st->dirty = pgsettings_any_modified(settings, schema);
             }
         }
     }
@@ -608,6 +661,7 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
     if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
         if (st->selected_field >= 0 && st->selected_field < tab->field_count) {
             reset_field_to_default(&tab->fields[st->selected_field], settings);
+            st->dirty = pgsettings_any_modified(settings, schema);
         }
     }
 
@@ -615,13 +669,16 @@ int pgsettings_ui_handle_input(unsigned int pressed, unsigned int held,
         for (int i = 0; i < tab->field_count; i++) {
             reset_field_to_default(&tab->fields[i], settings);
         }
+        st->dirty = pgsettings_any_modified(settings, schema);
     }
 
     if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-        /* Nothing here persists on its own (see the top-of-file note on
-         * why per-game values aren't saved to a file anymore), so there's
-         * no unsaved-changes prompt needed -- CIRCLE just closes. */
-        st->active = 0;
+        if (st->dirty) {
+            st->show_confirm = 1;
+            st->confirm_sel = 0;
+        } else {
+            st->active = 0;
+        }
     }
 
     if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
@@ -660,4 +717,9 @@ void pgsettings_ui_init(PGSettingsUIState *st, const char *game_name, const char
         strncpy(st->disc_id, disc_id, sizeof(st->disc_id) - 1);
         st->disc_id[sizeof(st->disc_id) - 1] = '\0';
     }
+}
+
+void pgsettings_ui_get_path(const char *disc_id, char *out, size_t out_len) {
+    if (!disc_id || !out || out_len == 0) return;
+    snprintf(out, out_len, "%s/gamesettings/%s.json", g_settings.work_path, disc_id);
 }
